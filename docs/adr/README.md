@@ -1,0 +1,14 @@
+# Architecture decision records
+
+| # | Decision | Status |
+|---|---|---|
+| [0001](0001-packages-as-source-of-truth.md) | Release packages, not git or docs, are the source of truth | accepted, implemented |
+| [0002](0002-explicit-derivation-no-guessing.md) | Pattern-based extraction with explicit derivation levels; never guess | accepted, implemented |
+| [0003](0003-fragments-by-api-content.md) | Fragments identified by API content instead of one spec per release number | accepted, implemented (superset view planned) |
+| [0004](0004-contract-tests-throwaway-vm.md) | Contract tests against a throwaway, isolated VM with a snapshot-pinned package proxy | accepted, implemented |
+| [0005](0005-signing-key-chain.md) | Follow signing key rotation only through OPNsense's signed key chain | accepted, planned |
+| [0006](0006-client-capability-layer.md) | Consumers need a capability layer; the server ignores unknown keys | accepted, planned |
+| [0007](0007-openapi-3-1.md) | OpenAPI 3.1 as the only output format, with compatibility checks per build | accepted, gates planned |
+
+Format: context, decision, consequences, evidence. A superseded ADR stays
+and links to its successor.

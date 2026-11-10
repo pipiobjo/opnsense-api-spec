@@ -1,0 +1,41 @@
+<!-- Fixture modelled on OPNsense core (BSD-2-Clause), shortened. -->
+<model>
+    <mount>//OPNsense/demo</mount>
+    <version>1.0.3</version>
+    <description>Demo</description>
+    <items>
+        <general>
+            <enabled type="BooleanField">
+                <Default>0</Default>
+                <Required>Y</Required>
+            </enabled>
+            <safesearch type="BooleanField"/>
+            <iface type=".\DemoInterfaceField">
+                <Multiple>Y</Multiple>
+            </iface>
+            <port type="PortField"/>
+        </general>
+        <hosts>
+            <host type="ArrayField">
+                <hostname type="HostnameField">
+                    <Required>Y</Required>
+                </hostname>
+                <mode type="OptionField">
+                    <Default>a</Default>
+                    <OptionValues>
+                        <a>Mode A</a>
+                        <group1 label="Grouped">
+                            <opt value="b-1">Mode B</opt>
+                        </group1>
+                    </OptionValues>
+                </mode>
+                <ttl type="IntegerField">
+                    <MinimumValue>1</MinimumValue>
+                </ttl>
+                <odd type="UnknownField"/>
+                <agentPort type="IntegerField"/>
+                <agent_port type="IntegerField"/>
+            </host>
+        </hosts>
+    </items>
+</model>

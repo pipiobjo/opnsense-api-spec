@@ -1,0 +1,809 @@
+// Package openapi renders the IR of one release as an OpenAPI 3.1 document.
+package openapi
+
+import (
+	"fmt"
+	"sort"
+	"strings"
+
+	"github.com/pipiobjo/opnsense-api-spec/internal/ir"
+	"github.com/pipiobjo/opnsense-api-spec/internal/model"
+	"github.com/pipiobjo/opnsense-api-spec/internal/verify"
+)
+
+// M is a JSON object with stable key order on encoding (encoding/json sorts
+// map keys).
+type M = map[string]any
+
+// Coverage summarises how much of the API is typed.
+type Coverage struct {
+	Operations   int            `json:"operations"`
+	BySource     map[string]int `json:"by_source"`
+	ByKind       map[string]int `json:"by_kind"`
+	WithGaps     int            `json:"operations_with_gaps"`
+	GapsByReason map[string]int `json:"gaps_by_reason"`
+	Models       int            `json:"models"`
+	Fields       int            `json:"fields"`
+	FieldGaps    int            `json:"fields_with_gaps"`
+}
+
+type renderer struct {
+	rel      *ir.Release
+	models   map[string]*model.Model
+	schemas  M
+	cov      Coverage
+	modelRef map[string]string // model class -> schema base name
+
+	ver       *verify.Report              // optional contract test run
+	verByPath map[string][]*verify.Result // endpoint path -> results
+}
+
+// Render builds the OpenAPI document and the coverage summary.
+func Render(rel *ir.Release) (M, Coverage) { return RenderVerified(rel, nil) }
+
+// RenderVerified is Render plus x-opnsense-verified markers from a contract
+// test run against a real instance (ver may be nil).
+func RenderVerified(rel *ir.Release, ver *verify.Report) (M, Coverage) {
+	r := &renderer{rel: rel, models: map[string]*model.Model{}, schemas: M{}, modelRef: map[string]string{},
+		ver: ver, verByPath: map[string][]*verify.Result{}}
+	if ver != nil {
+		for _, res := range ver.Results {
+			r.verByPath[res.Path] = append(r.verByPath[res.Path], res)
+		}
+	}
+	r.cov.BySource, r.cov.ByKind, r.cov.GapsByReason = map[string]int{}, map[string]int{}, map[string]int{}
+	for _, m := range rel.Models {
+		r.models[m.Class] = m
+		r.cov.Models++
+		countFields(m.Root, &r.cov)
+	}
+	r.commonSchemas()
+	defer r.markNameCollisions()
+	paths := M{}
+	tags := map[string]bool{}
+	for _, e := range rel.Endpoints {
+		tags[e.Module] = true
+		for _, variant := range pathVariants(e) {
+			item := M{}
+			for _, method := range e.Methods {
+				item[strings.ToLower(method)] = r.operation(e, variant, method)
+			}
+			paths[variant.path] = item
+		}
+		r.cov.Operations++
+		r.cov.BySource[string(e.Source)]++
+		r.cov.ByKind[string(e.Kind)]++
+		if len(e.Gaps) > 0 {
+			r.cov.WithGaps++
+			for _, g := range e.Gaps {
+				r.cov.GapsByReason[gapReason(g)]++
+			}
+		}
+	}
+	var tagList []M
+	for t := range tags {
+		tagList = append(tagList, M{"name": t})
+	}
+	sort.Slice(tagList, func(i, j int) bool { return tagList[i]["name"].(string) < tagList[j]["name"].(string) })
+	r.runtimeRequired(rel)
+
+	core := ""
+	for _, p := range rel.Packages {
+		if p.Name == "opnsense" {
+			core = p.Commit
+		}
+	}
+	doc := M{
+		"openapi": "3.1.0",
+		"info": M{
+			"title":       "OPNsense API",
+			"version":     rel.Version,
+			"description": description(rel, r.cov),
+		},
+		"servers": []M{{
+			"url":       "https://{host}",
+			"variables": M{"host": M{"default": "opnsense.local"}},
+		}},
+		"security": []M{{"apiKey": []string{}}},
+		"tags":     tagList,
+		"paths":    paths,
+		"components": M{
+			"securitySchemes": M{"apiKey": M{
+				"type": "http", "scheme": "basic",
+				"description": "API key as username, API secret as password (System > Access > Users > API keys).",
+			}},
+			"schemas": r.schemas,
+		},
+		"x-opnsense": M{
+			"release":           rel.Version,
+			"series":            rel.Series,
+			"abi":               rel.ABI,
+			"core_commit":       core,
+			"catalog_signed_by": rel.SignedBy,
+			"packages":          rel.Packages,
+			"file_conflicts":    nonNil(rel.Conflicts),
+		},
+		"x-generator":         M{"name": rel.Generator.Name, "version": rel.Generator.Version},
+		"x-opnsense-coverage": r.cov,
+	}
+	return doc, r.cov
+}
+
+func description(rel *ir.Release, c Coverage) string {
+	return fmt.Sprintf(`Generated from the official OPNsense %s packages (pkg.opnsense.org, signature and checksums verified). Not an official OPNsense publication.
+
+Conventions of the OPNsense API that this document makes explicit:
+- Changes made through set/add/del/toggle are stored but only become active after the module's apply endpoint (see x-opnsense-apply on each operation).
+- Validation errors are returned with HTTP 200 and {"result": "failed", "validations": {...}} (schema MutationResult).
+- Read and write shapes differ: list fields are read as {key: {value, selected}} maps and written as comma-separated keys (schemas *.Read vs *.Write).
+- Booleans are the strings "0" and "1".
+- PHP encodes empty objects as [] (e.g. a status model without data, an empty entry list).
+- Some large responses (e.g. firmware/info with many plugins, firewall logs) arrive with broken chunked encoding over HTTP/1.1; use HTTP/2.
+
+Known limitations (see x-opnsense-derivation on each operation and x-opnsense-coverage):
+- %d of %d operations have gaps. Operations with source "signature-only" have untyped requests and responses.
+- PHP controllers are read with patterns, not a full parser. Actions that override or extend the generic handlers are marked.
+- Options of dynamic list fields (interfaces, certificates, aliases, model relations) depend on the running system and are not enumerated.
+- Plugin operations (x-opnsense-package other than "opnsense") exist only when that plugin is installed.
+- Not yet verified against a running instance (no x-opnsense-verified markers).`, rel.Version, c.WithGaps, c.Operations)
+}
+
+func gapReason(g string) string {
+	for _, p := range []string{"custom action", "HTTP method not derived", "overrides", "action adds custom logic",
+		"action calls several", "base helper", "no apply endpoint", "path ", "model ", "controller has no", "parent class"} {
+		if strings.HasPrefix(g, p) {
+			return p
+		}
+	}
+	return g
+}
+
+func countFields(n *model.Node, c *Coverage) {
+	if n.Kind == model.KindField {
+		c.Fields++
+		if len(n.Gaps) > 0 {
+			c.FieldGaps++
+		}
+	}
+	for _, ch := range n.Children {
+		countFields(ch, c)
+	}
+}
+
+type variant struct {
+	path   string
+	params []string
+}
+
+// pathVariants expands optional trailing parameters into separate paths,
+// since OpenAPI path parameters are always required.
+func pathVariants(e *ir.Endpoint) []variant {
+	var req, opt []string
+	for _, p := range e.Params {
+		if p.Optional {
+			opt = append(opt, p.Name)
+		} else {
+			req = append(req, p.Name)
+		}
+	}
+	var out []variant
+	for i := 0; i <= len(opt); i++ {
+		ps := append(append([]string{}, req...), opt[:i]...)
+		path := e.Path
+		for _, p := range ps {
+			path += "/{" + p + "}"
+		}
+		out = append(out, variant{path: path, params: ps})
+	}
+	return out
+}
+
+func (r *renderer) operation(e *ir.Endpoint, v variant, method string) M {
+	opID := e.Module + "_" + e.Controller + "_" + e.Action
+	if len(v.params) > 0 {
+		opID += "_by_" + strings.Join(v.params, "_")
+	}
+	if len(e.Methods) > 1 {
+		opID += "_" + strings.ToLower(method)
+	}
+	op := M{
+		"operationId": opID,
+		"tags":        []string{e.Module},
+		"x-opnsense-derivation": M{
+			"source":      e.Source,
+			"kind":        e.Kind,
+			"declared_in": e.DeclaredIn,
+			"gaps":        nonNil(e.Gaps),
+		},
+	}
+	if e.Apply != "" {
+		op["x-opnsense-apply"] = e.Apply
+	}
+	if e.Package != "" {
+		pkg := M{"name": e.Package}
+		for _, p := range r.rel.Packages {
+			if p.Name == e.Package {
+				pkg["version"] = p.Version
+			}
+		}
+		if len(e.AlsoIn) > 0 {
+			pkg["alternatives"] = e.AlsoIn
+		}
+		op["x-opnsense-package"] = pkg
+	}
+	if e.ModelPath != "" {
+		op["x-opnsense-model-path"] = e.ModelPath
+	}
+	if r.ver != nil {
+		var checks []M
+		for _, res := range r.verByPath[e.Path] {
+			if res.Method == method {
+				c := M{"check": res.Check, "status": res.Status}
+				if len(res.Findings) > 0 {
+					c["findings"] = res.Findings
+				}
+				checks = append(checks, c)
+			}
+		}
+		if len(checks) > 0 {
+			op["x-opnsense-verified"] = M{"instance": r.ver.Instance, "date": r.ver.Date, "checks": checks}
+		}
+	}
+	if e.Model != "" {
+		op["x-opnsense-model"] = e.Model
+	}
+	var params []M
+	for _, p := range v.params {
+		params = append(params, M{"name": p, "in": "path", "required": true, "schema": M{"type": "string"}})
+	}
+	base := r.modelSchema(e.Model)
+	kind := e.Kind
+	if e.Source == ir.SourceSignature {
+		kind = ir.KindCustom // only the signature is known: never type it
+	}
+	switch kind {
+	case ir.KindModelGet:
+		op["summary"] = "Get all settings of the model"
+		op["responses"] = okJSON(wrap(e.Wrapper, ref(base, "Read", "")))
+	case ir.KindModelSet:
+		op["summary"] = "Update settings of the model (partial updates allowed)"
+		op["requestBody"] = jsonBody(wrap(e.Wrapper, ref(base, "Write", "")))
+		op["responses"] = okJSON(M{"$ref": "#/components/schemas/MutationResult"})
+	case ir.KindItemSearch:
+		op["summary"] = "Search entries of " + e.ModelPath
+		if method == "GET" {
+			params = append(params, searchQueryParams()...)
+		} else {
+			op["requestBody"] = jsonBody(M{"$ref": "#/components/schemas/SearchRequest"})
+		}
+		op["responses"] = okJSON(searchResult(ref(base, "Row", e.ModelPath)))
+	case ir.KindItemGet:
+		if len(v.params) == 0 {
+			op["summary"] = "Get a new entry of " + e.ModelPath + " with default values"
+		} else {
+			op["summary"] = "Get one entry of " + e.ModelPath
+		}
+		op["responses"] = okJSON(wrap(e.Outer, wrap(e.Wrapper, ref(base, "Read", e.ModelPath))))
+	case ir.KindItemAdd:
+		op["summary"] = "Add an entry to " + e.ModelPath
+		op["requestBody"] = jsonBody(wrap(e.Wrapper, ref(base, "Write", e.ModelPath)))
+		op["responses"] = okJSON(M{"$ref": "#/components/schemas/MutationResult"})
+	case ir.KindItemSet:
+		op["summary"] = "Update an entry of " + e.ModelPath
+		op["requestBody"] = jsonBody(wrap(e.Wrapper, ref(base, "Write", e.ModelPath)))
+		op["responses"] = okJSON(M{"$ref": "#/components/schemas/MutationResult"})
+	case ir.KindItemDel:
+		op["summary"] = "Delete an entry of " + e.ModelPath
+		op["responses"] = okJSON(M{"$ref": "#/components/schemas/MutationResult"})
+	case ir.KindItemToggle:
+		op["summary"] = "Toggle the enabled flag of an entry of " + e.ModelPath
+		op["responses"] = okJSON(M{"$ref": "#/components/schemas/MutationResult"})
+	case ir.KindServiceAction:
+		op["summary"] = strings.ToUpper(e.Action[:1]) + e.Action[1:] + " the service"
+		op["responses"] = okJSON(M{"$ref": "#/components/schemas/ServiceResult"})
+	case ir.KindServiceStatus:
+		op["summary"] = "Service status"
+		op["responses"] = okJSON(M{"$ref": "#/components/schemas/ServiceStatus"})
+	default:
+		op["summary"] = "Custom action (not derived)"
+		if method == "POST" {
+			op["requestBody"] = M{"required": false, "content": M{"application/json": M{"schema": M{}}}}
+		}
+		op["responses"] = okJSON(M{})
+	}
+	if len(params) > 0 {
+		op["parameters"] = params
+	}
+	return op
+}
+
+func nonNil(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
+}
+
+func okJSON(schema M) M {
+	return M{"200": M{"description": "OK", "content": M{"application/json": M{"schema": schema}}}}
+}
+
+func jsonBody(schema M) M {
+	return M{"required": true, "content": M{"application/json": M{"schema": schema}}}
+}
+
+func wrap(key string, inner M) M {
+	if key == "" {
+		return inner
+	}
+	return M{"type": "object", "properties": M{key: inner}, "required": []string{key}}
+}
+
+func searchResult(row M) M {
+	return M{"type": "object", "properties": M{
+		"total":    M{"type": "integer"},
+		"rowCount": M{"type": "integer"},
+		"current":  M{"type": "integer"},
+		"rows":     M{"type": "array", "items": row},
+	}}
+}
+
+func searchQueryParams() []M {
+	return []M{
+		{"name": "current", "in": "query", "schema": M{"type": "integer", "default": 1}},
+		{"name": "rowCount", "in": "query", "schema": M{"type": "integer", "default": -1}, "description": "-1 returns all rows"},
+		{"name": "searchPhrase", "in": "query", "schema": M{"type": "string"}},
+	}
+}
+
+func (r *renderer) commonSchemas() {
+	r.schemas["MutationResult"] = M{
+		"type":        "object",
+		"description": "Result of a change. Validation errors also come with HTTP 200.",
+		"properties": M{
+			"result":  M{"type": "string", "description": "e.g. saved, failed, deleted, not found, Enabled, Disabled"},
+			"uuid":    M{"type": "string", "description": "UUID of a new entry (add)"},
+			"changed": M{"type": "boolean"},
+			"validations": M{"type": "object", "additionalProperties": M{"oneOf": []M{
+				{"$ref": "#/components/schemas/ValidationMessage"},
+				{"$ref": "#/components/schemas/ValidationMessages"},
+			}}, "description": "field path -> message"},
+		},
+	}
+	r.schemas["SearchRequest"] = M{"type": "object", "properties": M{
+		"current":      M{"type": "integer"},
+		"rowCount":     M{"type": "integer"},
+		"searchPhrase": M{"type": "string"},
+		"sort":         M{"type": "object", "additionalProperties": M{"type": "string", "enum": []string{"asc", "desc"}}},
+	}}
+	r.schemas["ServiceResult"] = M{"type": "object", "properties": M{"status": M{"type": "string"}, "result": M{"type": "string"}}}
+	r.schemas["ServiceStatus"] = M{"type": "object", "properties": M{"status": M{"type": "string", "description": "e.g. running, stopped, disabled"}}}
+	// union members are named components, so generated accessors get
+	// readable names (AsSelectOptions instead of AsSelectMap0)
+	r.schemas["ValidationMessage"] = M{"type": "string"}
+	r.schemas["ValidationMessages"] = M{"type": "array", "items": M{"type": "string"}}
+	r.schemas["SelectOption"] = M{"type": "object", "properties": M{
+		"value":    M{"type": "string"},
+		"selected": M{"type": "integer", "enum": []int{0, 1}},
+	}}
+	r.schemas["SelectOptions"] = M{"type": "object", "additionalProperties": M{"$ref": "#/components/schemas/SelectOption"},
+		"description": "option key -> option"}
+	r.schemas["SelectOptionList"] = M{"type": "array", "items": M{"$ref": "#/components/schemas/SelectOption"},
+		"description": "used by PHP when the option keys are exactly 0..n-1 (index = key)"}
+	r.schemas["SelectMap"] = M{
+		"description": "List field as read: option key -> {value: label, selected: 0|1}. " +
+			"When the option keys are exactly 0..n-1, PHP encodes the map as a JSON array (index = key).",
+		"oneOf": []M{
+			{"$ref": "#/components/schemas/SelectOptions"},
+			{"$ref": "#/components/schemas/SelectOptionList"},
+		},
+	}
+	r.schemas["EmptyList"] = M{"type": "array", "maxItems": 0,
+		"description": "An empty map or object as encoded by PHP"}
+}
+
+func schemaName(class string) string {
+	return strings.ReplaceAll(strings.TrimPrefix(class, `OPNsense\`), `\`, ".")
+}
+
+// modelSchema ensures Read/Write/Row schemas of a model exist.
+func (r *renderer) modelSchema(class string) string {
+	if class == "" {
+		return ""
+	}
+	if n, ok := r.modelRef[class]; ok {
+		return n
+	}
+	m := r.models[class]
+	name := schemaName(class)
+	r.modelRef[class] = name
+	if m == nil {
+		return name
+	}
+	read := r.nodeSchema(m, m.Root, name, "", "Read")
+	if len(m.Root.Children) == 0 {
+		// a model without fields (status models) is read back as [] (PHP)
+		read = M{"oneOf": []M{read, {"$ref": "#/components/schemas/EmptyList"}},
+			"description": "Model without fields; returned as [] (PHP encoding)."}
+	}
+	r.schemas[name+".Read"] = read
+	r.schemas[name+".Write"] = r.nodeSchema(m, m.Root, name, "", "Write")
+	return name
+}
+
+func ref(base, kind, path string) M {
+	if base == "" {
+		return M{}
+	}
+	n := base
+	if path != "" {
+		n += "." + path
+	}
+	return M{"$ref": "#/components/schemas/" + n + "." + kind}
+}
+
+// nodeSchema renders a container/array/field for the given direction.
+// Arrays get their own named item schemas (Read, Write, Row).
+func (r *renderer) nodeSchema(m *model.Model, n *model.Node, base, path, dir string) M {
+	switch n.Kind {
+	case model.KindArray:
+		r.itemSchemas(m, n, base, path)
+		entries := M{
+			"type":                 "object",
+			"description":          "Entries keyed by UUID. Prefer the item endpoints for changes.",
+			"additionalProperties": ref(base, dir, path),
+		}
+		if dir != "Read" {
+			return entries
+		}
+		// PHP encodes an empty map as [], so an empty entry list is read
+		// back as an empty JSON array (verified on 26.7)
+		entriesName := base + "." + path + ".Entries"
+		r.schemas[entriesName] = entries
+		return M{
+			"description": "Entries keyed by UUID; an empty list is returned as [] (PHP encoding).",
+			"oneOf": []M{
+				{"$ref": "#/components/schemas/" + entriesName},
+				{"$ref": "#/components/schemas/EmptyList"},
+			},
+		}
+	case model.KindContainer:
+		if path == "" {
+			return r.containerSchema(m, n, base, path, dir)
+		}
+		// nested section -> named component (named Go type instead of an
+		// anonymous struct)
+		name := base + "." + path + "." + dir
+		if _, ok := r.schemas[name]; !ok {
+			r.schemas[name] = M{} // placeholder against recursion
+			r.schemas[name] = r.containerSchema(m, n, base, path, dir)
+		}
+		return M{"$ref": "#/components/schemas/" + name}
+	default:
+		return fieldSchema(n, dir)
+	}
+}
+
+// containerSchema renders an object inline (model roots and entry items).
+func (r *renderer) containerSchema(m *model.Model, n *model.Node, base, path, dir string) M {
+	{
+		props := M{}
+		var required []string
+		hasDisplay := false
+		for _, c := range n.Children {
+			cp := c.Name
+			if path != "" {
+				cp = path + "." + c.Name
+			}
+			props[c.Name] = r.nodeSchema(m, c, base, cp, dir)
+			if dir == "Read" && c.Kind == model.KindField && c.Shape == model.ShapeString {
+				hasDisplay = true
+			}
+		}
+		s := M{"type": "object", "properties": props}
+		if hasDisplay {
+			// "%<field>" carries the display value when it differs from the
+			// raw value. One pattern instead of explicit properties keeps
+			// generated types clean (agentPort vs agent_port collide otherwise).
+			s["patternProperties"] = M{"^%": M{"type": "string", "description": "Display value of the field named after the %"}}
+		}
+		if len(required) > 0 {
+			s["required"] = required
+		}
+		return s
+	}
+}
+
+func (r *renderer) itemSchemas(m *model.Model, n *model.Node, base, path string) {
+	name := base + "." + path
+	if _, ok := r.schemas[name+".Read"]; ok {
+		return
+	}
+	cont := &model.Node{Name: n.Name, Kind: model.KindContainer, Children: n.Children}
+	r.schemas[name+".Read"] = M{} // placeholder against recursion
+	read := r.containerSchema(m, cont, base, path, "Read")
+	write := r.containerSchema(m, cont, base, path, "Write")
+	var required []string
+	rowProps := M{"uuid": M{"type": "string"}}
+	for _, c := range n.Children {
+		if c.Kind == model.KindField && c.Required && c.Default == nil {
+			required = append(required, c.Name)
+		}
+		if c.Kind == model.KindField {
+			rowProps[c.Name] = M{"type": "string", "description": "display value"}
+		}
+	}
+	if len(required) > 0 {
+		write["required"] = required
+		write["description"] = "Required fields apply to add; set accepts partial updates."
+	}
+	r.schemas[name+".Read"] = read
+	r.schemas[name+".Write"] = write
+	r.schemas[name+".Row"] = M{"type": "object", "properties": rowProps,
+		"description": "Search row: fields as display values (labels instead of keys for list fields)"}
+}
+
+func readShapeUncertain(n *model.Node) bool {
+	for _, g := range n.Gaps {
+		if strings.Contains(g, "read shape may differ") {
+			return true
+		}
+	}
+	return false
+}
+
+func fieldSchema(n *model.Node, dir string) M {
+	s := M{"x-opnsense-type": n.Type}
+	if n.BaseType != "" && n.BaseType != n.Type {
+		s["x-opnsense-base-type"] = n.BaseType
+	}
+	if len(n.Gaps) > 0 {
+		s["x-opnsense-gaps"] = n.Gaps
+	}
+	if n.Volatile {
+		s["x-opnsense-volatile"] = true
+	}
+	var opts []string
+	for _, o := range n.Options {
+		opts = append(opts, o.Value)
+	}
+	if dir == "Read" && readShapeUncertain(n) {
+		// a custom getNodeData/getNodeOptions decides the read shape; do not
+		// claim a type the instance may not return (verified: objects for
+		// AliasContentField, IKEAddressField, RemoteHostField on 26.7)
+		s["description"] = "Read shape depends on a custom field type; not typed."
+		return s
+	}
+	if dir == "Read" && n.Shape == model.ShapeSelect {
+		s["allOf"] = []M{{"$ref": "#/components/schemas/SelectMap"}}
+		if len(opts) > 0 {
+			s["x-opnsense-options"] = n.Options
+		}
+		return s
+	}
+	s["type"] = "string"
+	if n.Default != nil {
+		s["default"] = *n.Default
+	}
+	switch {
+	case n.Type == "BooleanField" || n.BaseType == "BooleanField":
+		// an optional boolean that was never set is "", and stored values
+		// can be "" even for required fields (entries older than the field);
+		// so reads always allow "" (verified on 26.7, os-nginx)
+		if n.Required && dir == "Write" {
+			s["enum"] = []string{"0", "1"}
+		} else {
+			s["enum"] = []string{"", "0", "1"}
+		}
+	case len(opts) > 0 && !n.Multiple:
+		if !n.Required {
+			opts = append([]string{""}, opts...)
+		}
+		s["enum"] = opts
+	case len(opts) > 0:
+		s["description"] = "Comma-separated list of option keys"
+		s["x-opnsense-options"] = n.Options
+	case n.Shape == model.ShapeSelect && dir == "Write":
+		s["description"] = "Comma-separated list of option keys (options depend on the running system)"
+	}
+	// a default outside the enum is an upstream model error (e.g. os-nginx:
+	// BooleanField with Default "N"); the instance returns it, so reads allow
+	// it, writes do not, and the field carries a visible gap
+	if enum, ok := s["enum"].([]string); ok && n.Default != nil && *n.Default != "" {
+		found := false
+		for _, v := range enum {
+			if v == *n.Default {
+				found = true
+			}
+		}
+		if !found {
+			gap := fmt.Sprintf("default %q is not a valid value for %s (upstream model error)", *n.Default, n.Type)
+			gaps, _ := s["x-opnsense-gaps"].([]string)
+			s["x-opnsense-gaps"] = append(append([]string{}, gaps...), gap)
+			if dir == "Read" {
+				s["enum"] = append(append([]string{}, enum...), *n.Default)
+			}
+		}
+	}
+	for k, v := range n.Props {
+		switch k {
+		case "Mask":
+			s["x-opnsense-mask"] = v
+		case "MinimumValue":
+			s["x-opnsense-minimum"] = v
+		case "MaximumValue":
+			s["x-opnsense-maximum"] = v
+		}
+	}
+	return s
+}
+
+// markNameCollisions annotates sibling properties whose names only differ in
+// case or "_"/"-" (OPNsense has e.g. agentPort and agent_port in one model).
+// JSON names stay untouched; x-opnsense-name-collision documents the hazard
+// and x-go-name (honoured by oapi-codegen) keeps Go generators from
+// producing the same identifier.
+func (r *renderer) markNameCollisions() {
+	var walk func(v any)
+	walk = func(v any) {
+		switch t := v.(type) {
+		case M:
+			if props, ok := t["properties"].(M); ok {
+				groups := map[string][]string{}
+				for name := range props {
+					k := strings.NewReplacer("_", "", "-", "").Replace(strings.ToLower(name))
+					groups[k] = append(groups[k], name)
+				}
+				for _, names := range groups {
+					if len(names) < 2 {
+						continue
+					}
+					sort.Strings(names)
+					for i, n := range names {
+						ps, ok := props[n].(M)
+						if !ok {
+							continue
+						}
+						var others []string
+						for _, o := range names {
+							if o != n {
+								others = append(others, o)
+							}
+						}
+						ps["x-opnsense-name-collision"] = others
+						// generators normalise "_" away, so only a suffix keeps
+						// the names apart: first (sorted) keeps its name, the
+						// others get 2, 3, ...
+						if i > 0 {
+							ps["x-go-name"] = n + fmt.Sprint(i+1)
+						}
+					}
+				}
+			}
+			for _, c := range t {
+				walk(c)
+			}
+		case []M:
+			for _, c := range t {
+				walk(c)
+			}
+		case []any:
+			for _, c := range t {
+				walk(c)
+			}
+		}
+	}
+	walk(r.schemas)
+}
+
+const runtimeRequiredPrefix = "add with server defaults rejected; runtime-required: "
+
+// runtimeRequired copies the fields an instance rejected as missing (from a
+// verify run) onto the entry Write schemas as x-opnsense-runtime-required.
+// They include fields enforced by PHP validation that the model XML does not
+// mark as Required.
+func (r *renderer) runtimeRequired(rel *ir.Release) {
+	if r.ver == nil {
+		return
+	}
+	for _, e := range rel.Endpoints {
+		if e.Kind != ir.KindItemAdd || e.Model == "" {
+			continue
+		}
+		for _, res := range r.verByPath[e.Path] {
+			for _, f := range res.Findings {
+				if !strings.HasPrefix(f, runtimeRequiredPrefix) {
+					continue
+				}
+				var fields []string
+				for _, k := range strings.Split(strings.TrimPrefix(f, runtimeRequiredPrefix), ", ") {
+					fields = append(fields, strings.TrimPrefix(k, e.Wrapper+"."))
+				}
+				name := r.modelSchema(e.Model) + "." + e.ModelPath + ".Write"
+				if s, ok := r.schemas[name].(M); ok {
+					s["x-opnsense-runtime-required"] = M{
+						"fields":      fields,
+						"instance":    r.ver.Instance,
+						"description": "Rejected as missing when adding an entry with server defaults; includes fields enforced by PHP validation that the model does not mark Required. Some are conditional (e.g. one of two).",
+					}
+				}
+			}
+		}
+	}
+}
+
+// CommonSchemas are the schemas shared by all fragments; fragment documents
+// reference them in the common document instead of defining them.
+var CommonSchemas = []string{
+	"MutationResult", "SearchRequest", "ServiceResult", "ServiceStatus",
+	"SelectMap", "SelectOption", "SelectOptions", "SelectOptionList",
+	"EmptyList", "ValidationMessage", "ValidationMessages",
+}
+
+// RenderCommon renders the document holding the shared schemas.
+func RenderCommon(generatorVersion string) M {
+	r := &renderer{schemas: M{}}
+	r.commonSchemas()
+	return M{
+		"openapi": "3.1.0",
+		"info": M{"title": "OPNsense API: common schemas", "version": generatorVersion,
+			"description": "Schemas shared by all fragment documents (see docs/concepts.md)."},
+		"paths":       M{},
+		"components":  M{"schemas": r.schemas},
+		"x-generator": M{"name": "opnsense-api-spec", "version": generatorVersion},
+	}
+}
+
+// RenderFragment renders one fragment (a release IR reduced to one
+// package) as its own document. Shared schemas are referenced in the common
+// document at commonRef (a relative URL such as
+// "../common/<hash>.openapi.json").
+func RenderFragment(sub *ir.Release, pkg, hash, commonRef string) (M, Coverage) {
+	doc, cov := Render(sub)
+	common := map[string]bool{}
+	for _, n := range CommonSchemas {
+		common[n] = true
+	}
+	if comps, ok := doc["components"].(M); ok {
+		if schemas, ok := comps["schemas"].(M); ok {
+			for n := range common {
+				delete(schemas, n)
+			}
+		}
+	}
+	rewriteRefs(doc, func(ref string) string {
+		const p = "#/components/schemas/"
+		if strings.HasPrefix(ref, p) && common[strings.TrimPrefix(ref, p)] {
+			return commonRef + ref
+		}
+		return ref
+	})
+	if info, ok := doc["info"].(M); ok {
+		info["title"] = "OPNsense API: " + pkg
+	}
+	doc["x-opnsense-fragment"] = M{"package": pkg, "hash": hash, "common": commonRef}
+	return doc, cov
+}
+
+func rewriteRefs(v any, f func(string) string) {
+	switch t := v.(type) {
+	case M:
+		for k, c := range t {
+			if k == "$ref" {
+				if s, ok := c.(string); ok {
+					t[k] = f(s)
+				}
+				continue
+			}
+			rewriteRefs(c, f)
+		}
+	case []M:
+		for _, c := range t {
+			rewriteRefs(c, f)
+		}
+	case []any:
+		for _, c := range t {
+			rewriteRefs(c, f)
+		}
+	}
+}
