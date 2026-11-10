@@ -21,6 +21,7 @@ import (
 	"github.com/pipiobjo/opnsense-api-spec/internal/ir"
 	"github.com/pipiobjo/opnsense-api-spec/internal/openapi"
 	"github.com/pipiobjo/opnsense-api-spec/internal/pkgrepo"
+	"github.com/pipiobjo/opnsense-api-spec/internal/quality"
 	"github.com/pipiobjo/opnsense-api-spec/internal/verify"
 )
 
@@ -182,6 +183,10 @@ func (p *Pipeline) Build(version string, plugins bool, out string) (string, erro
 		}
 	}
 	doc, cov := openapi.RenderVerified(rel, ver)
+	refs, defined := openapi.Refs(doc)
+	if v := quality.Invariants(rel, refs, defined); len(v) > 0 {
+		return "", fmt.Errorf("%s: %d invariant violation(s), not writing outputs:\n  %s", version, len(v), strings.Join(v, "\n  "))
+	}
 	if err := os.MkdirAll(out, 0o755); err != nil {
 		return "", err
 	}
@@ -253,6 +258,11 @@ type Outcome struct {
 	Reason      string
 	Composition string // id after the run
 	Status      fragment.Status
+	// Quality compares with the previous release of the run (nil for the
+	// first one): regressions and framework changes. It explains contract
+	// test failures; it is not a gate (framework files change in about two
+	// of three patch releases, measured 25.7 to 26.7.8).
+	Quality *quality.Report
 }
 
 // Matrix builds every release of the given series (all if latestOnly is
@@ -327,13 +337,18 @@ func (p *Pipeline) Matrix(series []string, latestOnly, force bool) ([]Outcome, e
 		default:
 			p.logf("%s: up to date (%s)\n", r.Version, comp.ID())
 		}
+		oc := Outcome{Release: r.Version, Action: action, Reason: reason, Composition: comp.ID(), Status: comp.Status}
 		if prev != nil {
 			if _, err := WriteDiff(prev, cur, dir); err != nil {
 				return out, err
 			}
+			oc.Quality = quality.Compare(prev, cur)
+			if err := WriteJSON(filepath.Join(dir, prev.Version+".."+cur.Version+".quality.json"), oc.Quality); err != nil {
+				return out, err
+			}
 		}
 		prev = cur
-		out = append(out, Outcome{Release: r.Version, Action: action, Reason: reason, Composition: comp.ID(), Status: comp.Status})
+		out = append(out, oc)
 	}
 	return out, BuildIndex(p.Dist)
 }

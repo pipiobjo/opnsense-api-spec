@@ -11,3 +11,4 @@ class OptionField extends BaseListField {}
 class PortField extends BaseListField {}
 class InterfaceField extends BaseListField {}
 class HostnameField extends BaseSetField {}
+class TextField extends BaseField {}

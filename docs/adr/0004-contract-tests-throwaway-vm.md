@@ -35,4 +35,7 @@ runs on FreeBSD, so containers on Linux are not an option.
 Runs with all 69 plugins with an API: 26.7 541 shapes ok, 23 confirmed
 known gaps, 3 mismatches; 26.1.6 534 / 23 / 3. Found real upstream issues
 (broken chunked encoding over HTTP/1.1 for large responses, HTTP 500 in
-`os-udpbroadcastrelay` on 26.1.6, an undocumented field in `os-caddy`).
+`os-udpbroadcastrelay` on 26.1.6, a `BooleanField` with the invalid default
+`N` in `os-nginx`). An "undocumented field `Type`" reported for `os-caddy`
+turned out to be our parser bug (a typed field whose name equals a setting
+tag was skipped; fixed 2026-11-11).

@@ -33,6 +33,8 @@
                     <MinimumValue>1</MinimumValue>
                 </ttl>
                 <odd type="UnknownField"/>
+                <filters type="TextField"/>
+                <NewUpstreamKeyword>Y</NewUpstreamKeyword>
             </host>
         </hosts>
     </items>

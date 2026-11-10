@@ -15,7 +15,7 @@ import (
 // GeneratorName and GeneratorVersion identify this generator in all output.
 const (
 	GeneratorName    = "opnsense-api-spec"
-	GeneratorVersion = "0.4.0-dev"
+	GeneratorVersion = "0.5.0-dev"
 )
 
 // Source says how an endpoint description was derived.
@@ -89,14 +89,18 @@ type Release struct {
 	// CoreVersion is the core package version including the hotfix
 	// revision (26.7.8_2); CatalogSHA256 identifies the catalog state
 	// (SHA-256 of the signed packagesite.yaml).
-	CoreVersion   string         `json:"core_version,omitempty"`
-	CatalogSHA256 string         `json:"catalog_sha256,omitempty"`
-	ABI           string         `json:"abi"`
-	SignedBy      string         `json:"catalog_signed_by"`
-	Packages      []Package      `json:"packages"`
-	Conflicts     []string       `json:"file_conflicts,omitempty"`
-	Models        []*model.Model `json:"models"`
-	Endpoints     []*Endpoint    `json:"endpoints"`
+	CoreVersion   string `json:"core_version,omitempty"`
+	CatalogSHA256 string `json:"catalog_sha256,omitempty"`
+	// Framework: normalized hashes of the framework files the derivation
+	// relies on (quality.FrameworkFiles); FrameworkHash combines them.
+	Framework     map[string]string `json:"framework,omitempty"`
+	FrameworkHash string            `json:"framework_hash,omitempty"`
+	ABI           string            `json:"abi"`
+	SignedBy      string            `json:"catalog_signed_by"`
+	Packages      []Package         `json:"packages"`
+	Conflicts     []string          `json:"file_conflicts,omitempty"`
+	Models        []*model.Model    `json:"models"`
+	Endpoints     []*Endpoint       `json:"endpoints"`
 }
 
 const (

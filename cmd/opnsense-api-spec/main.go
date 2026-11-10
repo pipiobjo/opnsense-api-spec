@@ -42,7 +42,8 @@ flags:
   -out DIR      output directory (fetch: .cache/src/X, build: dist/X)
   -plugins      include all os-* plugins (default: core only)
   -latest       matrix: only the newest release of each series
-  -force        matrix: rebuild releases that already exist in dist/`)
+  -force        matrix: rebuild releases that already exist in dist/
+  -offline      use cached catalogs instead of downloading them`)
 	os.Exit(2)
 }
 
@@ -106,7 +107,12 @@ func main() {
 		var outs []pipeline.Outcome
 		outs, err = pl.Matrix(strings.Split(o.series, ","), o.latest, o.force)
 		for _, oc := range outs {
-			fmt.Fprintf(os.Stderr, "%-10s %-11s %-32s %s\n", oc.Release, oc.Action, oc.Composition, oc.Status)
+			note := ""
+			if oc.Quality != nil && oc.Quality.Notable() {
+				note = fmt.Sprintf("  (%d regression(s), %d framework file(s) changed)",
+					len(oc.Quality.Regressions), len(oc.Quality.FrameworkChanged))
+			}
+			fmt.Fprintf(os.Stderr, "%-10s %-11s %-32s %-11s%s\n", oc.Release, oc.Action, oc.Composition, oc.Status, note)
 		}
 	case "diff":
 		if o.from == "" || o.to == "" {
@@ -177,6 +183,10 @@ func cmdVerify(o opts) error {
 	}
 	fmt.Fprintf(os.Stderr, "testing endpoints of %d installed/selected packages\n", len(pk))
 	rep := verify.Run(c, rel, pk, o.write)
+	// record which catalog state was tested (dist/<release>/composition.json)
+	if comp, err := pipeline.ReadComposition(filepath.Join(filepath.Dir(o.irFile), "composition.json")); err == nil {
+		rep.Composition = comp.ID()
+	}
 	if !strings.HasPrefix(rep.Instance, rel.Version) {
 		fmt.Fprintf(os.Stderr, "warning: instance runs %q, IR is %s\n", rep.Instance, rel.Version)
 	}

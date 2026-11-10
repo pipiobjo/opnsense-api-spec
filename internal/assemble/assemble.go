@@ -12,6 +12,7 @@ import (
 	"github.com/pipiobjo/opnsense-api-spec/internal/controller"
 	"github.com/pipiobjo/opnsense-api-spec/internal/ir"
 	"github.com/pipiobjo/opnsense-api-spec/internal/model"
+	"github.com/pipiobjo/opnsense-api-spec/internal/quality"
 )
 
 // OwnersFile is written next to the extracted sources by fetch.
@@ -70,5 +71,8 @@ func Release(appDir string, owners *Owners, meta ir.Release) (*ir.Release, error
 	sort.Strings(rel.Conflicts)
 	rel.Generator.Name, rel.Generator.Version = ir.GeneratorName, ir.GeneratorVersion
 	rel.Endpoints = ir.Build(models, ctls)
+	if rel.Framework, rel.FrameworkHash, err = quality.Fingerprint(appDir); err != nil {
+		return nil, err
+	}
 	return &rel, nil
 }

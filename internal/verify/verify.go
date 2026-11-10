@@ -36,11 +36,15 @@ type Result struct {
 
 // Report is the outcome of a run.
 type Report struct {
-	Release   string    `json:"release"`
-	Instance  string    `json:"instance_version"`
-	Generator string    `json:"generator"`
-	Date      string    `json:"date"`
-	Results   []*Result `json:"results"`
+	Release string `json:"release"`
+	// Composition is the id of the catalog state the IR was built from
+	// (set by the caller), so a later catalog change is visible as
+	// "not verified".
+	Composition string    `json:"composition,omitempty"`
+	Instance    string    `json:"instance_version"`
+	Generator   string    `json:"generator"`
+	Date        string    `json:"date"`
+	Results     []*Result `json:"results"`
 }
 
 // Client talks to the test instance with an API key.

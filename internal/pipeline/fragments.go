@@ -13,6 +13,7 @@ import (
 	"github.com/pipiobjo/opnsense-api-spec/internal/ir"
 	"github.com/pipiobjo/opnsense-api-spec/internal/openapi"
 	"github.com/pipiobjo/opnsense-api-spec/internal/pkgrepo"
+	"github.com/pipiobjo/opnsense-api-spec/internal/verify"
 )
 
 // Layout below the dist root (see docs/concepts.md, section 5.3):
@@ -129,6 +130,22 @@ type IndexRelease struct {
 	Status       fragment.Status   `json:"status"`
 	Compositions []string          `json:"compositions"`
 	Files        map[string]string `json:"files"` // release view file -> sha256
+	// Verified is the last contract test run; NeedsVerification is true
+	// when the current composition has not been contract-tested (new
+	// release, hotfix, plugin update or new generator).
+	Verified          *IndexVerification `json:"verified,omitempty"`
+	NeedsVerification bool               `json:"needs_verification"`
+}
+
+// IndexVerification summarizes a contract test run.
+type IndexVerification struct {
+	Composition string         `json:"composition"`
+	Instance    string         `json:"instance"`
+	Date        string         `json:"date"`
+	Generator   string         `json:"generator"`
+	Results     map[string]int `json:"results"` // check/status -> count
+	// Failed counts mismatches and errors outside known gaps.
+	Failed int `json:"failed"`
 }
 
 // IndexFragmentUse tells where a fragment occurs.
@@ -192,6 +209,22 @@ func BuildIndex(dist string) error {
 			sum := sha256.Sum256(data)
 			ent.Files[f.Name()] = fmt.Sprintf("%x", sum)
 		}
+		if raw, err := os.ReadFile(filepath.Join(dist, d.Name(), "opnsense-"+cur.Release+".verified.json")); err == nil {
+			var rep verify.Report
+			if err := json.Unmarshal(raw, &rep); err == nil {
+				v := &IndexVerification{Composition: rep.Composition, Instance: rep.Instance, Date: rep.Date,
+					Generator: rep.Generator, Results: map[string]int{}}
+				for _, r := range rep.Results {
+					v.Results[r.Check+"/"+r.Status]++
+					if r.Status == "mismatch" || r.Status == "error" {
+						v.Failed++
+					}
+				}
+				ent.Verified = v
+			}
+		}
+		ent.NeedsVerification = ent.Verified == nil || ent.Verified.Composition != ent.Current ||
+			ent.Verified.Generator != ir.GeneratorVersion
 		idx.Releases = append(idx.Releases, ent)
 	}
 	sort.Slice(idx.Releases, func(i, j int) bool {

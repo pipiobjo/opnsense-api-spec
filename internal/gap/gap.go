@@ -37,6 +37,7 @@ const (
 	CustomReadShape     Code = "custom-read-shape"     // custom getNodeData/getNodeOptions
 	OptionsDynamic      Code = "options-dynamic"       // OptionField without static options
 	InvalidDefault      Code = "invalid-default"       // default outside the allowed values (upstream model error)
+	UnknownSetting      Code = "unknown-setting"       // untyped leaf element that is not a known setting
 )
 
 // Gap is one finding of the generator.

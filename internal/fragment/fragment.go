@@ -112,6 +112,7 @@ type Composition struct {
 	ABI           string `json:"abi"`
 	CatalogSHA256 string `json:"catalog_sha256"`
 	SignedBy      string `json:"catalog_signed_by"`
+	FrameworkHash string `json:"framework_hash,omitempty"`
 	Status        Status `json:"status"`
 	Generator     string `json:"generator"`
 	Fragments     []Ref  `json:"fragments"`
@@ -131,7 +132,7 @@ func Compose(rel *ir.Release, frags []*Fragment, status Status) *Composition {
 	}
 	c := &Composition{
 		Release: rel.Version, CoreVersion: rel.CoreVersion, Series: rel.Series, ABI: rel.ABI,
-		CatalogSHA256: rel.CatalogSHA256, SignedBy: rel.SignedBy, Status: status,
+		CatalogSHA256: rel.CatalogSHA256, SignedBy: rel.SignedBy, Status: status, FrameworkHash: rel.FrameworkHash,
 		Generator: rel.Generator.Version, Fragments: []Ref{},
 	}
 	for _, f := range frags {

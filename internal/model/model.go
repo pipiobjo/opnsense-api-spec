@@ -388,6 +388,29 @@ func Parse(r io.Reader, relFile string, types *TypeIndex) (*Model, error) {
 	return m, nil
 }
 
+// convertChildren adds the structural children of a container or array.
+// The rule is structural, not list-based: an element with a type attribute
+// is always a field; an element without type and without children is
+// never a field or section but a setting of its parent (e.g. <Default> of
+// an ArrayField). A setting that is not known is reported, so a new
+// upstream keyword cannot silently become a field or vanish.
+func convertChildren(n *Node, x *xnode, ns string, types *TypeIndex) {
+	for i := range x.Children {
+		c := &x.Children[i]
+		name := c.XMLName.Local
+		if c.attr("type") == "" && len(c.Children) == 0 {
+			if !fieldSettings[name] {
+				n.Gaps = append(n.Gaps, gap.New(gap.UnknownSetting, "element <%s> without type and children is not a known setting", name))
+			}
+			continue
+		}
+		if c.attr("type") == "" && fieldSettings[name] && n.Kind == KindArray {
+			continue // structured setting of the array (e.g. OptionValues-like)
+		}
+		n.Children = append(n.Children, convert(c, ns, types))
+	}
+}
+
 func convert(x *xnode, ns string, types *TypeIndex) *Node {
 	n := &Node{Name: x.XMLName.Local}
 	typ := x.attr("type")
@@ -396,9 +419,7 @@ func convert(x *xnode, ns string, types *TypeIndex) *Node {
 	}
 	if typ == "" {
 		n.Kind = KindContainer
-		for i := range x.Children {
-			n.Children = append(n.Children, convert(&x.Children[i], ns, types))
-		}
+		convertChildren(n, x, ns, types)
 		return n
 	}
 	n.Type = typ
@@ -407,20 +428,12 @@ func convert(x *xnode, ns string, types *TypeIndex) *Node {
 	n.BaseType = base
 	if isArray {
 		n.Kind = KindArray
-		for i := range x.Children {
-			c := &x.Children[i]
-			if fieldSettings[c.XMLName.Local] {
-				continue
-			}
-			n.Children = append(n.Children, convert(c, ns, types))
-		}
+		convertChildren(n, x, ns, types)
 		return n
 	}
 	if typ == "ContainerField" || base == "ContainerField" {
 		n.Kind = KindContainer
-		for i := range x.Children {
-			n.Children = append(n.Children, convert(&x.Children[i], ns, types))
-		}
+		convertChildren(n, x, ns, types)
 		return n
 	}
 	n.Kind = KindField

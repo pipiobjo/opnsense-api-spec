@@ -787,3 +787,40 @@ func rewriteRefs(v any, f func(string) string) {
 		}
 	}
 }
+
+// Refs returns all $ref values of a document and the names of the schemas
+// it defines (for invariant checks).
+func Refs(doc M) ([]string, map[string]bool) {
+	var refs []string
+	var walk func(v any)
+	walk = func(v any) {
+		switch t := v.(type) {
+		case M:
+			for k, c := range t {
+				if s, ok := c.(string); ok && k == "$ref" {
+					refs = append(refs, s)
+					continue
+				}
+				walk(c)
+			}
+		case []M:
+			for _, c := range t {
+				walk(c)
+			}
+		case []any:
+			for _, c := range t {
+				walk(c)
+			}
+		}
+	}
+	walk(doc)
+	defined := map[string]bool{}
+	if comps, ok := doc["components"].(M); ok {
+		if schemas, ok := comps["schemas"].(M); ok {
+			for n := range schemas {
+				defined[n] = true
+			}
+		}
+	}
+	return refs, defined
+}

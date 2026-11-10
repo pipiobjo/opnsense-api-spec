@@ -47,4 +47,11 @@ func TestLoadAllFixture(t *testing.T) {
 	if odd := check("hosts.host.odd", KindField, "", ShapeUnknown); len(odd.Gaps) != 1 {
 		t.Errorf("unknown type must be a gap: %+v", odd)
 	}
+	// a typed child is a field even if its name equals a setting tag
+	check("hosts.host.filters", KindField, "TextField", ShapeString)
+	// an unknown untyped leaf element is reported on its parent, not a field
+	host := m.Find("hosts.host")
+	if m.Find("hosts.host.NewUpstreamKeyword") != nil || len(host.Gaps) != 1 || host.Gaps[0].Code != "unknown-setting" {
+		t.Errorf("unknown setting: %+v", host.Gaps)
+	}
 }

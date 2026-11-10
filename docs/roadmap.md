@@ -18,7 +18,7 @@ State and reasoning: [concepts.md](concepts.md), decisions:
 | Hotfix under the same release number | catalog hash differs -> rebuild | same | automatic, tested against a fake mirror |
 | Previous release becomes `final` | next run | same | automatic |
 | Contract tests | the VM tests the image version only (26.7), not 26.7.9 | `prepare 27.1`; image naming and announcement path must match | manual, image versions only |
-| Detect silent breakage (framework changes) | - | coverage regressions, framework fingerprint | missing |
+| Detect silent breakage (framework changes) | regression report, framework fingerprint | same | automatic (reports); gate is the contract test |
 | Client smoke test (oapi-codegen) | - | - | manual |
 | Publish | - | - | missing |
 
@@ -38,11 +38,17 @@ generator changes.
    stable codes; behaviour depends only on codes (`gap.MayDiffer`); the
    verifier reports runtime-required fields as a structured field instead
    of text parsed by the renderer.
-3. **Silent breakage on new releases.** Plan: IR invariants as build gates,
-   a ratchet baseline (coverage must not regress unnoticed), a framework
-   fingerprint (hashes of the core files the derivation relies on), and
-   unknown XML child tags of fields reported instead of being taken for
-   sub-fields (this happened once: `filters`).
+3. ~~**Silent breakage on new releases.**~~ Done (2026-11-11):
+   invariants stop the build; regression report and framework fingerprint
+   per release; unknown setting tags reported, typed elements always fields
+   (this found one more skipped field, `Type` in `os-caddy`, which had been
+   misreported as an upstream issue). Measured: framework files change in
+   21 of 32 transitions, so these are reports, not gates; the gate is the
+   contract test per new composition (concepts 8.1). The index records
+   which composition was verified (`needs_verification`).
+3a. **Accepted findings.** A reviewed list (path, check, reason, upstream
+   link) so that known upstream issues do not block publishing forever
+   (26.7 today: 6 findings, e.g. chunked encoding, captive portal `api`).
 4. **Contract tests per release.** Boot the series image, update it through
    the package proxy to exactly the target release, install plugins, run
    `verify`. Today only image versions (26.7, 26.1.6) are tested.

@@ -268,9 +268,11 @@ fields. See section 9.
 | Contract tests | every GET against a real instance, add -> get -> delete per entry list, with all plugins with an API installed | implemented (`tools/testvm.sh`), manual, image versions only |
 | Golden tests | fragment hashes of final releases (25.7.10, 26.1.10, 26.7.7) checked in; a generator change that alters the derived API of an existing release fails per package | implemented (`internal/assemble`, needs extracted sources) |
 | Determinism | two builds from the same sources give identical IR, OpenAPI and fragment hashes | implemented (`internal/assemble`) |
-| Invariants | every helper path exists and is an `ArrayField`, consistent wrappers, known parent classes, no duplicate paths, all references resolve, OpenAPI validates | planned (as build gates) |
-| Ratchet baseline | coverage must not regress unnoticed (typed -> untyped, new unknown patterns) | planned |
-| Framework fingerprint | hashes of the core files whose semantics the generator relies on; a change requires a passing contract test before publishing | planned |
+| Invariants | no duplicate paths, every referenced model and package exists, every operation has a method, every local `$ref` resolves; a violation stops the build | implemented (`internal/quality`) |
+| Regression report | per release against its predecessor: operations typed -> untyped, field read shapes -> unknown, new gap codes on existing operations (`<prev>..<release>.quality.json`) | implemented; a report, not a gate |
+| Framework fingerprint | normalized hashes (comments and whitespace removed) of the core files the derivation relies on, per release; changes listed in the quality report | implemented; a report, not a gate |
+| Unknown settings | an untyped leaf element that is not a known setting is reported (`unknown-setting`) instead of becoming a field or vanishing; a typed element is always a field | implemented |
+| Verification tracking | the index records which composition was contract-tested (`verified`, `needs_verification`) | implemented |
 | Contract tests per release | boot the series image, update it through the package proxy to exactly the target release, test | planned |
 | Second derivation | compare the endpoint list with OPNsense's own `collect_api_endpoints.py` | planned |
 | Generated write values | test values from field types instead of server defaults | planned |
@@ -288,18 +290,25 @@ target other than `127.0.0.1`/`localhost`.
 
 The dangerous failure is not "the generator does not understand
 something" (that yields `signature-only`, visibly less typed) but "the
-generator believes it understands something whose meaning changed". The
-planned defence, in order of strength: contract tests as oracle, framework
-fingerprint, invariants, ratchet baseline, golden tests, second derivation.
-Pipeline rules:
+generator believes it understands something whose meaning changed".
+
+Measured over 25.7 to 26.7.8, the framework files change in 21 of 32
+release transitions, and regressions (typed -> untyped) occur in 6, each a
+real upstream change (firewall rule actions rewritten, a new OSPF field
+type). A gate on these signals would need a human in two of three
+releases. Therefore the contract test is the gate, and the other signals
+explain its result:
 
 | Situation | Decision |
 |---|---|
 | catalog unchanged | nothing |
-| changed; invariants hold, no regression, fingerprint unchanged, contract test passes | publish |
-| new unknown patterns | publish with affected operations as `signature-only`; report |
-| fingerprint changed and contract test shows mismatches | do not publish; report with diff |
 | invariant violated or key chain broken | do not publish; report |
+| new composition (release, hotfix, plugin update, generator) | contract test (automatic) |
+| contract test without mismatches outside known gaps and accepted findings | publish; regressions and framework changes go into the release notes |
+| contract test with new mismatches | do not publish; report with the quality report (framework changes, regressions) as context |
+
+Accepted findings (known upstream issues, e.g. broken chunked encoding
+over HTTP/1.1) need a reviewed list in the repository (planned).
 
 ## 9. Consumers: clients and providers (planned)
 
