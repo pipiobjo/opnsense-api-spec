@@ -10,6 +10,7 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/pem"
+	"strings"
 	"testing"
 
 	"github.com/klauspost/compress/zstd"
@@ -161,5 +162,26 @@ func TestParseCatalog(t *testing.T) {
 	cat := &Catalog{Packages: pkgs}
 	if p := cat.Plugins(); len(p) != 1 || p[0].Name != "os-acme-client" {
 		t.Errorf("plugins: %+v", p)
+	}
+}
+
+func TestLearnKeysOneWay(t *testing.T) {
+	file := func(fp string) []byte { return []byte("function: \"sha256\"\nfingerprint: \"" + fp + "\"\n") }
+	a, b := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	keys := map[string]Key{a: {Name: "k.a", Status: "revoked", Source: "bootstrap"}}
+	changed := LearnKeys(keys, map[string][]byte{
+		"x/fingerprints/OPNsense/trusted/k.a": file(a), // older core: outdated view
+		"x/fingerprints/OPNsense/trusted/k.b": file(b), // new key
+		"x/fingerprints/OPNsense/README":      []byte("ignored"),
+	}, "core 1")
+	if keys[a].Status != "revoked" {
+		t.Error("a revoked key must never become trusted again")
+	}
+	if keys[b].Status != "trusted" || keys[b].Source != "core 1" || len(changed) != 1 {
+		t.Errorf("new key: %+v changed=%v", keys[b], changed)
+	}
+	changed = LearnKeys(keys, map[string][]byte{"x/fingerprints/OPNsense/revoked/k.b": file(b)}, "core 2")
+	if keys[b].Status != "revoked" || len(changed) != 1 || !strings.Contains(keys[b].Source, "core 2") {
+		t.Errorf("revocation: %+v", keys[b])
 	}
 }

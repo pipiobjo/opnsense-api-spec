@@ -1,6 +1,6 @@
 # 0005: Follow key rotation through the signed key chain
 
-Status: accepted, planned (today: static key list from core 26.7.5)
+Status: accepted, implemented 2026-11-11
 
 ## Context
 
@@ -25,3 +25,14 @@ already accepted key and matches its checksum. Store the resulting chain
   practice.
 - An emergency rotation without the chain stops the pipeline and asks for
   a reviewed manual entry; this is intended.
+
+## Implementation notes (2026-11-11)
+
+- `internal/pkgrepo/keys.json` (bootstrap: the 23 keys of core 26.7.5,
+  22 rotated and 1 current); `LearnKeys` adds keys with their source and
+  only allows trusted -> revoked.
+- Every matrix run re-derives the chain (newest release per series,
+  ascending), so it does not depend on a committed key file; the file is
+  updated as an audit trail (`-keys`).
+- Tested against a fake mirror with a series change and a key nobody
+  introduced; on real data (25.7 to 26.7.8) no key is learned or changed.

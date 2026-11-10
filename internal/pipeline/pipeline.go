@@ -33,6 +33,81 @@ type Pipeline struct {
 	Dist    string                 // output root, e.g. "dist"
 	SrcRoot string                 // extracted sources, e.g. ".cache/src"
 	Log     io.Writer
+	// KeysPath, when set, receives the key list after new keys were
+	// learned through the signed chain (audit trail; the chain itself is
+	// re-derived on every run).
+	KeysPath string
+	// SeriesFloor is the oldest series for "all" (default "25.7").
+	SeriesFloor string
+}
+
+const fingerprintDir = "usr/local/etc/pkg/fingerprints/OPNsense/"
+
+// learnKeys reads the key lists of a verified core package and extends
+// p.Keys (signed key chain, ADR 0005).
+func (p *Pipeline) learnKeys(coreData []byte, source string) error {
+	files, err := pkgrepo.ReadArchive(bytes.NewReader(coreData), func(n string) bool {
+		return strings.HasPrefix(n, fingerprintDir)
+	})
+	if err != nil {
+		return err
+	}
+	changed := pkgrepo.LearnKeys(p.Keys, files, source)
+	for _, fp := range changed {
+		p.logf("key %s (%s, %s) learned from %s\n", p.Keys[fp].Name, p.Keys[fp].Status, fp[:16], source)
+	}
+	if len(changed) > 0 && p.KeysPath != "" {
+		return pkgrepo.SaveKeys(p.KeysPath, p.Keys)
+	}
+	return nil
+}
+
+// learnChain walks the series in ascending order and learns the keys the
+// newest release of each series ships, so that the next series' key is
+// known before its catalog is verified.
+func (p *Pipeline) learnChain(all []pkgrepo.Release, upTo string) error {
+	newest := map[string]pkgrepo.Release{}
+	var series []string
+	for _, r := range all {
+		if _, ok := newest[r.Series]; !ok {
+			series = append(series, r.Series)
+		}
+		newest[r.Series] = r // Discover returns ascending order
+	}
+	sort.Slice(series, func(i, j int) bool { return pkgrepo.CompareVersions(series[i], series[j]) < 0 })
+	for _, s := range series {
+		if pkgrepo.CompareVersions(s, p.floor()) < 0 || pkgrepo.CompareVersions(s, upTo) > 0 {
+			continue
+		}
+		r := newest[s]
+		cat, err := p.Client.FetchCatalog(r)
+		if err != nil {
+			return fmt.Errorf("key chain: %s: %w", r.Version, err)
+		}
+		if _, err := pkgrepo.VerifyCatalog(cat, p.Keys, true); err != nil {
+			return fmt.Errorf("key chain broken at %s: %w", r.Version, err)
+		}
+		core, ok := cat.Lookup("opnsense")
+		if !ok {
+			continue
+		}
+		data, err := p.Client.FetchPackage(r, core)
+		if err != nil {
+			return fmt.Errorf("key chain: %s: %w", r.Version, err)
+		}
+		sum := sha256.Sum256(cat.YAML)
+		if err := p.learnKeys(data, fmt.Sprintf("core %s (catalog %x)", core.Version, sum[:6])); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (p *Pipeline) floor() string {
+	if p.SeriesFloor == "" {
+		return "25.7"
+	}
+	return p.SeriesFloor
 }
 
 func (p *Pipeline) logf(format string, a ...any) {
@@ -134,6 +209,11 @@ func (p *Pipeline) Fetch(version string, plugins bool, dir string) (*Fetched, er
 				return nil, err
 			}
 			if err := os.WriteFile(dst, content, 0o644); err != nil {
+				return nil, err
+			}
+		}
+		if pk.Name == "opnsense" {
+			if err := p.learnKeys(data, fmt.Sprintf("core %s (catalog %x)", pk.Version, catSum[:6])); err != nil {
 				return nil, err
 			}
 		}
@@ -274,8 +354,26 @@ func (p *Pipeline) Matrix(series []string, latestOnly, force bool) ([]Outcome, e
 		return nil, err
 	}
 	want := map[string]bool{}
+	maxSeries := ""
 	for _, s := range series {
-		want[strings.TrimSpace(s)] = true
+		s = strings.TrimSpace(s)
+		if s == "all" {
+			for _, r := range all {
+				if pkgrepo.CompareVersions(r.Series, p.floor()) >= 0 {
+					want[r.Series] = true
+				}
+			}
+			continue
+		}
+		want[s] = true
+	}
+	for s := range want {
+		if maxSeries == "" || pkgrepo.CompareVersions(s, maxSeries) > 0 {
+			maxSeries = s
+		}
+	}
+	if err := p.learnChain(all, maxSeries); err != nil {
+		return nil, err
 	}
 	var rels []pkgrepo.Release
 	for _, r := range all {

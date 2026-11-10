@@ -43,7 +43,10 @@ flags:
   -plugins      include all os-* plugins (default: core only)
   -latest       matrix: only the newest release of each series
   -force        matrix: rebuild releases that already exist in dist/
-  -offline      use cached catalogs instead of downloading them`)
+  -offline      use cached catalogs instead of downloading them
+  -keys FILE    signing key list, extended through the signed key chain
+                (default internal/pkgrepo/keys.json; built-in list if absent)
+  -series all   matrix: every series from -series-floor (default 25.7) on`)
 	os.Exit(2)
 }
 
@@ -79,12 +82,23 @@ func main() {
 	fs.BoolVar(&o.write, "write", false, "")
 	offline := fs.Bool("offline", false, "")
 	listen := fs.String("listen", "127.0.0.1:18080", "")
+	keysPath := fs.String("keys", "internal/pkgrepo/keys.json", "")
+	floor := fs.String("series-floor", "25.7", "")
 	fs.Usage = usage
 	_ = fs.Parse(args)
 	c := pkgrepo.NewClient(o.base, o.cache)
 	c.Offline = *offline
-	pl := &pipeline.Pipeline{Client: c, Keys: pkgrepo.Keys, Arch: o.arch, Dist: "dist",
-		SrcRoot: filepath.Join(".cache", "src"), Log: os.Stderr}
+	keys := pkgrepo.Keys
+	if *keysPath != "" {
+		if k, err := pkgrepo.LoadKeys(*keysPath); err == nil {
+			keys = k
+		} else if !os.IsNotExist(err) {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(1)
+		}
+	}
+	pl := &pipeline.Pipeline{Client: c, Keys: keys, Arch: o.arch, Dist: "dist",
+		SrcRoot: filepath.Join(".cache", "src"), Log: os.Stderr, KeysPath: *keysPath, SeriesFloor: *floor}
 
 	var err error
 	switch cmd {

@@ -93,14 +93,21 @@ func tarball(t *testing.T, files map[string][]byte) []byte {
 type pkgSpec struct {
 	name, version string
 	files         map[string][]byte // relative to the mvc app dir
+	raw           map[string][]byte // absolute paths in the package (e.g. key lists)
 }
 
 const abi, series = "FreeBSD:15:amd64", "26.7"
 
-// publish writes a signed catalog and the package files of one release.
+// publish writes a catalog signed with m.key and the packages of a 26.7 release.
 func (m *mirror) publish(t *testing.T, release string, pkgs []pkgSpec) {
 	t.Helper()
-	base := fmt.Sprintf("/%s/%s/MINT/%s/latest/", abi, series, release)
+	m.publishSigned(t, series, release, m.key, pkgs)
+}
+
+// publishSigned writes a catalog of any series, signed with key.
+func (m *mirror) publishSigned(t *testing.T, ser, release string, key *rsa.PrivateKey, pkgs []pkgSpec) {
+	t.Helper()
+	base := fmt.Sprintf("/%s/%s/MINT/%s/latest/", abi, ser, release)
 	var lines bytes.Buffer
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -108,6 +115,9 @@ func (m *mirror) publish(t *testing.T, release string, pkgs []pkgSpec) {
 		files := map[string][]byte{"+MANIFEST": []byte("{}")}
 		for n, c := range p.files {
 			files["/usr/local/opnsense/mvc/app/"+n] = c
+		}
+		for n, c := range p.raw {
+			files[n] = c
 		}
 		data := tarball(t, files)
 		sum := sha256.Sum256(data)
@@ -123,18 +133,39 @@ func (m *mirror) publish(t *testing.T, release string, pkgs []pkgSpec) {
 	yaml := lines.Bytes()
 	d := sha256.Sum256(yaml)
 	msg := sha256.Sum256([]byte(hex.EncodeToString(d[:])))
-	sig, err := rsa.SignPKCS1v15(rand.Reader, m.key, crypto.SHA256, msg[:])
+	sig, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, msg[:])
 	if err != nil {
 		t.Fatal(err)
 	}
 	m.files[base+"packagesite.pkg"] = tarball(t, map[string][]byte{
-		"packagesite.yaml": yaml, "packagesite.yaml.sig": sig, "packagesite.yaml.pub": m.pub(),
+		"packagesite.yaml": yaml, "packagesite.yaml.sig": sig, "packagesite.yaml.pub": pubPEM(key),
 	})
 }
 
-func (m *mirror) pub() []byte {
-	der, _ := x509.MarshalPKIXPublicKey(&m.key.PublicKey)
+func (m *mirror) pub() []byte { return pubPEM(m.key) }
+
+func pubPEM(k *rsa.PrivateKey) []byte {
+	der, _ := x509.MarshalPKIXPublicKey(&k.PublicKey)
 	return pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
+}
+
+func newKey(t *testing.T) *rsa.PrivateKey {
+	t.Helper()
+	k, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return k
+}
+
+// keyList is what a core package ships below fingerprints/OPNsense/.
+func keyList(trusted map[string]*rsa.PrivateKey) map[string][]byte {
+	out := map[string][]byte{}
+	for name, k := range trusted {
+		out["/usr/local/etc/pkg/fingerprints/OPNsense/trusted/"+name] =
+			[]byte("function: \"sha256\"\nfingerprint: \"" + pkgrepo.Fingerprint(pubPEM(k)) + "\"\n")
+	}
+	return out
 }
 
 // --- fixture packages ----------------------------------------------------
@@ -235,8 +266,8 @@ func fragHash(t *testing.T, p *Pipeline, release, pkg string) string {
 // release number, a new release making the previous one final.
 func TestMatrixLifecycle(t *testing.T) {
 	m, p, _ := setup(t)
-	m.publish(t, "26.7", []pkgSpec{{"opnsense", "26.7", coreFiles(t, false)}, {"os-extra", "1.0", pluginFiles()}})
-	m.publish(t, "26.7.1", []pkgSpec{{"opnsense", "26.7.1", coreFiles(t, false)}, {"os-extra", "1.0", pluginFiles()}})
+	m.publish(t, "26.7", []pkgSpec{{"opnsense", "26.7", coreFiles(t, false), nil}, {"os-extra", "1.0", pluginFiles(), nil}})
+	m.publish(t, "26.7.1", []pkgSpec{{"opnsense", "26.7.1", coreFiles(t, false), nil}, {"os-extra", "1.0", pluginFiles(), nil}})
 
 	// 1. first run builds everything
 	outs, err := p.Matrix([]string{series}, false, false)
@@ -267,7 +298,7 @@ func TestMatrixLifecycle(t *testing.T) {
 	}
 
 	// 3. hotfix under the same release number
-	m.publish(t, "26.7.1", []pkgSpec{{"opnsense", "26.7.1_1", coreFiles(t, true)}, {"os-extra", "1.0", pluginFiles()}})
+	m.publish(t, "26.7.1", []pkgSpec{{"opnsense", "26.7.1_1", coreFiles(t, true), nil}, {"os-extra", "1.0", pluginFiles(), nil}})
 	outs, err = p.Matrix([]string{series}, false, false)
 	if err != nil {
 		t.Fatal(err)
@@ -295,7 +326,7 @@ func TestMatrixLifecycle(t *testing.T) {
 	}
 
 	// 4. a new release makes 26.7.1 final without rebuilding it
-	m.publish(t, "26.7.2", []pkgSpec{{"opnsense", "26.7.2", coreFiles(t, true)}, {"os-extra", "1.0", pluginFiles()}})
+	m.publish(t, "26.7.2", []pkgSpec{{"opnsense", "26.7.2", coreFiles(t, true), nil}, {"os-extra", "1.0", pluginFiles(), nil}})
 	outs, err = p.Matrix([]string{series}, false, false)
 	if err != nil {
 		t.Fatal(err)
@@ -330,7 +361,7 @@ func TestMatrixLifecycle(t *testing.T) {
 // A cached package that no longer matches the catalog is fetched again.
 func TestStaleCachedPackageIsRefetched(t *testing.T) {
 	m, p, tmp := setup(t)
-	m.publish(t, "26.7", []pkgSpec{{"opnsense", "26.7", coreFiles(t, false)}})
+	m.publish(t, "26.7", []pkgSpec{{"opnsense", "26.7", coreFiles(t, false), nil}})
 	if _, err := p.Build("26.7", true, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -349,7 +380,7 @@ func TestStaleCachedPackageIsRefetched(t *testing.T) {
 // A catalog signed with an unknown key stops the run.
 func TestUnknownKeyFailsLoudly(t *testing.T) {
 	m, p, _ := setup(t)
-	m.publish(t, "26.7", []pkgSpec{{"opnsense", "26.7", coreFiles(t, false)}})
+	m.publish(t, "26.7", []pkgSpec{{"opnsense", "26.7", coreFiles(t, false), nil}})
 	p.Keys = map[string]pkgrepo.Key{}
 	if _, err := p.Matrix([]string{series}, false, false); err == nil || !strings.Contains(err.Error(), "unknown key") {
 		t.Errorf("want unknown key error, got %v", err)
@@ -359,7 +390,7 @@ func TestUnknownKeyFailsLoudly(t *testing.T) {
 // Plugin files are attributed to their package; core first.
 func TestFetchAttribution(t *testing.T) {
 	m, p, _ := setup(t)
-	m.publish(t, "26.7", []pkgSpec{{"opnsense", "26.7", coreFiles(t, false)}, {"os-extra", "1.0", pluginFiles()}})
+	m.publish(t, "26.7", []pkgSpec{{"opnsense", "26.7", coreFiles(t, false), nil}, {"os-extra", "1.0", pluginFiles(), nil}})
 	f, err := p.Fetch("26.7", true, "")
 	if err != nil {
 		t.Fatal(err)
@@ -396,4 +427,47 @@ func TestDecide(t *testing.T) {
 		}
 	}
 	_ = ir.GeneratorVersion
+}
+
+// Series change: the next series' key is learned from the newest release
+// of the previous series (signed chain), so the new series is accepted
+// without touching the key list; a key nobody introduced is refused.
+func TestKeyChainAcrossSeries(t *testing.T) {
+	m, p, tmp := setup(t)
+	key2, key3 := newKey(t), newKey(t)
+	// 26.7 (signed with the known key) already trusts the 27.1 key
+	core267 := pkgSpec{"opnsense", "26.7", coreFiles(t, false), keyList(map[string]*rsa.PrivateKey{
+		"pkg.test.old": m.key, "pkg.test.next": key2})}
+	m.publish(t, "26.7", []pkgSpec{core267})
+	m.publishSigned(t, "27.1", "27.1", key2, []pkgSpec{{"opnsense", "27.1", coreFiles(t, false), nil}})
+	p.KeysPath = filepath.Join(tmp, "keys.json")
+	p.SeriesFloor = "26.7"
+
+	outs, err := p.Matrix([]string{"27.1"}, false, false)
+	if err != nil {
+		t.Fatalf("27.1 must be accepted through the chain: %v", err)
+	}
+	if outcome(t, outs, "27.1").Action != ActionBuild {
+		t.Errorf("27.1: %+v", outs)
+	}
+	learned := p.Keys[pkgrepo.Fingerprint(pubPEM(key2))]
+	if learned.Name != "pkg.test.next" || learned.Status != "trusted" || !strings.Contains(learned.Source, "core 26.7") {
+		t.Errorf("learned key: %+v", learned)
+	}
+	saved, err := pkgrepo.LoadKeys(p.KeysPath)
+	if err != nil || len(saved) != 2 {
+		t.Errorf("key list must be saved with the learned key: %v %d", err, len(saved))
+	}
+
+	// "all" covers both series from the floor on
+	outs, err = p.Matrix([]string{"all"}, false, false)
+	if err != nil || len(outs) != 2 {
+		t.Errorf("series all: %v %+v", err, outs)
+	}
+
+	// a key that no verified core introduced is refused
+	m.publishSigned(t, "27.1", "27.1.1", key3, []pkgSpec{{"opnsense", "27.1.1", coreFiles(t, false), nil}})
+	if _, err := p.Matrix([]string{"27.1"}, false, false); err == nil || !strings.Contains(err.Error(), "unknown key") {
+		t.Errorf("unintroduced key must fail: %v", err)
+	}
 }

@@ -56,7 +56,7 @@ Why packages and not git tags: packages are what users run, including
 plugins (separate repository, separate versions) and hotfix revisions that
 have no git tag.
 
-## 3. Trust chain (implemented; key rotation automation planned)
+## 3. Trust chain (implemented)
 
 1. A known OPNsense signing key verifies the catalog signature, exactly as
    FreeBSD `pkg` does (RSA PKCS#1 v1.5 over the hex SHA-256 of
@@ -68,12 +68,17 @@ have no git tag.
    OPNsense rotates the key per series; older series are signed with their
    own (now "revoked") key and are accepted and recorded as such.
 
-**Key rotation (planned).** OPNsense builds a signed chain: the last patch
-release of a series already trusts the next series' key (e.g. 25.7.11
-trusts the 26.1 key, 26.1.11 trusts the 26.7 key). A new key is therefore
-accepted automatically only if a core package that lists it as trusted
-comes from a catalog signed by an already trusted key. If the chain breaks
-(e.g. an emergency rotation), the pipeline stops and reports.
+**Key rotation (implemented).** OPNsense builds a signed chain: the last
+patch release of a series already trusts the next series' key (e.g. 25.7.11
+trusts the 26.1 key, 26.1.11 trusts the 26.7 key). Before verifying any
+catalog, every run walks the series in ascending order and reads the key
+lists of the newest release of each series; a key is added only if the
+core package listing it comes from a catalog signed by an already known
+key. Known keys may move from trusted to revoked, never back (older cores
+still list keys as trusted that newer ones revoked). The list lives in
+`internal/pkgrepo/keys.json` (built in, extended with the source of each
+key). If the chain breaks (e.g. an emergency rotation), the run stops with
+"unknown key".
 
 Test VM images (section 8) are verified separately: SHA-256 against the
 mirror and against the release announcement in `opnsense/changelog`, and

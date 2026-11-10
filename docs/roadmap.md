@@ -13,8 +13,8 @@ State and reasoning: [concepts.md](concepts.md), decisions:
 | Step | Patch release (e.g. 26.7.9) | New series (27.1) | Today |
 |---|---|---|---|
 | Notice that something is new | `matrix` finds the new `MINT/` directory | same, if the series is listed in `-series` | manual: nobody runs `matrix` |
-| Series list | - | `-series` must be extended by hand | manual |
-| Signing key | - | the new series is signed with a key not in the static list; the build fails loudly | manual (ADR 0005) |
+| Series list | - | `-series all` finds it | automatic |
+| Signing key | - | learned from the last patch release of the previous series | automatic (ADR 0005) |
 | Hotfix under the same release number | catalog hash differs -> rebuild | same | automatic, tested against a fake mirror |
 | Previous release becomes `final` | next run | same | automatic |
 | Contract tests | the VM tests the image version only (26.7), not 26.7.9 | `prepare 27.1`; image naming and announcement path must match | manual, image versions only |
@@ -52,9 +52,9 @@ generator changes.
 4. **Contract tests per release.** Boot the series image, update it through
    the package proxy to exactly the target release, install plugins, run
    `verify`. Today only image versions (26.7, 26.1.6) are tested.
-5. **Key chain and series list.** Follow key rotation through the signed
-   chain (ADR 0005); derive the series list from the mirror (all series
-   from a fixed floor).
+5. ~~**Key chain and series list.**~~ Done (2026-11-11): the signed chain is
+   re-derived on every run (ADR 0005); `matrix -series all` takes every
+   series from `-series-floor` (25.7) on the mirror.
 6. **Client scenario test in the repository.** The provider-style scenario
    with the generated Go client lives outside the repository; make it a
    blocking gate (ADR 0007), with OpenAPI 3.1 validation.
