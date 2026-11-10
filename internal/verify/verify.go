@@ -5,10 +5,12 @@ package verify
 
 import (
 	"bytes"
+
 	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/pipiobjo/opnsense-api-spec/internal/gap"
 	"io"
 	"net/http"
 	"sort"
@@ -27,6 +29,9 @@ type Result struct {
 	Status   string   `json:"status"` // ok, mismatch, error, skipped
 	HTTP     int      `json:"http,omitempty"`
 	Findings []string `json:"findings,omitempty"`
+	// RuntimeRequired: fields the instance rejected as missing when adding
+	// an entry with server defaults (write-cycle only), without wrapper
+	RuntimeRequired []string `json:"runtime_required,omitempty"`
 }
 
 // Report is the outcome of a run.
@@ -329,12 +334,7 @@ func compareNode(n *model.Node, v any, path string, out *[]string) {
 // fieldShapeUncertain: the generator already marked the read shape as
 // unknown (custom getNodeData/getNodeOptions), so no strict comparison.
 func fieldShapeUncertain(n *model.Node) bool {
-	for _, g := range n.Gaps {
-		if strings.Contains(g, "read shape may differ") {
-			return true
-		}
-	}
-	return false
+	return gap.Has(n.Gaps, gap.CustomReadShape)
 }
 
 func checkModelGet(c *Client, e *ir.Endpoint, m *model.Model) *Result {
@@ -382,12 +382,9 @@ func knownGap(r *Result, e *ir.Endpoint) *Result {
 	if r.Status != "mismatch" {
 		return r
 	}
-	for _, g := range e.Gaps {
-		if strings.HasPrefix(g, "overrides") || strings.HasPrefix(g, "action adds custom logic") {
-			r.Status = "known-gap"
-			r.Findings = append(r.Findings, "expected: "+g)
-			return r
-		}
+	if g, ok := gap.First(e.Gaps, gap.MayDiffer); ok {
+		r.Status = "known-gap"
+		r.Findings = append(r.Findings, "expected ("+string(g.Code)+"): "+g.Detail)
 	}
 	return r
 }
@@ -605,6 +602,9 @@ func writeCycles(c *Client, rel *ir.Release, models map[string]*model.Model, pac
 				}
 			}
 			r.Findings = append(r.Findings, "add with server defaults rejected; runtime-required: "+strings.Join(runtime, ", "))
+			for _, k := range runtime {
+				r.RuntimeRequired = append(r.RuntimeRequired, strings.TrimPrefix(k, f.add.Wrapper+"."))
+			}
 			if len(notInModel) > 0 {
 				r.Findings = append(r.Findings, "required at runtime but not marked Required in the model: "+strings.Join(notInModel, ", "))
 			}

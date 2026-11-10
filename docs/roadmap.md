@@ -15,7 +15,7 @@ State and reasoning: [concepts.md](concepts.md), decisions:
 | Notice that something is new | `matrix` finds the new `MINT/` directory | same, if the series is listed in `-series` | manual: nobody runs `matrix` |
 | Series list | - | `-series` must be extended by hand | manual |
 | Signing key | - | the new series is signed with a key not in the static list; the build fails loudly | manual (ADR 0005) |
-| Hotfix under the same release number | catalog hash differs -> rebuild | same | automatic in code, **untested** |
+| Hotfix under the same release number | catalog hash differs -> rebuild | same | automatic, tested against a fake mirror |
 | Previous release becomes `final` | next run | same | automatic |
 | Contract tests | the VM tests the image version only (26.7), not 26.7.9 | `prepare 27.1`; image naming and announcement path must match | manual, image versions only |
 | Detect silent breakage (framework changes) | - | coverage regressions, framework fingerprint | missing |
@@ -29,16 +29,15 @@ generator changes.
 
 ## Gaps, ranked by correctness risk
 
-1. **Orchestration without tests.** Rebuild on catalog change, status,
-   package attribution and file conflicts live in `cmd/` (0 % coverage);
-   `pkgrepo` (37 %) and `verify` (21 %) are mostly tested only against real
-   systems. Plan: move the orchestration into a package and test it against
-   a fake mirror (`httptest`), including a simulated hotfix and a cached
-   package that no longer matches the catalog.
-2. **Gap codes instead of text.** Gaps are free text, and other code reacts
-   to text prefixes (`knownGap`, `gapReason`, `readShapeUncertain`).
-   Rewording a message silently changes behaviour. Plan: stable codes, text
-   only as description; tests assert codes.
+1. ~~**Orchestration without tests.**~~ Done (2026-11-11): `internal/pipeline`
+   with tests against a fake mirror (signed catalogs, packages, listings):
+   first build, no-op run, hotfix under the same release number, a new
+   release making the previous one final, stale cached package, unknown
+   key. A mutation check (catalog changes ignored) fails 6 assertions.
+2. ~~**Gap codes instead of text.**~~ Done (2026-11-11): `internal/gap` with
+   stable codes; behaviour depends only on codes (`gap.MayDiffer`); the
+   verifier reports runtime-required fields as a structured field instead
+   of text parsed by the renderer.
 3. **Silent breakage on new releases.** Plan: IR invariants as build gates,
    a ratchet baseline (coverage must not regress unnoticed), a framework
    fingerprint (hashes of the core files the derivation relies on), and

@@ -4,6 +4,8 @@ package ir
 
 import (
 	"sort"
+
+	"github.com/pipiobjo/opnsense-api-spec/internal/gap"
 	"strings"
 
 	"github.com/pipiobjo/opnsense-api-spec/internal/controller"
@@ -13,7 +15,7 @@ import (
 // GeneratorName and GeneratorVersion identify this generator in all output.
 const (
 	GeneratorName    = "opnsense-api-spec"
-	GeneratorVersion = "0.3.0-dev"
+	GeneratorVersion = "0.4.0-dev"
 )
 
 // Source says how an endpoint description was derived.
@@ -65,7 +67,7 @@ type Endpoint struct {
 	ModelPath  string             `json:"model_path,omitempty"` // item path for item.* kinds
 	Apply      string             `json:"apply,omitempty"`      // endpoint that activates changes
 	DeclaredIn string             `json:"declared_in"`
-	Gaps       []string           `json:"gaps,omitempty"`
+	Gaps       []gap.Gap          `json:"gaps,omitempty"`
 }
 
 // Package is provenance of one input package.
@@ -169,7 +171,7 @@ func Build(models []*model.Model, ctls []*controller.Controller) []*Endpoint {
 					e.Apply = apply[c.Module]
 				}
 				if e.Apply == "" {
-					e.Gaps = append(e.Gaps, "no apply endpoint found (controller apply/reconfigure or "+c.Module+"/service/reconfigure); how changes take effect is unknown")
+					e.Gaps = append(e.Gaps, gap.New(gap.NoApplyEndpoint, "no apply endpoint found (controller apply/reconfigure or %s/service/reconfigure); how changes take effect is unknown", c.Module))
 				}
 			}
 			out = append(out, e)
@@ -202,9 +204,9 @@ func classify(e *Endpoint, c *controller.Controller, a *controller.Action, mdl *
 	modelGap := func() {
 		if mdl == nil {
 			if c.ModelClass == "" {
-				e.Gaps = append(e.Gaps, "controller has no $internalModelClass")
+				e.Gaps = append(e.Gaps, gap.New(gap.ModelClassMissing, "controller has no $internalModelClass"))
 			} else {
-				e.Gaps = append(e.Gaps, "model "+c.ModelClass+" not found")
+				e.Gaps = append(e.Gaps, gap.New(gap.ModelMissing, "model %s not found", c.ModelClass))
 			}
 		}
 	}
@@ -228,15 +230,15 @@ func classify(e *Endpoint, c *controller.Controller, a *controller.Action, mdl *
 		modelGap()
 		for _, h := range c.Hooks {
 			if h == "getModelNodes" && a.Name == "get" {
-				e.Gaps = append(e.Gaps, "overrides getModelNodes; response may be a subset of the model")
+				e.Gaps = append(e.Gaps, gap.New(gap.GetModelNodesOverride, "overrides getModelNodes; response may be a subset of the model"))
 			}
 		}
 		if a.DeclaredIn != baseModelCtl {
 			if a.CallsParent {
-				e.Gaps = append(e.Gaps, "overrides "+a.Name+"Action and calls the parent; request/response may differ from the full model (subset or extra keys)")
+				e.Gaps = append(e.Gaps, gap.New(gap.OverrideCallsParent, "overrides %sAction and calls the parent; request/response may differ from the full model (subset or extra keys)", a.Name))
 			} else {
 				e.Source = SourceSignature
-				e.Gaps = append(e.Gaps, "overrides "+a.Name+"Action without calling the parent; shape not derived")
+				e.Gaps = append(e.Gaps, gap.New(gap.OverrideNotDerived, "overrides %sAction without calling the parent; shape not derived", a.Name))
 			}
 		}
 		return
@@ -250,7 +252,7 @@ func classify(e *Endpoint, c *controller.Controller, a *controller.Action, mdl *
 			e.Kind, e.Methods = KindServiceAction, []string{"POST"}
 		}
 		if a.DeclaredIn != baseServiceCtl {
-			e.Gaps = append(e.Gaps, "overrides the base service action; response may differ")
+			e.Gaps = append(e.Gaps, gap.New(gap.ServiceOverride, "overrides the base service action; response may differ"))
 		}
 		return
 	}
@@ -276,12 +278,12 @@ func classify(e *Endpoint, c *controller.Controller, a *controller.Action, mdl *
 			bc = &a.Calls[0]
 		}
 		if len(a.Calls) > 1 {
-			e.Gaps = append(e.Gaps, "action calls several base helpers; documented the one on "+bc.Path)
+			e.Gaps = append(e.Gaps, gap.New(gap.MultipleHelpers, "action calls several base helpers; documented the one on %s", bc.Path))
 		}
 		if bc.Raw != "" {
 			e.Kind, e.Source = KindCustom, SourceSignature
 			e.Methods = []string{"GET", "POST"}
-			e.Gaps = append(e.Gaps, "base helper "+bc.Func+" called with non-literal arguments: "+bc.Raw)
+			e.Gaps = append(e.Gaps, gap.New(gap.HelperNonLiteral, "base helper %s called with non-literal arguments: %s", bc.Func, bc.Raw))
 			return
 		}
 		// a helper used internally by an action of another kind with own
@@ -291,7 +293,7 @@ func classify(e *Endpoint, c *controller.Controller, a *controller.Action, mdl *
 		if !nameFits && a.Lines > thinLines {
 			e.Kind, e.Source = KindCustom, SourceSignature
 			e.Methods = []string{"GET", "POST"}
-			e.Gaps = append(e.Gaps, "custom action using "+bc.Func+" internally; request and response not derived")
+			e.Gaps = append(e.Gaps, gap.New(gap.HelperUsedInternally, "custom action using %s internally; request and response not derived", bc.Func))
 			return
 		}
 		e.Kind, e.Source = itemKinds[bc.Func], SourceBaseCall
@@ -308,15 +310,15 @@ func classify(e *Endpoint, c *controller.Controller, a *controller.Action, mdl *
 		}
 		if mdl != nil {
 			if n := mdl.Find(bc.Path); n == nil {
-				e.Gaps = append(e.Gaps, "path "+bc.Path+" not found in model")
+				e.Gaps = append(e.Gaps, gap.New(gap.ModelPathMissing, "path %s not found in model", bc.Path))
 			} else if n.Kind != model.KindArray {
-				e.Gaps = append(e.Gaps, "path "+bc.Path+" is not an ArrayField")
+				e.Gaps = append(e.Gaps, gap.New(gap.ModelPathNotArray, "path %s is not an ArrayField", bc.Path))
 			}
 		}
 		if a.Lines > thinLines {
-			e.Gaps = append(e.Gaps, "action adds custom logic around "+bc.Func+"; request/response may differ")
+			e.Gaps = append(e.Gaps, gap.New(gap.CustomLogic, "action adds custom logic around %s; request/response may differ", bc.Func))
 		} else if !bc.Direct && (e.Kind == KindItemGet || e.Kind == KindItemSearch) {
-			e.Gaps = append(e.Gaps, "action adds custom logic around "+bc.Func+" (result is post-processed); response may differ")
+			e.Gaps = append(e.Gaps, gap.New(gap.PostProcessed, "action post-processes the result of %s; response may differ", bc.Func))
 		}
 		return
 	}
@@ -329,7 +331,7 @@ func classify(e *Endpoint, c *controller.Controller, a *controller.Action, mdl *
 		e.Methods = []string{"GET"}
 	default:
 		e.Methods = []string{"GET", "POST"}
-		e.Gaps = append(e.Gaps, "HTTP method not derived")
+		e.Gaps = append(e.Gaps, gap.New(gap.MethodUnknown, "HTTP method not derived"))
 	}
-	e.Gaps = append(e.Gaps, "custom action; request and response not derived")
+	e.Gaps = append(e.Gaps, gap.New(gap.CustomAction, "custom action; request and response not derived"))
 }

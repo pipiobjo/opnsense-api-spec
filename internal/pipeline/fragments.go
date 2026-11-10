@@ -1,4 +1,4 @@
-package main
+package pipeline
 
 import (
 	"crypto/sha256"
@@ -31,7 +31,7 @@ func writeIfAbsent(path string, v any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return writeJSON(path, v)
+	return WriteJSON(path, v)
 }
 
 func shortHash(v any) (string, error) {
@@ -83,13 +83,14 @@ func writeFragments(rel *ir.Release, dist, releaseDir string, status fragment.St
 	if err := os.MkdirAll(filepath.Join(releaseDir, "compositions"), 0o755); err != nil {
 		return nil, err
 	}
-	if err := writeJSON(filepath.Join(releaseDir, "compositions", comp.ID()+".json"), comp); err != nil {
+	if err := WriteJSON(filepath.Join(releaseDir, "compositions", comp.ID()+".json"), comp); err != nil {
 		return nil, err
 	}
-	return comp, writeJSON(filepath.Join(releaseDir, "composition.json"), comp)
+	return comp, WriteJSON(filepath.Join(releaseDir, "composition.json"), comp)
 }
 
-func readComposition(path string) (*fragment.Composition, error) {
+// ReadComposition loads a composition file.
+func ReadComposition(path string) (*fragment.Composition, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -100,12 +101,12 @@ func readComposition(path string) (*fragment.Composition, error) {
 
 // currentCatalog returns the SHA-256 of the signed packagesite.yaml as it is
 // on the mirror now (always downloaded, unless offline).
-func currentCatalog(c *pkgrepo.Client, r pkgrepo.Release) (string, string, error) {
-	cat, err := c.FetchCatalog(r)
+func (p *Pipeline) currentCatalog(r pkgrepo.Release) (string, string, error) {
+	cat, err := p.Client.FetchCatalog(r)
 	if err != nil {
 		return "", "", err
 	}
-	if _, err := pkgrepo.VerifyCatalog(cat, pkgrepo.Keys, true); err != nil {
+	if _, err := pkgrepo.VerifyCatalog(cat, p.Keys, true); err != nil {
 		return "", "", err
 	}
 	core, _ := cat.Lookup("opnsense")
@@ -145,15 +146,15 @@ func addUnique(list []string, v string) []string {
 	return append(list, v)
 }
 
-// buildIndex scans dist/<release>/compositions and writes dist/index.json.
-func buildIndex(dist string) error {
+// BuildIndex scans dist/<release>/compositions and writes dist/index.json.
+func BuildIndex(dist string) error {
 	idx := Index{Generator: ir.GeneratorVersion, Fragments: map[string]map[string]*IndexFragmentUse{}}
 	dirs, err := os.ReadDir(dist)
 	if err != nil {
 		return err
 	}
 	for _, d := range dirs {
-		cur, err := readComposition(filepath.Join(dist, d.Name(), "composition.json"))
+		cur, err := ReadComposition(filepath.Join(dist, d.Name(), "composition.json"))
 		if err != nil {
 			continue // not a release directory
 		}
@@ -161,7 +162,7 @@ func buildIndex(dist string) error {
 		comps, _ := filepath.Glob(filepath.Join(dist, d.Name(), "compositions", "*.json"))
 		sort.Strings(comps)
 		for _, p := range comps {
-			c, err := readComposition(p)
+			c, err := ReadComposition(p)
 			if err != nil {
 				return err
 			}
@@ -202,5 +203,5 @@ func buildIndex(dist string) error {
 			sort.Strings(u.Compositions)
 		}
 	}
-	return writeJSON(filepath.Join(dist, "index.json"), idx)
+	return WriteJSON(filepath.Join(dist, "index.json"), idx)
 }

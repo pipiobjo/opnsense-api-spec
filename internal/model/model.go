@@ -4,7 +4,9 @@ package model
 
 import (
 	"encoding/xml"
+
 	"fmt"
+	"github.com/pipiobjo/opnsense-api-spec/internal/gap"
 	"io"
 	"os"
 	"path/filepath"
@@ -52,7 +54,7 @@ type Node struct {
 	Options  []Option          `json:"options,omitempty"`
 	Props    map[string]string `json:"props,omitempty"` // other scalar settings (Mask, MinimumValue, Separator, ...)
 	Children []*Node           `json:"children,omitempty"`
-	Gaps     []string          `json:"gaps,omitempty"`
+	Gaps     []gap.Gap         `json:"gaps,omitempty"`
 }
 
 // Model is one parsed model XML.
@@ -245,21 +247,22 @@ func (t *TypeIndex) baseName(key string) string {
 
 // readShape applies class overrides (getNodeData/getNodeOptions) and the
 // AsList default to the shape derived from the base class.
-func (t *TypeIndex) readShape(chain []string, base string, shape Shape, multiple bool, xmlAsList string) (Shape, string) {
+func (t *TypeIndex) readShape(chain []string, base string, shape Shape, multiple bool, xmlAsList string) (Shape, *gap.Gap) {
 	for _, c := range chain {
 		if defaultShapeClasses[c] {
 			break
 		}
 		switch t.readOverride[c] {
 		case "string":
-			return ShapeString, ""
+			return ShapeString, nil
 		case "string-unless-multiple":
 			if multiple {
-				return ShapeSelect, ""
+				return ShapeSelect, nil
 			}
-			return ShapeString, ""
+			return ShapeString, nil
 		case "custom":
-			return shape, "custom getNodeData/getNodeOptions in " + t.baseName(c) + "; read shape may differ"
+			g := gap.New(gap.CustomReadShape, "custom getNodeData/getNodeOptions in %s; read shape may differ", t.baseName(c))
+			return shape, &g
 		}
 	}
 	if base == "BaseSetField" {
@@ -277,11 +280,11 @@ func (t *TypeIndex) readShape(chain []string, base string, shape Shape, multiple
 			asList = false
 		}
 		if asList {
-			return ShapeSelect, ""
+			return ShapeSelect, nil
 		}
-		return ShapeString, ""
+		return ShapeString, nil
 	}
-	return shape, ""
+	return shape, nil
 }
 
 // classify picks base type and read shape from a resolved chain.
@@ -423,7 +426,7 @@ func convert(x *xnode, ns string, types *TypeIndex) *Node {
 	n.Kind = KindField
 	n.Shape = shape
 	if !known {
-		n.Gaps = append(n.Gaps, "field type "+typ+" not resolved to a core base class")
+		n.Gaps = append(n.Gaps, gap.New(gap.FieldTypeUnresolved, "field type %s not resolved to a core base class", typ))
 	}
 	for i := range x.Children {
 		c := &x.Children[i]
@@ -450,14 +453,14 @@ func convert(x *xnode, ns string, types *TypeIndex) *Node {
 		}
 	}
 	if known {
-		var gap string
-		n.Shape, gap = types.readShape(chain, base, n.Shape, n.Multiple, n.Props["AsList"])
-		if gap != "" {
-			n.Gaps = append(n.Gaps, gap)
+		var g *gap.Gap
+		n.Shape, g = types.readShape(chain, base, n.Shape, n.Multiple, n.Props["AsList"])
+		if g != nil {
+			n.Gaps = append(n.Gaps, *g)
 		}
 	}
 	if base == "BaseListField" && n.Options == nil && n.Type == "OptionField" {
-		n.Gaps = append(n.Gaps, "OptionField without static OptionValues")
+		n.Gaps = append(n.Gaps, gap.New(gap.OptionsDynamic, "OptionField without static OptionValues"))
 	}
 	return n
 }

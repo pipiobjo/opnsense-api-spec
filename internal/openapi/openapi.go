@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/pipiobjo/opnsense-api-spec/internal/gap"
 	"github.com/pipiobjo/opnsense-api-spec/internal/ir"
 	"github.com/pipiobjo/opnsense-api-spec/internal/model"
 	"github.com/pipiobjo/opnsense-api-spec/internal/verify"
@@ -76,7 +77,7 @@ func RenderVerified(rel *ir.Release, ver *verify.Report) (M, Coverage) {
 		if len(e.Gaps) > 0 {
 			r.cov.WithGaps++
 			for _, g := range e.Gaps {
-				r.cov.GapsByReason[gapReason(g)]++
+				r.cov.GapsByReason[string(g.Code)]++
 			}
 		}
 	}
@@ -148,16 +149,6 @@ Known limitations (see x-opnsense-derivation on each operation and x-opnsense-co
 - Not yet verified against a running instance (no x-opnsense-verified markers).`, rel.Version, c.WithGaps, c.Operations)
 }
 
-func gapReason(g string) string {
-	for _, p := range []string{"custom action", "HTTP method not derived", "overrides", "action adds custom logic",
-		"action calls several", "base helper", "no apply endpoint", "path ", "model ", "controller has no", "parent class"} {
-		if strings.HasPrefix(g, p) {
-			return p
-		}
-	}
-	return g
-}
-
 func countFields(n *model.Node, c *Coverage) {
 	if n.Kind == model.KindField {
 		c.Fields++
@@ -213,7 +204,7 @@ func (r *renderer) operation(e *ir.Endpoint, v variant, method string) M {
 			"source":      e.Source,
 			"kind":        e.Kind,
 			"declared_in": e.DeclaredIn,
-			"gaps":        nonNil(e.Gaps),
+			"gaps":        nonNilGaps(e.Gaps),
 		},
 	}
 	if e.Apply != "" {
@@ -315,6 +306,13 @@ func (r *renderer) operation(e *ir.Endpoint, v variant, method string) M {
 		op["parameters"] = params
 	}
 	return op
+}
+
+func nonNilGaps(g []gap.Gap) []gap.Gap {
+	if g == nil {
+		return []gap.Gap{}
+	}
+	return g
 }
 
 func nonNil(s []string) []string {
@@ -544,12 +542,7 @@ func (r *renderer) itemSchemas(m *model.Model, n *model.Node, base, path string)
 }
 
 func readShapeUncertain(n *model.Node) bool {
-	for _, g := range n.Gaps {
-		if strings.Contains(g, "read shape may differ") {
-			return true
-		}
-	}
-	return false
+	return gap.Has(n.Gaps, gap.CustomReadShape)
 }
 
 func fieldSchema(n *model.Node, dir string) M {
@@ -617,9 +610,9 @@ func fieldSchema(n *model.Node, dir string) M {
 			}
 		}
 		if !found {
-			gap := fmt.Sprintf("default %q is not a valid value for %s (upstream model error)", *n.Default, n.Type)
-			gaps, _ := s["x-opnsense-gaps"].([]string)
-			s["x-opnsense-gaps"] = append(append([]string{}, gaps...), gap)
+			g := gap.New(gap.InvalidDefault, "default %q is not a valid value for %s (upstream model error)", *n.Default, n.Type)
+			gaps, _ := s["x-opnsense-gaps"].([]gap.Gap)
+			s["x-opnsense-gaps"] = append(append([]gap.Gap{}, gaps...), g)
 			if dir == "Read" {
 				s["enum"] = append(append([]string{}, enum...), *n.Default)
 			}
@@ -696,12 +689,6 @@ func (r *renderer) markNameCollisions() {
 	walk(r.schemas)
 }
 
-const runtimeRequiredPrefix = "add with server defaults rejected; runtime-required: "
-
-// runtimeRequired copies the fields an instance rejected as missing (from a
-// verify run) onto the entry Write schemas as x-opnsense-runtime-required.
-// They include fields enforced by PHP validation that the model XML does not
-// mark as Required.
 func (r *renderer) runtimeRequired(rel *ir.Release) {
 	if r.ver == nil {
 		return
@@ -711,14 +698,7 @@ func (r *renderer) runtimeRequired(rel *ir.Release) {
 			continue
 		}
 		for _, res := range r.verByPath[e.Path] {
-			for _, f := range res.Findings {
-				if !strings.HasPrefix(f, runtimeRequiredPrefix) {
-					continue
-				}
-				var fields []string
-				for _, k := range strings.Split(strings.TrimPrefix(f, runtimeRequiredPrefix), ", ") {
-					fields = append(fields, strings.TrimPrefix(k, e.Wrapper+"."))
-				}
+			if fields := res.RuntimeRequired; len(fields) > 0 {
 				name := r.modelSchema(e.Model) + "." + e.ModelPath + ".Write"
 				if s, ok := r.schemas[name].(M); ok {
 					s["x-opnsense-runtime-required"] = M{

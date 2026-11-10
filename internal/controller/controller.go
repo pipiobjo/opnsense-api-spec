@@ -5,6 +5,8 @@ package controller
 
 import (
 	"os"
+
+	"github.com/pipiobjo/opnsense-api-spec/internal/gap"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -71,7 +73,7 @@ type Controller struct {
 	ModelClass string    `json:"model_class,omitempty"`
 	Hooks      []string  `json:"hooks,omitempty"` // overridden hooks (getModelNodes, ...)
 	Actions    []*Action `json:"actions"`
-	Gaps       []string  `json:"gaps,omitempty"`
+	Gaps       []gap.Gap `json:"gaps,omitempty"`
 }
 
 var (
@@ -403,7 +405,7 @@ func Resolve(classes map[string]*Class) []*Controller {
 			if next == nil {
 				ctl.Chain = append(ctl.Chain, cur.Extends+" (not found)")
 				if !strings.HasPrefix(cur.Extends, `OPNsense\Mvc\`) {
-					ctl.Gaps = append(ctl.Gaps, "parent class "+cur.Extends+" not found; inherited actions missing")
+					ctl.Gaps = append(ctl.Gaps, gap.New(gap.ParentMissing, "parent class %s not found; inherited actions missing", cur.Extends))
 				}
 			}
 			cur = next

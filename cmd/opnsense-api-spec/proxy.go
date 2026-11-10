@@ -20,8 +20,8 @@ import (
 // installed one, which the firmware requires before installing plugins.
 // Files are passed through unchanged (pkg in the VM verifies signatures
 // and checksums itself) and cached on disk.
-func proxy(c *pkgrepo.Client, o opts, listen string) error {
-	r, err := c.FindRelease(o.arch, o.release)
+func proxy(c *pkgrepo.Client, arch, release, listen string) error {
+	r, err := c.FindRelease(arch, release)
 	if err != nil {
 		return err
 	}

@@ -176,10 +176,37 @@ The generator never guesses. Every operation carries
 | `base-call` | the action returns a generic helper's result directly; typed |
 | `signature-only` | only path and parameters are known; untyped |
 
-`gaps` lists what the generator noticed but could not resolve (overridden
-actions, post-processed helper results, custom field read shapes, unknown
-patterns, missing apply endpoint). The document also carries
-`x-opnsense-coverage`, and each release has a `coverage.md`.
+`gaps` lists what the generator noticed but could not resolve, as
+`{"code": ..., "detail": ...}`. Behaviour (of this generator and of
+consumers) must depend only on the stable `code`; `detail` is for humans
+and may be reworded. Operations with `source: signature-only` are never
+typed, whatever their kind.
+
+| Code | Meaning |
+|---|---|
+| `custom-action` | own action; request and response not derived |
+| `http-method-unknown` | HTTP method not derivable |
+| `override-calls-parent` | overrides a generic action and calls the parent; may return a subset or extra keys |
+| `override-not-derived` | overrides a generic action without the parent; untyped |
+| `service-override` | overrides a generic service action |
+| `get-model-nodes-override` | `getModelNodes` overridden; `get` may return a subset |
+| `custom-logic` | own code around a generic helper |
+| `post-processed` | the helper result is transformed before it is returned |
+| `helper-used-internally` | custom action that uses a helper internally; untyped |
+| `multiple-helpers` | several helper calls; the one matching the action is documented |
+| `helper-non-literal` | helper called with non-literal arguments; untyped |
+| `no-apply-endpoint` | no apply/reconfigure endpoint found |
+| `model-class-missing`, `model-missing`, `model-path-missing`, `model-path-not-array`, `parent-missing` | the controller refers to something that was not found |
+| `field-type-unresolved` | field type not resolved to a core base class (field level) |
+| `custom-read-shape` | custom `getNodeData`/`getNodeOptions`; read shape untyped (field level) |
+| `options-dynamic` | option list depends on the running system (field level) |
+| `invalid-default` | default outside the allowed values; an upstream model error (field level) |
+
+Codes counted as "the instance may answer with another shape"
+(`override-*`, `service-override`, `get-model-nodes-override`,
+`custom-logic`, `post-processed`) turn contract-test mismatches into
+`known-gap`. The document also carries `x-opnsense-coverage` (gaps counted
+by code), and each release has a `coverage.md`.
 
 Further extensions: `x-opnsense-package` (which package provides an
 operation, with alternatives), `x-opnsense-apply` (the call that activates
