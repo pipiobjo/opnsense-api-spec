@@ -287,6 +287,12 @@ func checkReachable(c *Client, e *ir.Endpoint, method string) *Result {
 // compare the response object with the model node (Read shape)
 func compareNode(n *model.Node, v any, path string, out *[]string) {
 	obj, ok := v.(map[string]any)
+	if arr, isArr := v.([]any); isArr && len(arr) == 0 {
+		obj, ok = map[string]any{}, true // PHP encodes an empty object as []
+		if len(n.Children) == 0 {
+			return
+		}
+	}
 	if !ok {
 		*out = append(*out, fmt.Sprintf("%s: expected object, got %T", path, v))
 		return

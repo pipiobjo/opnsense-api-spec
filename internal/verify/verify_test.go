@@ -56,3 +56,26 @@ func TestCompareNode(t *testing.T) {
 		t.Errorf("findings %v, want %v", out, want)
 	}
 }
+
+func TestApplyAccepted(t *testing.T) {
+	rep := &Report{Release: "26.1.6", Results: []*Result{
+		{Path: "/api/x/get", Check: "reachable", Status: "error"},
+		{Path: "/api/x/get", Check: "schema", Status: "mismatch"},
+		{Path: "/api/y/get", Check: "reachable", Status: "error"},
+	}}
+	n := ApplyAccepted(rep, []Accepted{
+		{Path: "/api/x/get", Check: "reachable", Releases: "26.1.*", Reason: "upstream 500", Evidence: "VM run"},
+		{Path: "/api/y/get", Check: "reachable", Releases: "26.7*", Reason: "other series", Evidence: "x"},
+	})
+	if n != 1 || rep.Results[0].Status != "accepted" || rep.Results[1].Status != "mismatch" || rep.Results[2].Status != "error" {
+		t.Errorf("accepted: n=%d %+v %+v %+v", n, rep.Results[0], rep.Results[1], rep.Results[2])
+	}
+}
+
+func TestCompareNodeEmptyModel(t *testing.T) {
+	var out []string
+	compareNode(&model.Node{Kind: model.KindContainer}, []any{}, "", &out)
+	if len(out) != 0 {
+		t.Errorf("empty model as [] must be fine: %v", out)
+	}
+}

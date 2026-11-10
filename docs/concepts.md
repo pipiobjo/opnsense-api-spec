@@ -312,8 +312,11 @@ explain its result:
 | contract test without mismatches outside known gaps and accepted findings | publish; regressions and framework changes go into the release notes |
 | contract test with new mismatches | do not publish; report with the quality report (framework changes, regressions) as context |
 
-Accepted findings (known upstream issues, e.g. broken chunked encoding
-over HTTP/1.1) need a reviewed list in the repository (planned).
+Accepted findings (known upstream issues or intended behaviour, e.g.
+broken chunked encoding over HTTP/1.1, the captive portal client API) are
+listed in `verify/accepted.json` with reason and evidence; matching
+results become `accepted` and do not count as failures. Adding an entry is
+a reviewed decision.
 
 ## 9. Consumers: clients and providers (planned)
 

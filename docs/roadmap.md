@@ -46,9 +46,12 @@ generator changes.
    21 of 32 transitions, so these are reports, not gates; the gate is the
    contract test per new composition (concepts 8.1). The index records
    which composition was verified (`needs_verification`).
-3a. **Accepted findings.** A reviewed list (path, check, reason, upstream
-   link) so that known upstream issues do not block publishing forever
-   (26.7 today: 6 findings, e.g. chunked encoding, captive portal `api`).
+3a. ~~**Accepted findings.**~~ Done (2026-11-11): `verify/accepted.json`
+   (path, check, release glob, reason, evidence, optional upstream link);
+   matching results become `accepted`. With the current generator 26.7 and
+   26.1.6 (all 69 API plugins) have 0 failures left: 2 accepted each
+   (captive portal client API by design, chunked encoding over HTTP/1.1,
+   os-udpbroadcastrelay HTTP 500 on 26.1.6). New entries need review.
 4. **Contract tests per release.** Boot the series image, update it through
    the package proxy to exactly the target release, install plugins, run
    `verify`. Today only image versions (26.7, 26.1.6) are tested.

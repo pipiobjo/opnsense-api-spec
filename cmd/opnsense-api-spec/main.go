@@ -84,6 +84,7 @@ func main() {
 	listen := fs.String("listen", "127.0.0.1:18080", "")
 	keysPath := fs.String("keys", "internal/pkgrepo/keys.json", "")
 	floor := fs.String("series-floor", "25.7", "")
+	accepted := fs.String("accepted", "verify/accepted.json", "")
 	fs.Usage = usage
 	_ = fs.Parse(args)
 	c := pkgrepo.NewClient(o.base, o.cache)
@@ -137,7 +138,7 @@ func main() {
 		if o.irFile == "" || o.url == "" || o.keyfile == "" {
 			usage()
 		}
-		err = cmdVerify(o)
+		err = cmdVerify(o, accepted)
 	case "proxy":
 		if o.release == "" {
 			usage()
@@ -163,7 +164,7 @@ func cmdReleases(c *pkgrepo.Client, arch string) error {
 	return nil
 }
 
-func cmdVerify(o opts) error {
+func cmdVerify(o opts, accepted *string) error {
 	rel, err := pipeline.ReadIR(o.irFile)
 	if err != nil {
 		return err
@@ -197,6 +198,13 @@ func cmdVerify(o opts) error {
 	}
 	fmt.Fprintf(os.Stderr, "testing endpoints of %d installed/selected packages\n", len(pk))
 	rep := verify.Run(c, rel, pk, o.write)
+	if acc, err := verify.LoadAccepted(*accepted); err == nil {
+		if n := verify.ApplyAccepted(rep, acc); n > 0 {
+			fmt.Fprintf(os.Stderr, "%d finding(s) accepted per %s\n", n, *accepted)
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
 	// record which catalog state was tested (dist/<release>/composition.json)
 	if comp, err := pipeline.ReadComposition(filepath.Join(filepath.Dir(o.irFile), "composition.json")); err == nil {
 		rep.Composition = comp.ID()
