@@ -13,6 +13,7 @@ import (
 	"github.com/pipiobjo/opnsense-api-spec/internal/ir"
 	"github.com/pipiobjo/opnsense-api-spec/internal/openapi"
 	"github.com/pipiobjo/opnsense-api-spec/internal/pkgrepo"
+	"github.com/pipiobjo/opnsense-api-spec/internal/schemacheck"
 	"github.com/pipiobjo/opnsense-api-spec/internal/verify"
 )
 
@@ -66,17 +67,28 @@ func writeFragments(rel *ir.Release, dist, releaseDir string, status fragment.St
 	if err := writeIfAbsent(filepath.Join(dist, "fragments", "common", commonHash+".openapi.json"), common); err != nil {
 		return nil, err
 	}
+	commonURL := "file:///fragments/common/" + commonHash + ".openapi.json"
 	frags := fragment.Split(rel)
 	for _, f := range frags {
 		h := f.Hash()
 		dir := filepath.Join(dist, "fragments", f.Package)
 		sub := *rel
 		sub.Models, sub.Endpoints = f.Models, f.Endpoints
+		// the IR fragment is content-addressed and never changes ...
 		if err := writeIfAbsent(filepath.Join(dir, h+".ir.json"), f); err != nil {
 			return nil, err
 		}
+		// ... its OpenAPI rendering follows the current generator
+		// (x-generator), so it is written on every build
 		doc, _ := openapi.RenderFragment(&sub, f.Package, h, "../common/"+commonHash+".openapi.json")
-		if err := writeIfAbsent(filepath.Join(dir, h+".openapi.json"), doc); err != nil {
+		url := "file:///fragments/" + f.Package + "/" + h + ".openapi.json"
+		if v := schemacheck.ValidateDocumentAt(doc, url, map[string]any{commonURL: common}); len(v) > 0 {
+			return nil, fmt.Errorf("fragment %s %s is not a valid OpenAPI 3.1 document:\n  %s", f.Package, h, strings.Join(v, "\n  "))
+		}
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, err
+		}
+		if err := WriteJSON(filepath.Join(dir, h+".openapi.json"), doc); err != nil {
 			return nil, err
 		}
 	}
@@ -236,5 +248,33 @@ func BuildIndex(dist string) error {
 			sort.Strings(u.Compositions)
 		}
 	}
+	if err := pruneFragments(dist, idx.Fragments); err != nil {
+		return err
+	}
 	return WriteJSON(filepath.Join(dist, "index.json"), idx)
+}
+
+// pruneFragments deletes fragment files no composition refers to (left
+// over from older generator versions). Common documents are kept.
+func pruneFragments(dist string, used map[string]map[string]*IndexFragmentUse) error {
+	files, _ := filepath.Glob(filepath.Join(dist, "fragments", "*", "*.json"))
+	for _, f := range files {
+		pkg := filepath.Base(filepath.Dir(f))
+		if pkg == "common" {
+			continue
+		}
+		hash := strings.SplitN(filepath.Base(f), ".", 2)[0]
+		if used[pkg][hash] == nil {
+			if err := os.Remove(f); err != nil {
+				return err
+			}
+		}
+	}
+	dirs, _ := filepath.Glob(filepath.Join(dist, "fragments", "*"))
+	for _, d := range dirs {
+		if rest, _ := os.ReadDir(d); len(rest) == 0 {
+			_ = os.Remove(d)
+		}
+	}
+	return nil
 }

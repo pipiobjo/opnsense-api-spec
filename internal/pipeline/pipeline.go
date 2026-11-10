@@ -22,6 +22,7 @@ import (
 	"github.com/pipiobjo/opnsense-api-spec/internal/openapi"
 	"github.com/pipiobjo/opnsense-api-spec/internal/pkgrepo"
 	"github.com/pipiobjo/opnsense-api-spec/internal/quality"
+	"github.com/pipiobjo/opnsense-api-spec/internal/schemacheck"
 	"github.com/pipiobjo/opnsense-api-spec/internal/verify"
 )
 
@@ -266,6 +267,9 @@ func (p *Pipeline) Build(version string, plugins bool, out string) (string, erro
 	refs, defined := openapi.Refs(doc)
 	if v := quality.Invariants(rel, refs, defined); len(v) > 0 {
 		return "", fmt.Errorf("%s: %d invariant violation(s), not writing outputs:\n  %s", version, len(v), strings.Join(v, "\n  "))
+	}
+	if v := schemacheck.ValidateDocument(doc); len(v) > 0 {
+		return "", fmt.Errorf("%s: not a valid OpenAPI 3.1 document, not writing outputs:\n  %s", version, strings.Join(v, "\n  "))
 	}
 	if err := os.MkdirAll(out, 0o755); err != nil {
 		return "", err

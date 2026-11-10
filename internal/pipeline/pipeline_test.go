@@ -356,6 +356,20 @@ func TestMatrixLifecycle(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(p.Dist, "26.7.2", "26.7.1..26.7.2.md")); err != nil {
 		t.Errorf("diff to the previous release missing: %v", err)
 	}
+	// the core fragment from before the hotfix is still referenced by the
+	// kept composition of the first catalog state, so it must survive
+	if _, err := os.Stat(filepath.Join(p.Dist, "fragments", "opnsense", coreBefore+".ir.json")); err != nil {
+		t.Errorf("fragment of a kept composition was pruned: %v", err)
+	}
+	// an orphan (no composition refers to it) is removed
+	orphan := filepath.Join(p.Dist, "fragments", "os-extra", "0000000000000000.ir.json")
+	_ = os.WriteFile(orphan, []byte("{}"), 0o644)
+	if err := BuildIndex(p.Dist); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(orphan); !os.IsNotExist(err) {
+		t.Error("orphan fragment must be pruned")
+	}
 }
 
 // A cached package that no longer matches the catalog is fetched again.

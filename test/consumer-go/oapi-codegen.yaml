@@ -1,0 +1,12 @@
+# Settings a consumer needs for the generated Go client (see ADR 0007):
+# - always-prefix-enum-values: some enum values collide with generated type
+#   names (e.g. OpenVPN role "client" vs. the Client type)
+package: opnsense
+generate:
+  models: true
+  client: true
+output: opnsense/client.gen.go
+output-options:
+  skip-prune: true
+compatibility:
+  always-prefix-enum-values: true

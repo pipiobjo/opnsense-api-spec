@@ -81,7 +81,7 @@ func RenderVerified(rel *ir.Release, ver *verify.Report) (M, Coverage) {
 			}
 		}
 	}
-	var tagList []M
+	tagList := []M{} // [] not null: a fragment may have models but no operations
 	for t := range tags {
 		tagList = append(tagList, M{"name": t})
 	}

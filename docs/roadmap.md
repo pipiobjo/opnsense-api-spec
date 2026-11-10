@@ -19,7 +19,7 @@ State and reasoning: [concepts.md](concepts.md), decisions:
 | Previous release becomes `final` | next run | same | automatic |
 | Contract tests | the VM tests the image version only (26.7), not 26.7.9 | `prepare 27.1`; image naming and announcement path must match | manual, image versions only |
 | Detect silent breakage (framework changes) | regression report, framework fingerprint | same | automatic (reports); gate is the contract test |
-| Client smoke test (oapi-codegen) | - | - | manual |
+| Client smoke test (oapi-codegen) | `tools/client-smoke.sh` | same | scripted, not scheduled |
 | Publish | - | - | missing |
 
 What stays human by nature (and must be reported automatically): adapting
@@ -55,9 +55,13 @@ generator changes.
 5. ~~**Key chain and series list.**~~ Done (2026-11-11): the signed chain is
    re-derived on every run (ADR 0005); `matrix -series all` takes every
    series from `-series-floor` (25.7) on the mirror.
-6. **Client scenario test in the repository.** The provider-style scenario
-   with the generated Go client lives outside the repository; make it a
-   blocking gate (ADR 0007), with OpenAPI 3.1 validation.
+6. ~~**Client scenario test in the repository.**~~ Done (2026-11-11):
+   `test/consumer-go/` (own module, pinned oapi-codegen v2.8.2 and runtime
+   v1.8.0) and `tools/client-smoke.sh`; OpenAPI 3.1 validation of every
+   release and fragment document stops the build. The gate found a
+   fragment without operations rendered with `tags: null`, and fragment
+   renderings that were never refreshed after generator changes (now
+   rewritten on every build; orphaned fragments are pruned).
 7. **Pipeline and publishing.** Scheduled workflow, GitHub release assets
    (later OCI), an issue with diff and findings on failure, nothing
    published on failure.

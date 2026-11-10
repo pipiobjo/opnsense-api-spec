@@ -69,3 +69,20 @@ func TestValidate(t *testing.T) {
 		t.Errorf("unknown operation must be reported: %v", f)
 	}
 }
+
+func TestValidateDocument(t *testing.T) {
+	var d any
+	_ = json.Unmarshal([]byte(doc), &d)
+	if f := ValidateDocument(d); len(f) != 0 {
+		t.Errorf("valid document: %v", f)
+	}
+	var bad map[string]any
+	_ = json.Unmarshal([]byte(doc), &bad)
+	delete(bad, "info")                                                                                  // required by OpenAPI
+	bad["components"].(map[string]any)["schemas"].(map[string]any)["Broken"] = map[string]any{"type": 5} // invalid JSON Schema
+	f := ValidateDocument(bad)
+	joined := strings.Join(f, "\n")
+	if !strings.Contains(joined, "info") || !strings.Contains(joined, "Broken") {
+		t.Errorf("want findings for missing info and the broken schema, got:\n%s", joined)
+	}
+}

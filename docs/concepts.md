@@ -266,10 +266,10 @@ fields. See section 9.
 | Unit tests with fixtures | parser, signature/checksums, classification, rendering, diff, verifier | implemented (`go test ./...`) |
 | Live tests on real packages | the parser resolves every model and field type of a real release | implemented (skipped without downloaded sources) |
 | Release matrix and diffs | every release from 25.7 on, changes between consecutive releases | implemented |
-| OpenAPI validation | the document is valid OpenAPI 3.1 | planned (blocking) |
-| Client functional test | a provider-style scenario with the generated Go client against the test VM: version detection, settings get/partial set/read back, apply, entry add/get/set/search/delete, select fields, validation errors | done manually on 26.7 (14/14 after fixing empty entry lists); automation planned |
+| OpenAPI validation | every release and fragment document is valid against the official OpenAPI 3.1 schema, and every component schema compiles as JSON Schema 2020-12 (fragments together with their common document) | implemented; stops the build |
+| Client functional test | a provider-style scenario with the generated Go client against the test VM: version detection, settings get/partial set/read back, apply, entry add/get/set/search/delete, select fields, validation errors | implemented (`tools/client-smoke.sh <release> --run`, `test/consumer-go/`); 14/14 on 26.7 |
 | Response schema validation | every response of the contract tests validated against the rendered OpenAPI schema (JSON Schema 2020-12), not only against the model, so that decoding problems of generated clients show up generically | implemented (`schema` checks in `verify`) |
-| Consumer smoke test | a Go client generated with oapi-codegen compiles (blocking); openapi-generator for other languages (informational) | done manually; automation planned ([ADR 0007](adr/0007-openapi-3-1.md)) |
+| Consumer smoke test | a Go client generated with oapi-codegen (pinned v2.8.2) compiles together with the scenario (blocking); openapi-generator for other languages (informational) | Go: `tools/client-smoke.sh <release>`; openapi-generator: manual ([ADR 0007](adr/0007-openapi-3-1.md)) |
 | Contract tests | every GET against a real instance, add -> get -> delete per entry list, with all plugins with an API installed | implemented (`tools/testvm.sh`), manual, image versions only |
 | Golden tests | fragment hashes of final releases (25.7.10, 26.1.10, 26.7.7) checked in; a generator change that alters the derived API of an existing release fails per package | implemented (`internal/assemble`, needs extracted sources) |
 | Determinism | two builds from the same sources give identical IR, OpenAPI and fragment hashes | implemented (`internal/assemble`) |
