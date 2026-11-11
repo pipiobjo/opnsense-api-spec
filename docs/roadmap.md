@@ -17,7 +17,7 @@ State and reasoning: [concepts.md](concepts.md), decisions:
 | Signing key | - | learned from the last patch release of the previous series | automatic (ADR 0005) |
 | Hotfix under the same release number | catalog hash differs -> rebuild | same | automatic, tested against a fake mirror |
 | Previous release becomes `final` | next run | same | automatic |
-| Contract tests | the VM tests the image version only (26.7), not 26.7.9 | `prepare 27.1`; image naming and announcement path must match | manual, image versions only |
+| Contract tests | `testvm.sh verify 26.7 --release 26.7.9 --plugins` | `prepare 27.1` (image naming and announcement path must match) | scripted per release, not scheduled |
 | Detect silent breakage (framework changes) | regression report, framework fingerprint | same | automatic (reports); gate is the contract test |
 | Client smoke test (oapi-codegen) | `tools/client-smoke.sh` | same | scripted, not scheduled |
 | Publish | - | - | missing |
@@ -52,9 +52,13 @@ generator changes.
    26.1.6 (all 69 API plugins) have 0 failures left: 2 accepted each
    (captive portal client API by design, chunked encoding over HTTP/1.1,
    os-udpbroadcastrelay HTTP 500 on 26.1.6). New entries need review.
-4. **Contract tests per release.** Boot the series image, update it through
-   the package proxy to exactly the target release, install plugins, run
-   `verify`. Today only image versions (26.7, 26.1.6) are tested.
+4. ~~**Contract tests per release.**~~ Done (2026-11-11):
+   `tools/testvm.sh verify <series> --release <target> --plugins` boots the
+   series image, updates it through the proxy to exactly the target
+   (packages from the target snapshot, FreeBSD base/kernel sets from the
+   series), installs all API plugins and runs `verify`. 26.7 -> 26.7.5:
+   69/69 plugins, 0 failures, 7 minutes. Plugin success is taken from the
+   installed package list, job completion from the firmware lock.
 5. ~~**Key chain and series list.**~~ Done (2026-11-11): the signed chain is
    re-derived on every run (ADR 0005); `matrix -series all` takes every
    series from `-series-floor` (25.7) on the mirror.

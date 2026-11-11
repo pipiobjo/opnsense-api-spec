@@ -8,8 +8,11 @@
 #                                  install plugins (default: all with an API
 #                                  in the IR) through the package proxy
 #   tools/testvm.sh down           stop the VM (and proxy), delete the overlay
-#   tools/testvm.sh verify 26.7 [--plugins]
-#                                  up + apikey [+ plugins] + contract tests + down
+#   tools/testvm.sh update 26.7.5  update the running VM to exactly that
+#                                  release (through the package proxy)
+#   tools/testvm.sh verify 26.7 [--release 26.7.5] [--plugins]
+#                                  up + apikey [+ update] [+ plugins]
+#                                  + contract tests + down
 #
 # Isolation: user-mode networking with restrict=on (no route to the LAN or the
 # internet). The only way in is a port forward on 127.0.0.1:${PORT:-18443} to
@@ -46,8 +49,12 @@ image_version() {
     | head -1 | sed -E "s/^OPNsense-(.*)-nano-amd64.*/\1/"
 }
 
-# release running in the VM built from base-<series>.qcow2
-vm_version() { cat "$VM/base-$1.version" 2>/dev/null || echo "$1"; }
+# release running in the VM built from base-<series>.qcow2, or the release
+# it was updated to (TARGET)
+vm_version() {
+  if [ -n "${TARGET:-}" ]; then echo "$TARGET"; return; fi
+  cat "$VM/base-$1.version" 2>/dev/null || echo "$1"
+}
 
 prepare() {
   local series="$1" d="$IMG/$1" v n
@@ -148,26 +155,97 @@ down() {
   if [ -f "$VM/proxy.pid" ] && kill -0 "$(cat "$VM/proxy.pid")" 2>/dev/null; then
     kill "$(cat "$VM/proxy.pid")"; echo "proxy stopped"
   fi
-  rm -f "$VM/qemu.pid" "$VM/proxy.pid" "$VM/run.qcow2" "$VM/apikey.json" "$VM/cookies.txt" \
+  rm -f "$VM/qemu.pid" "$VM/proxy.pid" "$VM/proxy.release" "$VM/run.qcow2" "$VM/apikey.json" "$VM/cookies.txt" \
     "$VM/plugins-installed.txt" "$VM/plugins-failed.txt"
 }
 
 api() { # api METHOD PATH [JSON]
   local k s
   k=$(jq -r .key "$VM/apikey.json"); s=$(jq -r .secret "$VM/apikey.json")
-  curl -sk -u "$k:$s" -H "Content-Type: application/json" -X "$1" ${3:+-d "$3"} "$URL$2"
+  # Content-Type only with a body: OPNsense rejects a GET with
+  # "Content-Type: application/json" and no body (HTTP 400)
+  curl -sk -u "$k:$s" ${3:+-H "Content-Type: application/json"} -X "$1" ${3:+-d "$3"} "$URL$2"
 }
 
-firmware_job() { # wait for a firmware job; prints last log lines on failure
-  local st status
-  for _ in $(seq 1 400); do
-    st=$(api POST /api/core/firmware/upgradestatus '{}')
-    status=$(jq -r .status <<<"$st")
-    [ "$status" != running ] && break
+# firmware_wait: wait until the firmware job just started has finished.
+# /api/core/firmware/running reports the firmware lock ("busy"/"ready");
+# upgradestatus is not used here because it reports the *last* job and its
+# log may be cut, so an earlier job could be taken for the new one.
+firmware_wait() {
+  local st
+  for _ in $(seq 1 10); do
+    st=$(api GET /api/core/firmware/running | jq -r '.status // ""' 2>/dev/null || true)
+    [ "$st" = busy ] && break
+    sleep 1
+  done
+  for _ in $(seq 1 600); do
+    st=$(api GET /api/core/firmware/running | jq -r '.status // ""' 2>/dev/null || true)
+    [ "$st" = ready ] && return 0
     sleep 3
   done
-  [ "$status" = done ] || { jq -r .log <<<"$st" | tail -5 >&2; return 1; }
-  jq -r .log <<<"$st"
+  return 1
+}
+
+# installed_packages: names of installed packages and plugins, from
+# firmware/info over HTTP/2 (the large response is broken over HTTP/1.1)
+installed_packages() {
+  local k s
+  k=$(jq -r .key "$VM/apikey.json"); s=$(jq -r .secret "$VM/apikey.json")
+  curl -sk --http2 -u "$k:$s" "$URL/api/core/firmware/info" \
+    | jq -r '[.package[]?, .plugin[]? | select(.installed == "1") | .name] | unique | .[]'
+}
+
+# proxy_for REL: the package proxy serves exactly the snapshot of REL and
+# the VM's firmware points at it
+proxy_for() {
+  local rel="$1"
+  need socat
+  (cd "$ROOT" && go build -o .cache/bin/opnsense-api-spec ./cmd/opnsense-api-spec)
+  if [ -f "$VM/proxy.pid" ] && kill -0 "$(cat "$VM/proxy.pid")" 2>/dev/null; then
+    if [ "$(cat "$VM/proxy.release" 2>/dev/null)" = "$rel" ]; then return; fi
+    kill "$(cat "$VM/proxy.pid")"
+    for _ in $(seq 1 50); do ss -ltn | grep -q ":$PROXY_PORT " || break; sleep 0.2; done
+  fi
+  (cd "$ROOT" && exec .cache/bin/opnsense-api-spec proxy -release "$rel" -listen "127.0.0.1:$PROXY_PORT" >>"$VM/proxy.log" 2>&1) &
+  echo $! > "$VM/proxy.pid"
+  echo "$rel" > "$VM/proxy.release"
+  for _ in $(seq 1 50); do ss -ltn | grep -q ":$PROXY_PORT " && break; sleep 0.2; done
+  api POST /api/core/firmware/set "{\"firmware\":{\"mirror\":\"http://$PROXY_IP\",\"flavour\":\"\",\"type\":\"\",\"subscription\":\"\"}}" \
+    | grep -q '"ok"' || die "could not set firmware mirror"
+}
+
+product_version() {
+  api GET /api/core/firmware/status | jq -r '.product_version // .product.product_version // empty'
+}
+
+# update TARGET: update the running VM to exactly TARGET (same series as
+# the image); waits for a reboot if the update needs one
+update() {
+  local target="$1" st status before
+  [ -f "$VM/apikey.json" ] || die "no API key; run: $0 apikey"
+  before=$(product_version)
+  proxy_for "$target"
+  echo "updating $before -> $target"
+  api POST /api/core/firmware/update '{}' | grep -q '"ok"' || die "firmware update was not started"
+  status=running
+  for _ in $(seq 1 600); do
+    st=$(api POST /api/core/firmware/upgradestatus '{}' 2>/dev/null || true)
+    status=$(jq -r '.status // "unreachable"' <<<"$st" 2>/dev/null || echo unreachable)
+    case "$status" in done|reboot|unreachable) break ;; esac
+    sleep 3
+  done
+  if [ "$status" != done ]; then
+    # reboot (announced or already in progress): wait for the GUI to return
+    echo "waiting for reboot"
+    for _ in $(seq 1 60); do curl -sk -m 3 -o /dev/null "$URL/" || break; sleep 3; done
+    for _ in $(seq 1 200); do curl -sk -m 3 -o /dev/null "$URL/" && break; sleep 3; done
+    for _ in $(seq 1 60); do [ -n "$(product_version 2>/dev/null)" ] && break; sleep 3; done
+  fi
+  local now; now=$(product_version)
+  case "$now" in
+    "$target"|"$target"_*) echo "VM runs $now" ;;
+    *) die "update ended at $now, expected $target (log: $(jq -r '.log // ""' <<<"${st:-}" | tail -3))" ;;
+  esac
 }
 
 plugins() {
@@ -175,15 +253,8 @@ plugins() {
   local v; v=$(vm_version "$series")
   local irf="$ROOT/dist/$v/opnsense-$v.ir.json" list ok=0 failed=() installed=()
   [ -f "$VM/apikey.json" ] || die "no API key; run: $0 apikey"
-  need jq; need socat
-  (cd "$ROOT" && go build -o .cache/bin/opnsense-api-spec ./cmd/opnsense-api-spec)
-  if ! { [ -f "$VM/proxy.pid" ] && kill -0 "$(cat "$VM/proxy.pid")" 2>/dev/null; }; then
-    (cd "$ROOT" && exec .cache/bin/opnsense-api-spec proxy -release "$v" -listen "127.0.0.1:$PROXY_PORT" >"$VM/proxy.log" 2>&1) &
-    echo $! > "$VM/proxy.pid"
-    for _ in $(seq 1 50); do ss -ltn | grep -q ":$PROXY_PORT " && break; sleep 0.2; done
-  fi
-  api POST /api/core/firmware/set "{\"firmware\":{\"mirror\":\"http://$PROXY_IP\",\"flavour\":\"\",\"type\":\"\",\"subscription\":\"\"}}" \
-    | grep -q '"ok"' || die "could not set firmware mirror"
+  need jq
+  proxy_for "$v"
   if [ $# -gt 0 ]; then
     list="$*"
   else
@@ -192,11 +263,16 @@ plugins() {
     list=$(jq -r '[.endpoints[].package | select(. != "opnsense")] | unique | .[]' "$irf")
   fi
   for p in $list; do
-    api POST "/api/core/firmware/install/$p" '{}' | grep -q '"ok"' || { failed+=("$p"); continue; }
-    if firmware_job | grep -qiE "^Installation out of date|No packages available|pkg: .*(error|conflict)"; then
-      failed+=("$p")
-    else
+    api POST "/api/core/firmware/install/$p" '{}' | grep -q '"ok"' || { echo "install of $p not started" >&2; continue; }
+    firmware_wait || echo "firmware job for $p did not finish in time" >&2
+  done
+  # what is actually installed counts, not what the jobs said
+  local have; have=$(installed_packages)
+  for p in $list; do
+    if grep -qx "$p" <<<"$have"; then
       ok=$((ok + 1)); installed+=("$p"); echo "installed $p"
+    else
+      failed+=("$p")
     fi
   done
   echo "plugins: $ok installed, ${#failed[@]} failed${failed[*]:+: ${failed[*]}}"
@@ -205,12 +281,25 @@ plugins() {
 }
 
 verify() {
-  local series="$1" with_plugins="${2:-}" v irf
+  local series="$1"; shift
+  local with_plugins="" v irf
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --plugins) with_plugins=--plugins ;;
+      --release) TARGET="${2:?release}"; shift ;;
+      *) die "unknown option $1" ;;
+    esac
+    shift
+  done
   v=$(vm_version "$series"); irf="$ROOT/dist/$v/opnsense-$v.ir.json"
   [ -f "$irf" ] || die "no IR for $v; run: go run ./cmd/opnsense-api-spec build -release $v -plugins -out dist/$v"
+  local image; image=$(cat "$VM/base-$series.version" 2>/dev/null || echo "$series")
   up "$series"
   trap down EXIT
   apikey
+  if [ -n "${TARGET:-}" ] && [ "$TARGET" != "$image" ]; then
+    update "$TARGET"
+  fi
   local pk="opnsense"
   if [ "$with_plugins" = "--plugins" ]; then
     plugins "$series"
@@ -228,6 +317,7 @@ case "${1:-}" in
   apikey)  apikey ;;
   down)    down ;;
   plugins) s="${2:?series}"; shift 2; plugins "$s" "$@" ;;
-  verify)  verify "${2:?series}" "${3:-}" ;;
-  *) sed -n '2,13p' "$0"; exit 2 ;;
+  update)  TARGET="${2:?release}"; update "$TARGET" ;;
+  verify)  s="${2:?series}"; shift 2; verify "$s" "$@" ;;
+  *) sed -n '2,16p' "$0"; exit 2 ;;
 esac

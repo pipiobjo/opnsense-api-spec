@@ -27,10 +27,18 @@ func proxy(c *pkgrepo.Client, arch, release, listen string) error {
 	}
 	re := regexp.MustCompile(`^/` + regexp.QuoteMeta(r.ABI) + `/` + regexp.QuoteMeta(r.Series) +
 		`/(latest|aux)/([A-Za-z0-9._+,/-]+)$`)
+	// FreeBSD base and kernel sets (signed, checked by opnsense-update) live
+	// per series, not per snapshot: /<ABI>/<series>/sets/{base,kernel}-*.txz[.sig]
+	setsRe := regexp.MustCompile(`^/` + regexp.QuoteMeta(r.ABI) + `/` + regexp.QuoteMeta(r.Series) +
+		`/sets/((?:base|kernel)-[A-Za-z0-9._+-]+\.txz(?:\.sig)?)$`)
 	cacheDir := filepath.Join(".cache", "proxy", r.ABI, r.Version)
 	var mu sync.Mutex // one upstream fetch at a time per file is enough here
 	h := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		m := re.FindStringSubmatch(req.URL.Path)
+		if sm := setsRe.FindStringSubmatch(req.URL.Path); m == nil && sm != nil {
+			// sets: same path upstream, cached per series
+			m = []string{req.URL.Path, "sets", sm[1]}
+		}
 		if m == nil || strings.Contains(m[2], "..") || (req.Method != http.MethodGet && req.Method != http.MethodHead) {
 			fmt.Fprintf(os.Stderr, "deny %s %s\n", req.Method, req.URL.Path)
 			http.NotFound(w, req)
@@ -40,6 +48,9 @@ func proxy(c *pkgrepo.Client, arch, release, listen string) error {
 		mu.Lock()
 		if _, err := os.Stat(local); err != nil {
 			up := fmt.Sprintf("%s/%s/%s/MINT/%s/%s/%s", c.BaseURL, r.ABI, r.Series, r.Version, m[1], m[2])
+			if m[1] == "sets" {
+				up = fmt.Sprintf("%s/%s/%s/sets/%s", c.BaseURL, r.ABI, r.Series, m[2])
+			}
 			if err := download(c.HTTP, up, local); err != nil {
 				mu.Unlock()
 				fmt.Fprintf(os.Stderr, "miss %s: %v\n", req.URL.Path, err)

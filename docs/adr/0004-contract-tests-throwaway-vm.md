@@ -25,9 +25,9 @@ runs on FreeBSD, so containers on Linux are not an option.
 
 - Needs KVM on the runner (local or self-hosted; availability on hosted CI
   to be checked).
-- Only image versions are tested so far (26.7, 26.1.6); updating the VM
-  through the proxy to any patch release is the planned way to test every
-  release.
+- Any patch release is tested by updating the series image through the
+  proxy to exactly that release (implemented 2026-11-11; the proxy also
+  serves the signed FreeBSD base/kernel sets of the series).
 - Write paths use server defaults; generated test values are planned.
 
 ## Evidence
