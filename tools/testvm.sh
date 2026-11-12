@@ -288,7 +288,9 @@ verify() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --plugins) with_plugins=--plugins ;;
-      --release) TARGET="${2:?release}"; shift ;;
+      --release)
+        case "${2:-}" in ""|--*) die "--release needs a release, e.g. --release 26.7.5" ;; esac
+        TARGET="$2"; shift ;;
       *) die "unknown option $1" ;;
     esac
     shift
