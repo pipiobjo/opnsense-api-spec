@@ -227,7 +227,25 @@ func cmdVerify(o opts, accepted *string) error {
 		fmt.Fprintf(os.Stderr, "%-24s %d\n", k, counts[k])
 	}
 	doc, _ := openapi.RenderVerified(rel, rep)
-	return pipeline.WriteJSON(base+".openapi.json", doc)
+	if err := pipeline.WriteJSON(base+".openapi.json", doc); err != nil {
+		return err
+	}
+	// a failed contract check must fail the command (and CI), not only
+	// show up in the counts; accepted findings are no longer mismatch/error
+	if n := failures(rep); n > 0 {
+		return fmt.Errorf("%d contract check(s) failed; see %s.verified.json", n, base)
+	}
+	return nil
+}
+
+func failures(rep *verify.Report) int {
+	n := 0
+	for _, r := range rep.Results {
+		if r.Status == "mismatch" || r.Status == "error" {
+			n++
+		}
+	}
+	return n
 }
 
 func cmdDiff(o opts) error {
