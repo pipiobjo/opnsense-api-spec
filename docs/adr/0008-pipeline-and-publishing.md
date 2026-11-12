@@ -1,6 +1,6 @@
 # 0008: Daily pipeline on hosted runners, GitHub releases as publication and state
 
-Status: accepted (implemented; KVM availability on hosted runners still to be measured)
+Status: accepted (implemented; dry run passed 2026-11-12)
 
 ## Context
 
@@ -116,3 +116,13 @@ fetched first).
   and 26.7.9 are fine. Led to the rule for unavailable packages. Measured
   locally: a core contract run takes 54 s with KVM and 299 s with software
   emulation (TCG).
+- Second CI run, dry run without publishing (2026-11-12, private
+  repository, no package cache, no state): 1 h 38 min in total. Build
+  20 min (33 releases from scratch, 26.7.8 reported unavailable). Contract
+  tests with all plugins, 0 failed: 25.7.11 (68 plugins) and 26.1.11 (69)
+  had KVM, 14 min each; 26.7.9 (70) got a runner without `/dev/kvm` and ran
+  under TCG, 77 min. KVM is therefore not guaranteed per job; the fallback
+  works and is reported. The publish dry run would create 33 releases,
+  three of them verified, `latest` = 26.7.9. CI and local builds of the same
+  generator produce identical files except for the expected differences
+  (local contract test annotations, 26.7.8, the 26.7.9_1 hotfix).

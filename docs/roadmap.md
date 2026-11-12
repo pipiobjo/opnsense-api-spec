@@ -74,8 +74,9 @@ generator changes.
    contract tests per unverified newest release, publish, failure issue),
    `ci.yml` (code gates per push). GitHub releases `opnsense-<release>`,
    state as `dist.tar.zst` on the release `state`. Found on the way: a
-   failed run and a core-only run counted as verified. Open: first run on
-   GitHub (KVM or software emulation, run time); OCI later.
+   failed run and a core-only run counted as verified. Dry run on GitHub
+   passed (1 h 38 min from scratch; KVM on 2 of 3 contract jobs, TCG
+   fallback 77 min). Open: first publishing run; OCI later.
 8. **Retention and size.** `dist/` is ~350 MB for 33 releases, the cache
    ~13 GB; rules for what is kept, and a cache that fits a CI runner.
 
