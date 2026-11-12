@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 opnsense-api-spec contributors
+// SPDX-License-Identifier: BSD-2-Clause
+
 // Package schemacheck validates JSON responses against the response schemas
 // of a rendered OpenAPI 3.1 document (JSON Schema 2020-12), so that
 // contract tests check what generated clients will decode, not only the

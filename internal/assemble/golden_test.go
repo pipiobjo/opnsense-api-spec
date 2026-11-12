@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 opnsense-api-spec contributors
+// SPDX-License-Identifier: BSD-2-Clause
+
 package assemble
 
 import (

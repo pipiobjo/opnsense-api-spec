@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 opnsense-api-spec contributors
+# SPDX-License-Identifier: BSD-2-Clause
 # Throwaway OPNsense test VM for contract tests (QEMU/KVM, official nano image).
 #
 #   tools/testvm.sh prepare 26.7   download + verify image, build read-only qcow2 base

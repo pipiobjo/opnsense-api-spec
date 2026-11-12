@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 opnsense-api-spec contributors
+// SPDX-License-Identifier: BSD-2-Clause
+
 // Package pipeline orchestrates fetching, building and the release matrix:
 // which releases exist, which need a rebuild, where outputs go. It holds the
 // rules of the versioning model (docs/concepts.md, section 5) and is tested

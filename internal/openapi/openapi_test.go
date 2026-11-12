@@ -1,7 +1,11 @@
+// SPDX-FileCopyrightText: 2026 opnsense-api-spec contributors
+// SPDX-License-Identifier: BSD-2-Clause
+
 package openapi
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/pipiobjo/opnsense-api-spec/internal/controller"
@@ -174,6 +178,10 @@ func TestRenderWrappersAndSchemas(t *testing.T) {
 	dyn := dig(t, paths, "/api/demo/settings/dyn", "get", "responses", "200", "content", "application/json", "schema").(map[string]any)
 	if len(dyn) != 0 {
 		t.Errorf("signature-only response must be untyped: %v", dyn)
+	}
+	if dig(t, doc, "info", "license", "identifier") != "BSD-2-Clause" ||
+		!strings.Contains(dig(t, doc, "x-opnsense-notice").(string), "Deciso B.V.") {
+		t.Error("licence and OPNsense notice must travel with the document")
 	}
 	if dig(t, doc, "openapi") != "3.1.0" {
 		t.Error("openapi version")

@@ -1,0 +1,20 @@
+# REUSE (https://reuse.software) annotations; `reuse lint` checks them.
+version = 1
+
+[[annotations]]
+path = ["**"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 opnsense-api-spec contributors"
+SPDX-License-Identifier = "BSD-2-Clause"
+
+[[annotations]]
+path = ["internal/*/testdata/**"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = ["Deciso B.V. and the respective OPNsense authors (see file headers)", "2026 opnsense-api-spec contributors"]
+SPDX-License-Identifier = "BSD-2-Clause"
+
+[[annotations]]
+path = ["internal/schemacheck/oas-3.1-schema-2022-10-07.json"]
+precedence = "override"
+SPDX-FileCopyrightText = "The Linux Foundation / OpenAPI Initiative"
+SPDX-License-Identifier = "Apache-2.0"

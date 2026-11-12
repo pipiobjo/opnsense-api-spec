@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 opnsense-api-spec contributors
+// SPDX-License-Identifier: BSD-2-Clause
+
 // Package ir builds the language-neutral intermediate representation of one
 // OPNsense release: models, endpoints and how each endpoint was derived.
 package ir
@@ -15,7 +18,7 @@ import (
 // GeneratorName and GeneratorVersion identify this generator in all output.
 const (
 	GeneratorName    = "opnsense-api-spec"
-	GeneratorVersion = "0.5.0-dev"
+	GeneratorVersion = "0.6.0-dev"
 )
 
 // Source says how an endpoint description was derived.

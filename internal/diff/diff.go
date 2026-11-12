@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 opnsense-api-spec contributors
+// SPDX-License-Identifier: BSD-2-Clause
+
 // Package diff compares the IR of two releases: models, fields, endpoints
 // and packages.
 package diff

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 opnsense-api-spec contributors
+// SPDX-License-Identifier: BSD-2-Clause
+
 // Package verify runs contract tests of the IR against a running OPNsense
 // instance. It must only ever be pointed at a throwaway test instance: the
 // write cycle adds and deletes entries.

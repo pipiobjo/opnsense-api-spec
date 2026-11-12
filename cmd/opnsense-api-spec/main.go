@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 opnsense-api-spec contributors
+// SPDX-License-Identifier: BSD-2-Clause
+
 // Command opnsense-api-spec builds a versioned API definition for an
 // OPNsense release from the official package repository.
 package main

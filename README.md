@@ -150,3 +150,20 @@ tools/testvm.sh          throwaway OPNsense VM (QEMU/KVM)
 
 Dependencies: `github.com/klauspost/compress` (zstd),
 `github.com/ulikunitz/xz` (older catalogs), `golang.org/x/crypto` (BLAKE2b). Everything else is the Go standard library.
+
+## Licence
+
+BSD 2-Clause License (see [LICENSE](LICENSE)), Copyright (c) 2026,
+opnsense-api-spec contributors. This also applies to the generated API
+descriptions.
+
+The descriptions are derived from OPNsense (core and plugins, all
+BSD-2-Clause, Copyright Deciso B.V. and the respective authors). Anyone
+redistributing them must keep the notices and the BSD 2-Clause conditions
+and disclaimer; every generated document carries them in `info.license`
+and `x-opnsense-notice`, details in [NOTICE](NOTICE). The vendored OpenAPI
+3.1 JSON Schema is Apache-2.0. Licence information follows the
+[REUSE](https://reuse.software) specification (`reuse lint`).
+
+This project is not affiliated with, endorsed by or sponsored by Deciso B.V.
+or the OPNsense project.

@@ -1,0 +1,37 @@
+opnsense-api-spec
+Copyright (c) 2026, opnsense-api-spec contributors
+Licensed under the BSD 2-Clause License (see LICENSE).
+
+This project is not affiliated with, endorsed by or sponsored by Deciso B.V.
+or the OPNsense project. "OPNsense" is used only to describe what the API
+descriptions refer to.
+
+
+1. OPNsense (derived material)
+
+The generated API descriptions (IR, OpenAPI documents, coverage reports and
+diffs) are derived from the MVC models, field types and API controllers
+shipped in the OPNsense release packages (core and os-* plugins), and contain
+material from them (names, structure, defaults, option values and labels).
+The test fixtures in internal/*/testdata are shortened and modified copies of
+such files.
+
+OPNsense core: Copyright (C) Deciso B.V. and contributors.
+OPNsense plugins: Copyright (C) Deciso B.V. and the respective authors as
+stated in each plugin's source files.
+All of them are distributed under the BSD 2-Clause License
+(LICENSES/BSD-2-Clause.txt); every package in the 26.7.8 catalog states
+BSD2CLAUSE. Source: https://github.com/opnsense/core and
+https://github.com/opnsense/plugins
+
+Redistributions of the generated descriptions must keep this notice, the
+copyright notices above and the BSD 2-Clause conditions and disclaimer
+(LICENSES/BSD-2-Clause.txt).
+
+
+2. OpenAPI Initiative (vendored file)
+
+internal/schemacheck/oas-3.1-schema-2022-10-07.json is the JSON Schema for
+OpenAPI 3.1 published at https://spec.openapis.org/oas/3.1/schema/2022-10-07,
+unchanged. Copyright The Linux Foundation / OpenAPI Initiative, licensed under
+the Apache License, Version 2.0 (LICENSES/Apache-2.0.txt).

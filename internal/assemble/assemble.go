@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 opnsense-api-spec contributors
+// SPDX-License-Identifier: BSD-2-Clause
+
 // Package assemble builds the IR of a release from extracted MVC sources and
 // their package attribution. It is shared by the CLI and by the golden and
 // determinism tests, so that both derive the IR the same way.

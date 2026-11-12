@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 opnsense-api-spec contributors
+// SPDX-License-Identifier: BSD-2-Clause
+
 // Package controller extracts API endpoints from OPNsense MVC controller
 // PHP sources using pattern matching (not a full PHP parser). Everything it
 // cannot classify is reported, never guessed.

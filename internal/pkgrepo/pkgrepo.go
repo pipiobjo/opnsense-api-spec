@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 opnsense-api-spec contributors
+// SPDX-License-Identifier: BSD-2-Clause
+
 // Package pkgrepo reads the OPNsense package repository (pkg.opnsense.org):
 // release discovery, the signed package catalog and package archives.
 package pkgrepo

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 opnsense-api-spec contributors
+// SPDX-License-Identifier: BSD-2-Clause
+
 // Package quality turns silent breakage into findings: invariants of a
 // release (build gates), regressions against the previous release, and a
 // fingerprint of the framework files the derivation relies on.

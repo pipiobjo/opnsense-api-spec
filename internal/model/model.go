@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 opnsense-api-spec contributors
+// SPDX-License-Identifier: BSD-2-Clause
+
 // Package model parses OPNsense MVC model XML files and field type classes
 // into a language-neutral description.
 package model

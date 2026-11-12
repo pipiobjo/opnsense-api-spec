@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 opnsense-api-spec contributors
+// SPDX-License-Identifier: BSD-2-Clause
+
 // Package fragment splits the IR of a release into per-package fragments
 // identified by their API content, and describes compositions (the
 // fragments of one catalog state). See docs/adr/0003.

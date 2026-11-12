@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 opnsense-api-spec contributors
+// SPDX-License-Identifier: BSD-2-Clause
+
 // scenario exercises the generated Go client the way a Terraform/OpenTofu
 // provider would. Only for the throwaway test VM on 127.0.0.1.
 package main

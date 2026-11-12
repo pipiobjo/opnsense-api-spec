@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 opnsense-api-spec contributors
+# SPDX-License-Identifier: BSD-2-Clause
 # Consumer smoke test (ADR 0007): generate a Go client from a release spec
 # with a pinned oapi-codegen, compile it together with the provider-style
 # scenario, and optionally run the scenario against the throwaway test VM.

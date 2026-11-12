@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 opnsense-api-spec contributors
+// SPDX-License-Identifier: BSD-2-Clause
+
 // Package gap defines the things the generator noticed but could not
 // derive. Behaviour depends only on the Code; Detail is for humans and may
 // be reworded freely.
