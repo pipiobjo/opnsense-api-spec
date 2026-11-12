@@ -37,6 +37,10 @@ commands:
                            contract tests against a THROWAWAY test instance
                            (only https://127.0.0.1:<port> or localhost);
                            writes *.verified.json and re-renders the OpenAPI
+  index                    rebuild dist/index.json (after verify runs)
+  plan                     print the releases to contract-test as a JSON list
+                           (newest release per series, current composition
+                           not verified with this generator)
 
 flags:
   -mirror URL   package mirror (default https://pkg.opnsense.org)
@@ -142,6 +146,13 @@ func main() {
 			usage()
 		}
 		err = cmdVerify(o, accepted)
+	case "index":
+		err = pipeline.BuildIndex(pl.Dist)
+	case "plan":
+		var idx *pipeline.Index
+		if idx, err = pipeline.ReadIndex(filepath.Join(pl.Dist, "index.json")); err == nil {
+			err = json.NewEncoder(os.Stdout).Encode(idx.VerifyPlan())
+		}
 	case "proxy":
 		if o.release == "" {
 			usage()

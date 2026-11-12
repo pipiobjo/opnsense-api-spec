@@ -4,6 +4,8 @@
 # Throwaway OPNsense test VM for contract tests (QEMU/KVM, official nano image).
 #
 #   tools/testvm.sh prepare 26.7   download + verify image, build read-only qcow2 base
+#   tools/testvm.sh image-version 26.7
+#                                  image release of a series on the mirror (26.1 -> 26.1.6)
 #   tools/testvm.sh up 26.7        boot a fresh overlay (previous one is discarded)
 #   tools/testvm.sh apikey         create a throwaway API key (factory login root/opnsense)
 #   tools/testvm.sh plugins 26.7 [os-a os-b ...]
@@ -29,6 +31,13 @@
 #   2. OpenSSL signature of the unpacked image against the release key; the
 #      key must match the one in the series announcement (<series>/<series>;
 #      patch announcements such as 26.1/26.1.6 only carry checksums)
+#
+# Acceleration: KVM when /dev/kvm is accessible. Without it the run fails,
+# unless TESTVM_ACCEL=tcg allows software emulation (several times slower;
+# all waits are then stretched by TESTVM_SLOW, default 6). CI sets this only
+# as an explicit fallback and reports which one was used.
+# TESTVM_DROP_RAW=1 deletes the downloaded and unpacked image after the
+# qcow2 base is built (disk space on CI runners).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -40,6 +49,14 @@ PROXY_IP="10.99.0.200"   # address of the package proxy as seen from the VM (WAN
 URL="https://127.0.0.1:$PORT"
 MIRROR="https://pkg.opnsense.org/releases"
 CHANGELOG="https://raw.githubusercontent.com/opnsense/changelog/master/community"
+ACCEL="${TESTVM_ACCEL:-kvm}"
+case "$ACCEL" in
+  kvm) SLOW="${TESTVM_SLOW:-1}" ;;
+  tcg) SLOW="${TESTVM_SLOW:-6}" ;;
+  *) echo "error: TESTVM_ACCEL must be kvm or tcg" >&2; exit 1 ;;
+esac
+# waits N: number of wait iterations, stretched for software emulation
+waits() { echo $(($1 * SLOW)); }
 
 die() { echo "error: $*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null || die "$1 not installed"; }
@@ -91,6 +108,7 @@ prepare() {
   qemu-img convert -O qcow2 "$d/$n" "$VM/base-$series.qcow2"
   chmod a-w "$VM/base-$series.qcow2"
   echo "$v" > "$VM/base-$series.version"
+  if [ "${TESTVM_DROP_RAW:-}" = 1 ]; then rm -f "$d/$n" "$d/$n.bz2"; fi
   echo "base image: $VM/base-$series.qcow2 ($v)"
 }
 
@@ -101,13 +119,19 @@ up() {
   [ -f "$VM/base-$series.qcow2" ] || die "run: $0 prepare $series"
   running && die "VM already running (pid $(cat "$VM/qemu.pid")); run: $0 down"
   need qemu-system-x86_64
-  [ -r /dev/kvm ] || die "/dev/kvm not accessible"
+  local accel=(-enable-kvm -cpu host)
+  if [ "$ACCEL" = tcg ]; then
+    accel=(-accel "tcg,thread=multi" -cpu max)
+    echo "software emulation (TCG), waits x$SLOW"
+  else
+    [ -r /dev/kvm ] && [ -w /dev/kvm ] || die "/dev/kvm not accessible (TESTVM_ACCEL=tcg allows software emulation)"
+  fi
   rm -f "$VM/run.qcow2" "$VM/console.log" "$VM/apikey.json" "$VM/cookies.txt"
   # 24G: room for plugins; the nano image grows to the disk size on first boot
   qemu-img create -q -f qcow2 -F qcow2 -b "base-$series.qcow2" "$VM/run.qcow2" 24G
   # vtnet0 = LAN (192.168.1.1), vtnet1 = WAN, vtnet2/3 = spare NICs for
   # interface tests; all networks are isolated (restrict=on)
-  qemu-system-x86_64 -name "opnsense-test-$series" -enable-kvm -cpu host -m 2048 -smp 2 \
+  qemu-system-x86_64 -name "opnsense-test-$series" "${accel[@]}" -m 2048 -smp "${TESTVM_CPUS:-2}" \
     -drive "file=$VM/run.qcow2,if=virtio,format=qcow2" \
     -netdev "user,id=lan,net=192.168.1.0/24,host=192.168.1.2,dhcpstart=192.168.1.100,restrict=on,hostfwd=tcp:127.0.0.1:$PORT-192.168.1.1:443" \
     -device virtio-net-pci,netdev=lan \
@@ -118,12 +142,12 @@ up() {
     -display none -serial "file:$VM/console.log" -monitor none \
     -daemonize -pidfile "$VM/qemu.pid"
   echo "booting (console: $VM/console.log) ..."
-  for _ in $(seq 1 120); do
+  for _ in $(seq 1 "$(waits 120)"); do
     if curl -sk -m 3 -o /dev/null "$URL/"; then echo "web GUI up: $URL"; return 0; fi
     running || die "VM exited; see $VM/console.log"
     sleep 3
   done
-  die "web GUI did not come up within 6 minutes"
+  die "web GUI did not come up within $((6 * SLOW)) minutes"
 }
 
 apikey() {
@@ -175,12 +199,12 @@ api() { # api METHOD PATH [JSON]
 # log may be cut, so an earlier job could be taken for the new one.
 firmware_wait() {
   local st
-  for _ in $(seq 1 10); do
+  for _ in $(seq 1 "$(waits 10)"); do
     st=$(api GET /api/core/firmware/running | jq -r '.status // ""' 2>/dev/null || true)
     [ "$st" = busy ] && break
     sleep 1
   done
-  for _ in $(seq 1 600); do
+  for _ in $(seq 1 "$(waits 600)"); do
     st=$(api GET /api/core/firmware/running | jq -r '.status // ""' 2>/dev/null || true)
     [ "$st" = ready ] && return 0
     sleep 3
@@ -230,18 +254,18 @@ update() {
   echo "updating $before -> $target"
   api POST /api/core/firmware/update '{}' | grep -q '"ok"' || die "firmware update was not started"
   status=running
-  for _ in $(seq 1 600); do
+  for _ in $(seq 1 "$(waits 600)"); do
     st=$(api POST /api/core/firmware/upgradestatus '{}' 2>/dev/null || true)
     status=$(jq -r '.status // "unreachable"' <<<"$st" 2>/dev/null || echo unreachable)
     case "$status" in done|reboot|unreachable) break ;; esac
     sleep 3
   done
-  if [ "$status" != done ]; then
+  if [ "$status" != "done" ]; then
     # reboot (announced or already in progress): wait for the GUI to return
     echo "waiting for reboot"
-    for _ in $(seq 1 60); do curl -sk -m 3 -o /dev/null "$URL/" || break; sleep 3; done
-    for _ in $(seq 1 200); do curl -sk -m 3 -o /dev/null "$URL/" && break; sleep 3; done
-    for _ in $(seq 1 60); do [ -n "$(product_version 2>/dev/null)" ] && break; sleep 3; done
+    for _ in $(seq 1 "$(waits 60)"); do curl -sk -m 3 -o /dev/null "$URL/" || break; sleep 3; done
+    for _ in $(seq 1 "$(waits 200)"); do curl -sk -m 3 -o /dev/null "$URL/" && break; sleep 3; done
+    for _ in $(seq 1 "$(waits 60)"); do [ -n "$(product_version 2>/dev/null)" ] && break; sleep 3; done
   fi
   local now; now=$(product_version)
   case "$now" in
@@ -317,11 +341,12 @@ verify() {
 
 case "${1:-}" in
   prepare) prepare "${2:?series, e.g. 26.7}" ;;
+  image-version) image_version "${2:?series}" ;;
   up)      up "${2:?series}" ;;
   apikey)  apikey ;;
   down)    down ;;
   plugins) s="${2:?series}"; shift 2; plugins "$s" "$@" ;;
   update)  TARGET="${2:?release}"; update "$TARGET" ;;
   verify)  s="${2:?series}"; shift 2; verify "$s" "$@" ;;
-  *) sed -n '2,16p' "$0"; exit 2 ;;
+  *) sed -n '4,20p' "$0"; exit 2 ;;
 esac

@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -72,11 +73,22 @@ func encode(t *testing.T, v any) []byte {
 	return buf.Bytes()
 }
 
+// missing skips a test whose inputs are not there, or fails it when
+// GOLDEN_REQUIRED=1 (CI fetches the golden releases first, so a skip there
+// would be a silent pass).
+func missing(t *testing.T, why string) {
+	t.Helper()
+	if os.Getenv("GOLDEN_REQUIRED") == "1" {
+		t.Fatal(why + " (GOLDEN_REQUIRED=1)")
+	}
+	t.Skip(why)
+}
+
 // The same sources and generator must give byte-identical outputs.
 func TestDeterminism(t *testing.T) {
 	src := sources(t)
 	if len(src) == 0 {
-		t.Skip("no extracted sources with attribution in .cache/src")
+		missing(t, "no extracted sources with attribution in .cache/src")
 	}
 	var names []string
 	for n := range src {
@@ -129,14 +141,14 @@ func TestGolden(t *testing.T) {
 		t.Skip("golden files rewritten")
 	}
 	if len(files) == 0 {
-		t.Skip("no golden files")
+		missing(t, "no golden files")
 	}
 	for _, gf := range files {
 		rel := strings.TrimSuffix(filepath.Base(gf), ".json")
 		t.Run(rel, func(t *testing.T) {
 			dir, ok := src[rel]
 			if !ok {
-				t.Skip("sources for " + rel + " not extracted")
+				missing(t, "sources for "+rel+" not extracted")
 			}
 			var golden struct {
 				Catalog   string            `json:"catalog_sha256"`
@@ -148,7 +160,7 @@ func TestGolden(t *testing.T) {
 			}
 			r := load(t, dir)
 			if r.CatalogSHA256 != golden.Catalog {
-				t.Skipf("sources are from another catalog state (%s), golden is %s", r.CatalogSHA256[:12], golden.Catalog[:12])
+				missing(t, fmt.Sprintf("sources are from another catalog state (%s), golden is %s", r.CatalogSHA256[:12], golden.Catalog[:12]))
 			}
 			got := map[string]string{}
 			for _, f := range fragment.Split(r) {

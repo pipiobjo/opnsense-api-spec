@@ -43,11 +43,15 @@ type Report struct {
 	// Composition is the id of the catalog state the IR was built from
 	// (set by the caller), so a later catalog change is visible as
 	// "not verified".
-	Composition string    `json:"composition,omitempty"`
-	Instance    string    `json:"instance_version"`
-	Generator   string    `json:"generator"`
-	Date        string    `json:"date"`
-	Results     []*Result `json:"results"`
+	Composition string `json:"composition,omitempty"`
+	Instance    string `json:"instance_version"`
+	Generator   string `json:"generator"`
+	Date        string `json:"date"`
+	// Packages is the package selection the run tested (core "opnsense"
+	// and the plugins that were installed). Endpoints of other packages
+	// were not tested; the index reports them as untested.
+	Packages []string  `json:"packages"`
+	Results  []*Result `json:"results"`
 }
 
 // Client talks to the test instance with an API key.
@@ -227,6 +231,12 @@ func trunc(b []byte) string {
 func Run(c *Client, rel *ir.Release, packages map[string]bool, write bool) *Report {
 	rep := &Report{Release: rel.Version, Generator: rel.Generator.Version, Date: time.Now().UTC().Format(time.RFC3339)}
 	rep.Instance, _ = c.InstanceVersion()
+	for p, ok := range packages {
+		if ok {
+			rep.Packages = append(rep.Packages, p)
+		}
+	}
+	sort.Strings(rep.Packages)
 	models := map[string]*model.Model{}
 	for _, m := range rel.Models {
 		models[m.Class] = m

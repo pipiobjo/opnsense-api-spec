@@ -488,3 +488,54 @@ func TestKeyChainAcrossSeries(t *testing.T) {
 		t.Errorf("unintroduced key must fail: %v", err)
 	}
 }
+
+func TestVerifyPlan(t *testing.T) {
+	idx := &Index{Releases: []IndexRelease{
+		{Release: "26.1.10", Series: "26.1", NeedsVerification: true},
+		{Release: "26.1.11", Series: "26.1", NeedsVerification: false}, // newest, verified
+		{Release: "26.7.9", Series: "26.7", NeedsVerification: true},   // newest, not verified
+		{Release: "26.7.10", Series: "26.7", NeedsVerification: true},  // newer (version order, not string order)
+		{Release: "25.7.11", Series: "25.7", NeedsVerification: true},
+	}}
+	got := strings.Join(idx.VerifyPlan(), ",")
+	if want := "25.7.11,26.7.10"; got != want {
+		t.Fatalf("plan %q, want %q", got, want)
+	}
+	if p := (&Index{}).VerifyPlan(); p == nil || len(p) != 0 {
+		t.Fatalf("empty index: plan %#v, want empty non-nil list", p)
+	}
+}
+
+func TestNeedsVerification(t *testing.T) {
+	ok := &IndexVerification{Composition: "26.7.9~a", Generator: ir.GeneratorVersion}
+	cases := []struct {
+		name string
+		v    *IndexVerification
+		want bool
+	}{
+		{"never verified", nil, true},
+		{"verified, current", ok, false},
+		{"other composition (hotfix)", &IndexVerification{Composition: "26.7.9~b", Generator: ir.GeneratorVersion}, true},
+		{"older generator", &IndexVerification{Composition: "26.7.9~a", Generator: "0.0.1"}, true},
+		{"failed run", &IndexVerification{Composition: "26.7.9~a", Generator: ir.GeneratorVersion, Failed: 1}, true},
+		{"plugin not tested", &IndexVerification{Composition: "26.7.9~a", Generator: ir.GeneratorVersion, Untested: []string{"os-caddy"}}, true},
+	}
+	for _, c := range cases {
+		if got := needsVerification(c.v, "26.7.9~a"); got != c.want {
+			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestUntested(t *testing.T) {
+	rel := &ir.Release{Endpoints: []*ir.Endpoint{
+		{Path: "/a", Package: "opnsense"}, {Path: "/b", Package: "os-caddy"},
+		{Path: "/c", Package: "os-acme-client"}, {Path: "/d", Package: "os-caddy"},
+	}}
+	if got := strings.Join(untested(rel, []string{"opnsense", "os-acme-client"}), ","); got != "os-caddy" {
+		t.Fatalf("untested %q, want os-caddy", got)
+	}
+	if got := untested(rel, nil); len(got) != 3 {
+		t.Fatalf("report without packages (older format): %v, want all 3 untested", got)
+	}
+}

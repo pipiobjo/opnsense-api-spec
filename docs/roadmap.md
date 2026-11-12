@@ -12,15 +12,15 @@ State and reasoning: [concepts.md](concepts.md), decisions:
 
 | Step | Patch release (e.g. 26.7.9) | New series (27.1) | Today |
 |---|---|---|---|
-| Notice that something is new | `matrix` finds the new `MINT/` directory | same, if the series is listed in `-series` | manual: nobody runs `matrix` |
+| Notice that something is new | `matrix` finds the new `MINT/` directory | `-series all` | daily workflow |
 | Series list | - | `-series all` finds it | automatic |
 | Signing key | - | learned from the last patch release of the previous series | automatic (ADR 0005) |
 | Hotfix under the same release number | catalog hash differs -> rebuild | same | automatic, tested against a fake mirror |
 | Previous release becomes `final` | next run | same | automatic |
-| Contract tests | `testvm.sh verify 26.7 --release 26.7.9 --plugins` | `prepare 27.1` (image naming and announcement path must match) | scripted per release, not scheduled |
+| Contract tests | `testvm.sh verify 26.7 --release 26.7.9 --plugins` | `prepare 27.1` (image naming and announcement path must match) | daily workflow, newest unverified release per series |
 | Detect silent breakage (framework changes) | regression report, framework fingerprint | same | automatic (reports); gate is the contract test |
-| Client smoke test (oapi-codegen) | `tools/client-smoke.sh` | same | scripted, not scheduled |
-| Publish | - | - | missing |
+| Client smoke test (oapi-codegen) | `tools/client-smoke.sh` | same | daily workflow, newest release per series |
+| Publish | GitHub release per release | same | daily workflow, only after all gates |
 
 What stays human by nature (and must be reported automatically): adapting
 the generator when OPNsense restructures its framework, an emergency key
@@ -69,9 +69,13 @@ generator changes.
    fragment without operations rendered with `tags: null`, and fragment
    renderings that were never refreshed after generator changes (now
    rewritten on every build; orphaned fragments are pruned).
-7. **Pipeline and publishing.** Scheduled workflow, GitHub release assets
-   (later OCI), an issue with diff and findings on failure, nothing
-   published on failure.
+7. ~~**Pipeline and publishing.**~~ Implemented (2026-11-12, ADR 0008):
+   `pipeline.yml` (daily: state restore, gates, matrix, client smoke test,
+   contract tests per unverified newest release, publish, failure issue),
+   `ci.yml` (code gates per push). GitHub releases `opnsense-<release>`,
+   state as `dist.tar.zst` on the release `state`. Found on the way: a
+   failed run and a core-only run counted as verified. Open: first run on
+   GitHub (KVM or software emulation, run time); OCI later.
 8. **Retention and size.** `dist/` is ~350 MB for 33 releases, the cache
    ~13 GB; rules for what is kept, and a cache that fits a CI runner.
 

@@ -47,6 +47,18 @@ go run ./cmd/opnsense-api-spec diff -from A.ir.json -to B.ir.json
 go test ./...
 ```
 
+## Pipeline and releases
+
+`.github/workflows/pipeline.yml` runs daily ([ADR 0008](docs/adr/0008-pipeline-and-publishing.md)):
+new releases and hotfix revisions are built, the newest unverified release
+of each series is contract-tested in a throwaway VM with all API plugins,
+and only if every gate passed, each changed release is published as GitHub
+release `opnsense-<release>` (OpenAPI, IR, coverage, contract test results,
+composition, diff). Pre-release means: not contract-tested for this catalog
+state. On failure nothing is published and an issue labelled
+`pipeline-failure` lists the findings. A manual run can re-test older
+releases (`verify` input) or run without publishing.
+
 ## Contract tests (throwaway VM only)
 
 ```sh

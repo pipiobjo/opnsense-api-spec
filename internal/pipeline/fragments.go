@@ -146,8 +146,8 @@ type IndexRelease struct {
 	Compositions []string          `json:"compositions"`
 	Files        map[string]string `json:"files"` // release view file -> sha256
 	// Verified is the last contract test run; NeedsVerification is true
-	// when the current composition has not been contract-tested (new
-	// release, hotfix, plugin update or new generator).
+	// when the current composition has not been contract-tested successfully
+	// (new release, hotfix, plugin update, new generator or failed run).
 	Verified          *IndexVerification `json:"verified,omitempty"`
 	NeedsVerification bool               `json:"needs_verification"`
 }
@@ -161,6 +161,10 @@ type IndexVerification struct {
 	Results     map[string]int `json:"results"` // check/status -> count
 	// Failed counts mismatches and errors outside known gaps.
 	Failed int `json:"failed"`
+	// Untested lists packages with endpoints in the release that the run
+	// did not test (plugin not installed, core-only run). A release with
+	// untested packages is not verified.
+	Untested []string `json:"untested_packages,omitempty"`
 }
 
 // IndexFragmentUse tells where a fragment occurs.
@@ -235,11 +239,15 @@ func BuildIndex(dist string) error {
 						v.Failed++
 					}
 				}
+				if rel, err := ReadIR(filepath.Join(dist, d.Name(), "opnsense-"+cur.Release+".ir.json")); err == nil {
+					v.Untested = untested(rel, rep.Packages)
+				} else {
+					v.Untested = []string{"(IR missing: " + err.Error() + ")"}
+				}
 				ent.Verified = v
 			}
 		}
-		ent.NeedsVerification = ent.Verified == nil || ent.Verified.Composition != ent.Current ||
-			ent.Verified.Generator != ir.GeneratorVersion
+		ent.NeedsVerification = needsVerification(ent.Verified, ent.Current)
 		idx.Releases = append(idx.Releases, ent)
 	}
 	sort.Slice(idx.Releases, func(i, j int) bool {
@@ -280,4 +288,64 @@ func pruneFragments(dist string, used map[string]map[string]*IndexFragmentUse) e
 		}
 	}
 	return nil
+}
+
+// needsVerification: a release counts as verified only when the last run
+// tested the current composition with this generator, covered every
+// package with endpoints, and nothing failed. A failed or partial run is
+// not a verification.
+func needsVerification(v *IndexVerification, current string) bool {
+	return v == nil || v.Composition != current || v.Generator != ir.GeneratorVersion || v.Failed > 0 ||
+		len(v.Untested) > 0
+}
+
+// untested returns the packages with endpoints in rel that are not in
+// tested, sorted.
+func untested(rel *ir.Release, tested []string) []string {
+	have := map[string]bool{}
+	for _, p := range tested {
+		have[p] = true
+	}
+	miss := map[string]bool{}
+	for _, e := range rel.Endpoints {
+		if !have[e.Package] {
+			miss[e.Package] = true
+		}
+	}
+	return SortedKeys(miss)
+}
+
+// ReadIndex reads dist/index.json.
+func ReadIndex(path string) (*Index, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var idx Index
+	if err := json.Unmarshal(raw, &idx); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	return &idx, nil
+}
+
+// VerifyPlan returns the releases a scheduled run contract-tests, in
+// version order: the newest release of each series whose current
+// composition has not been verified with this generator. Older releases
+// keep needs_verification visible in the index and the spec; a full re-run
+// after a generator change is a manual dispatch, not a daily cost.
+func (idx *Index) VerifyPlan() []string {
+	newest := map[string]IndexRelease{}
+	for _, r := range idx.Releases {
+		if cur, ok := newest[r.Series]; !ok || pkgrepo.CompareVersions(r.Release, cur.Release) > 0 {
+			newest[r.Series] = r
+		}
+	}
+	out := []string{}
+	for _, r := range newest {
+		if r.NeedsVerification {
+			out = append(out, r.Release)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return pkgrepo.CompareVersions(out[i], out[j]) < 0 })
+	return out
 }

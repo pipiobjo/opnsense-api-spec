@@ -1,0 +1,250 @@
+# SPDX-FileCopyrightText: 2026 opnsense-api-spec contributors
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Daily pipeline (ADR 0008, docs/roadmap.md "Target pipeline"):
+#
+#   build     restore state -> gates (vet, tests, golden) -> matrix of all
+#             series -> client smoke test -> plan of contract tests
+#   contract  per planned release: throwaway VM (KVM, else software
+#             emulation), update to the release, all API plugins, verify
+#   publish   only if every job passed: index, GitHub releases, state
+#   report    on any failure: issue with the findings; nothing is published
+#
+# No secrets: the only token is the workflow's own GITHUB_TOKEN. The test VM
+# is isolated as described in tools/testvm.sh (ADR 0004).
+name: pipeline
+
+on:
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish (off = dry run, the publish job only prints what it would do)
+        type: boolean
+        default: true
+      verify:
+        description: Additional releases to contract-test, comma-separated (e.g. 26.7.5,26.1.6)
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pipeline
+  cancel-in-progress: false
+
+env:
+  GH_TOKEN: ${{ github.token }}
+
+# explicit shell: "bash -eo pipefail"; the implicit default has no pipefail,
+# so "verify | tee" would pass when verify fails
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    outputs:
+      plan: ${{ steps.plan.outputs.plan }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/pkg
+          key: pkg-${{ github.run_id }}
+          restore-keys: pkg-
+      - name: Restore state
+        run: tools/ci/state.sh restore
+      - name: Gates (vet, tests, golden, determinism)
+        env:
+          GOLDEN_REQUIRED: "1"
+        run: |
+          tools/ci/golden-fetch.sh
+          test -z "$(gofmt -l .)" || { gofmt -l .; echo "::error::gofmt"; exit 1; }
+          go vet ./...
+          go test -count=1 ./...
+      - name: Matrix (all series)
+        run: |
+          go run ./cmd/opnsense-api-spec matrix -series all 2>&1 | tee .cache/ci/matrix.log
+          {
+            echo '### Matrix'; echo '```'
+            grep -E '^[0-9]+\.[0-9]+(\.[0-9]+)? +(build|status|up-to-date) ' .cache/ci/matrix.log || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Client smoke test (newest release per series)
+        run: |
+          for rel in $(jq -r '.releases | group_by(.series) | map(last.release) | .[]' dist/index.json); do
+            tools/client-smoke.sh "$rel"
+          done
+      - name: Plan contract tests
+        id: plan
+        env:
+          EXTRA: ${{ inputs.verify }}
+        run: |
+          planned=$(go run ./cmd/opnsense-api-spec plan)
+          extra=$(jq -cn --arg e "${EXTRA:-}" '$e | split(",") | map(gsub("\\s"; "")) | map(select(. != ""))')
+          for r in $(jq -r '.[]' <<<"$extra"); do
+            [ -d "dist/$r" ] || { echo "::error::requested release $r is not built"; exit 1; }
+          done
+          plan=$(jq -cn --argjson a "$planned" --argjson b "$extra" \
+            '$a + $b | unique | map({release: ., series: (split(".")[0:2] | join("."))})')
+          echo "plan=$plan" >> "$GITHUB_OUTPUT"
+          echo "### Contract tests planned" >> "$GITHUB_STEP_SUMMARY"
+          jq -r 'if length == 0 then "none (all newest releases verified)" else .[] | "- \(.release)" end' <<<"$plan" >> "$GITHUB_STEP_SUMMARY"
+      - name: Pack dist
+        run: |
+          cp .cache/ci/index.prev.json dist/.index.prev.json
+          tar -C dist -cf - . | zstd -q -10 -T0 > dist.tar.zst
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: dist.tar.zst
+          retention-days: 7
+
+  contract:
+    needs: build
+    if: needs.build.outputs.plan != '[]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 340
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        include: ${{ fromJSON(needs.build.outputs.plan) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+      - name: Unpack dist
+        run: mkdir -p dist && zstd -dc dist.tar.zst | tar -C dist -xf - && rm dist.tar.zst
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h /
+      - name: Install QEMU
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends qemu-system-x86 qemu-utils socat
+      - name: Acceleration (KVM or software emulation)
+        run: |
+          if [ -e /dev/kvm ]; then
+            echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
+            sudo udevadm control --reload-rules
+            sudo udevadm trigger --name-match=kvm
+          fi
+          if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
+            echo "TESTVM_ACCEL=kvm" >> "$GITHUB_ENV"
+            echo "acceleration: KVM" | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "TESTVM_ACCEL=tcg" >> "$GITHUB_ENV"
+            echo "TESTVM_CPUS=$(nproc)" >> "$GITHUB_ENV"
+            echo "::warning::no KVM on this runner: software emulation (TCG), several times slower"
+            echo "acceleration: software emulation (TCG, no /dev/kvm)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Image version
+        id: image
+        run: echo "version=$(tools/testvm.sh image-version ${{ matrix.series }})" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: vmcache
+        with:
+          path: |
+            .cache/vm/base-${{ matrix.series }}.qcow2
+            .cache/vm/base-${{ matrix.series }}.version
+          key: vm-base-${{ matrix.series }}-${{ steps.image.outputs.version }}
+      - name: Prepare image (download, checksum against 2 sources, signature)
+        if: steps.vmcache.outputs.cache-hit != 'true'
+        env:
+          TESTVM_DROP_RAW: "1"
+        run: tools/testvm.sh prepare ${{ matrix.series }}
+      - name: Contract test ${{ matrix.release }}
+        run: |
+          tools/testvm.sh verify ${{ matrix.series }} --release ${{ matrix.release }} --plugins 2>&1 | tee .cache/vm/verify.log
+      - name: Summary
+        if: always()
+        run: |
+          f="dist/${{ matrix.release }}/opnsense-${{ matrix.release }}.verified.json"
+          {
+            echo "### ${{ matrix.release }} (instance $(jq -r '.instance_version // "-"' "$f" 2>/dev/null))"
+            grep -E '^plugins: ' .cache/vm/verify.log || true
+            echo '```'
+            jq -r '[.results[] | "\(.check)/\(.status)"] | group_by(.) | map("\(.[0]) \(length)") | .[]' "$f" 2>/dev/null || echo "no results"
+            echo '```'
+            jq -r '.results[] | select(.status == "mismatch" or .status == "error") | "- FAIL \(.check) \(.path): \(.findings // [] | join("; "))"' "$f" 2>/dev/null || true
+          } >> "$GITHUB_STEP_SUMMARY"
+          mkdir -p out
+          cp "$f" "dist/${{ matrix.release }}/opnsense-${{ matrix.release }}.openapi.json" out/ 2>/dev/null || true
+          cp .cache/vm/verify.log .cache/vm/console.log .cache/vm/proxy.log out/ 2>/dev/null || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: verified-${{ matrix.release }}
+          path: out/
+          retention-days: 14
+
+  publish:
+    needs: [build, contract]
+    if: >-
+      always() && needs.build.result == 'success' &&
+      (needs.contract.result == 'success' || needs.contract.result == 'skipped')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: "{dist,verified-*}"
+      - name: Merge contract test results
+        run: |
+          mkdir -p dist .cache/ci && zstd -dc dist/dist.tar.zst | tar -C dist -xf - && rm dist/dist.tar.zst
+          mv dist/.index.prev.json .cache/ci/index.prev.json
+          for d in verified-*; do
+            [ -d "$d" ] || continue
+            rel=${d#verified-}
+            cp "$d/opnsense-$rel.verified.json" "$d/opnsense-$rel.openapi.json" "dist/$rel/"
+          done
+          go run ./cmd/opnsense-api-spec index
+      - name: Gate (every planned release is verified now)
+        env:
+          PLAN: ${{ needs.build.outputs.plan }}
+        run: |
+          left=$(go run ./cmd/opnsense-api-spec plan)
+          still=$(jq -cn --argjson p "$PLAN" --argjson l "$left" '[$p[].release] as $planned | $l | map(select(. as $r | $planned | index($r)))')
+          if [ "$still" != "[]" ]; then
+            echo "::error::still not verified after the contract tests: $still"
+            jq --argjson s "$still" '.releases[] | select(.release as $r | $s | index($r)) | {release, current, verified}' dist/index.json
+            exit 1
+          fi
+      - name: Publish releases
+        run: tools/ci/publish.sh ${{ (github.event_name == 'workflow_dispatch' && !inputs.publish) && '--dry-run' || '' }}
+      - name: Save state
+        if: github.event_name != 'workflow_dispatch' || inputs.publish
+        run: tools/ci/state.sh save
+
+  report:
+    needs: [build, contract, publish]
+    if: always() && contains(needs.*.result, 'failure')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        continue-on-error: true
+        with:
+          pattern: verified-*
+      - name: Open or update the failure issue
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: tools/ci/report.sh
