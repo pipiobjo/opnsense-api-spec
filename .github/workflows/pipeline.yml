@@ -53,7 +53,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # package downloads (~0.5 GB, free Actions cache); restore and save
+      # are separate so a failed run keeps what it downloaded
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/pkg
           key: pkg-${{ github.run_id }}
@@ -70,12 +72,22 @@ jobs:
           go test -count=1 ./...
       - name: Matrix (all series)
         run: |
-          go run ./cmd/opnsense-api-spec matrix -series all 2>&1 | tee .cache/ci/matrix.log
+          rc=0
+          go run ./cmd/opnsense-api-spec matrix -series all 2>&1 | tee .cache/ci/matrix.log || rc=$?
+          sed -n 's/^warning: /::warning::/p; s/^error: /::error::/p' .cache/ci/matrix.log
           {
             echo '### Matrix'; echo '```'
-            grep -E '^[0-9]+\.[0-9]+(\.[0-9]+)? +(build|status|up-to-date) ' .cache/ci/matrix.log || true
+            grep -E '^[0-9]+\.[0-9]+(\.[0-9]+)? +(build|status|up-to-date|kept|unavailable|failed) ' .cache/ci/matrix.log || true
             echo '```'
+            grep -E '^(warning|error): ' .cache/ci/matrix.log | sed 's/^/- /' || true
           } >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
+      - name: Save package cache
+        if: always()
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/pkg
+          key: pkg-${{ github.run_id }}
       - name: Client smoke test (newest release per series)
         run: |
           for rel in $(jq -r '.releases | group_by(.series) | map(last.release) | .[]' dist/index.json); do
@@ -236,6 +248,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
+      contents: read # job permissions replace the workflow's; checkout needs it (private repo)
       issues: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

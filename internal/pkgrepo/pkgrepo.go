@@ -311,11 +311,20 @@ func (c *Client) get(url string) ([]byte, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return io.ReadAll(resp.Body)
+	case http.StatusForbidden, http.StatusNotFound, http.StatusGone:
+		return nil, fmt.Errorf("GET %s: %s: %w", url, resp.Status, ErrUnavailable)
+	default:
 		return nil, fmt.Errorf("GET %s: %s", url, resp.Status)
 	}
-	return io.ReadAll(resp.Body)
 }
+
+// ErrUnavailable: the mirror refuses or no longer has a file (HTTP 403,
+// 404, 410), e.g. the packages of a withdrawn snapshot whose catalog is
+// still served. Callers decide whether that is fatal.
+var ErrUnavailable = errors.New("not available on the mirror")
 
 // ReadArchive reads a (possibly zstd-, xz- or gzip-compressed) tar archive and
 // returns the regular files whose name matches keep, keyed by their path

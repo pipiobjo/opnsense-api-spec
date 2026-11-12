@@ -11,12 +11,14 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/pipiobjo/opnsense-api-spec/internal/assemble"
 	"github.com/pipiobjo/opnsense-api-spec/internal/diff"
@@ -316,7 +318,55 @@ const (
 	ActionBuild      Action = "build"
 	ActionStatusOnly Action = "status"
 	ActionUpToDate   Action = "up-to-date"
+	// ActionKept: a rebuild was due but the mirror no longer serves the
+	// packages; the previous build stays, marked source-unavailable.
+	ActionKept Action = "kept"
+	// ActionUnavailable: never built and the packages are not available;
+	// the release is listed as unavailable in the index, not published.
+	ActionUnavailable Action = "unavailable"
+	// ActionFailed: the build failed for another reason; Matrix goes on
+	// with the other releases and returns the errors at the end.
+	ActionFailed Action = "failed"
 )
+
+// UnavailableFile marks a release whose packages the mirror refused
+// (dist/<release>/source-unavailable.json); removed by the next successful
+// build.
+const UnavailableFile = "source-unavailable.json"
+
+// Unavailable is the content of UnavailableFile.
+type Unavailable struct {
+	Reason string `json:"reason"`
+	Since  string `json:"since"` // first run that saw it (RFC 3339)
+}
+
+func markUnavailable(dir string, reason string) error {
+	path := filepath.Join(dir, UnavailableFile)
+	u := Unavailable{Reason: reason, Since: time.Now().UTC().Format(time.RFC3339)}
+	if raw, err := os.ReadFile(path); err == nil {
+		var old Unavailable
+		if json.Unmarshal(raw, &old) == nil && old.Since != "" {
+			u.Since = old.Since
+		}
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	return WriteJSON(path, u)
+}
+
+// ReadUnavailable returns the marker of a release directory, nil if absent.
+func ReadUnavailable(dir string) *Unavailable {
+	raw, err := os.ReadFile(filepath.Join(dir, UnavailableFile))
+	if err != nil {
+		return nil
+	}
+	var u Unavailable
+	if json.Unmarshal(raw, &u) != nil {
+		return &Unavailable{Reason: "unreadable " + UnavailableFile}
+	}
+	return &u
+}
 
 // Decide is the rebuild rule: build when forced, when nothing usable
 // exists, when the catalog changed (hotfix revision, plugin update) or when
@@ -403,6 +453,7 @@ func (p *Pipeline) Matrix(series []string, latestOnly, force bool) ([]Outcome, e
 		return nil, fmt.Errorf("no releases for series %s", strings.Join(series, ","))
 	}
 	var out []Outcome
+	var errs []error
 	var prev *ir.Release
 	for _, r := range rels {
 		dir := filepath.Join(p.Dist, r.Version)
@@ -418,18 +469,49 @@ func (p *Pipeline) Matrix(series []string, latestOnly, force bool) ([]Outcome, e
 		cur, ierr := ReadIR(irPath)
 		st := statusOf(all, r)
 		action, reason := Decide(comp, ierr == nil, catSum, ir.GeneratorVersion, st, force)
-		switch action {
-		case ActionBuild:
+		if action == ActionBuild {
 			p.logf("%s: %s, building\n", r.Version, reason)
-			if irPath, err = p.Build(r.Version, true, dir); err != nil {
-				return out, fmt.Errorf("%s: %w", r.Version, err)
+			built, err := p.Build(r.Version, true, dir)
+			switch {
+			case err == nil:
+				irPath = built
+				if err := os.Remove(filepath.Join(dir, UnavailableFile)); err != nil && !os.IsNotExist(err) {
+					return out, err
+				}
+				if cur, err = ReadIR(irPath); err != nil {
+					return out, err
+				}
+				if comp, err = ReadComposition(filepath.Join(dir, "composition.json")); err != nil {
+					return out, err
+				}
+			case !errors.Is(err, pkgrepo.ErrUnavailable):
+				p.logf("%s: build failed: %v\n", r.Version, err)
+				errs = append(errs, fmt.Errorf("%s: %w", r.Version, err))
+				out = append(out, Outcome{Release: r.Version, Action: ActionFailed, Reason: err.Error()})
+				continue
+			case comp != nil && ierr == nil:
+				// the previous build stays; the status may still move
+				if err := markUnavailable(dir, err.Error()); err != nil {
+					return out, err
+				}
+				p.logf("%s: %s due (%s), but packages are not available; keeping %s: %v\n",
+					r.Version, action, reason, comp.ID(), err)
+				reason = "kept: " + reason
+				action = ActionKept
+				if comp.Status != st {
+					action, reason = ActionStatusOnly, reason+"; "+string(comp.Status)+" -> "+string(st)
+				}
+			default:
+				if err := markUnavailable(dir, err.Error()); err != nil {
+					return out, err
+				}
+				p.logf("%s: never built and packages are not available, not published: %v\n", r.Version, err)
+				out = append(out, Outcome{Release: r.Version, Action: ActionUnavailable, Reason: err.Error()})
+				continue
 			}
-			if cur, err = ReadIR(irPath); err != nil {
-				return out, err
-			}
-			if comp, err = ReadComposition(filepath.Join(dir, "composition.json")); err != nil {
-				return out, err
-			}
+		}
+		switch action {
+		case ActionBuild, ActionKept:
 		case ActionStatusOnly:
 			comp.Status = st
 			if err := WriteJSON(filepath.Join(dir, "composition.json"), comp); err != nil {
@@ -455,7 +537,10 @@ func (p *Pipeline) Matrix(series []string, latestOnly, force bool) ([]Outcome, e
 		prev = cur
 		out = append(out, oc)
 	}
-	return out, BuildIndex(p.Dist)
+	if err := BuildIndex(p.Dist); err != nil {
+		return out, err
+	}
+	return out, errors.Join(errs...)
 }
 
 // ReadIR loads an IR file.

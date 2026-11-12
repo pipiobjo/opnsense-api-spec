@@ -136,6 +136,17 @@ func main() {
 			}
 			fmt.Fprintf(os.Stderr, "%-10s %-11s %-32s %-11s%s\n", oc.Release, oc.Action, oc.Composition, oc.Status, note)
 		}
+		// one line per problem, "warning:"/"error:" prefixed (CI turns them
+		// into annotations)
+		for _, oc := range outs {
+			switch {
+			case oc.Action == pipeline.ActionKept, oc.Action == pipeline.ActionUnavailable,
+				strings.HasPrefix(oc.Reason, "kept: "):
+				fmt.Fprintf(os.Stderr, "warning: %s %s: %s\n", oc.Release, oc.Action, oc.Reason)
+			case oc.Action == pipeline.ActionFailed:
+				fmt.Fprintf(os.Stderr, "error: %s build failed: %s\n", oc.Release, oc.Reason)
+			}
+		}
 	case "diff":
 		if o.from == "" || o.to == "" {
 			usage()

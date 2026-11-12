@@ -37,8 +37,20 @@ A run restores it and then behaves like a local run: unchanged releases are
 skipped (catalog hash and generator version, ADR 0003), the history of
 hotfix compositions, fragments and contract test results is kept. Without a
 published state the run starts from scratch and says so; nothing counts as
-verified then. Packages are cached in the Actions cache only to save
-downloads; losing that cache costs time, not correctness.
+verified then. The state is produced by CI only; local builds stay
+independent. Packages are kept in the Actions cache (saved even when a run
+fails) only to save downloads; losing that cache costs time, not
+correctness.
+
+**Packages the mirror no longer serves** (HTTP 403/404/410 while the
+catalog is still served; seen for the whole 26.7.8 snapshot on 2026-11-12):
+if a previous build exists, it is kept and marked `source_unavailable` in
+the index and the release notes; if not, the release is listed under
+`unavailable` in the index and not published. Both are warnings in the run,
+not failures, so a withdrawn upstream snapshot does not block every other
+release. Any other build error fails the run, after the matrix has tried
+all releases. The key chain stays strict: its release (newest of each
+series) must be available.
 
 **What gets contract-tested** (`opnsense-api-spec plan`, `VerifyPlan`): the
 newest release of each series whose current composition is not verified.
@@ -81,7 +93,11 @@ fetched first).
   a corrected one.
 - Tags keep pointing at the commit that first published a release; the
   release notes name the generator commit of the current assets.
-- Private repository: hosted runner minutes count against the account's
+- Costs (private repository): the Actions cache is free up to 10 GB per
+  repository and only billed if that limit is raised (we use about
+  0.5 GB); release assets are not billed as storage; the dist artifact
+  between jobs (about 10 MB, 7 days) counts toward artifact storage.
+  Hosted runner minutes count against the account's
   quota. A no-op run (state restore, gates, matrix without builds, client
   smoke test) is the daily cost; contract jobs only run for new compositions.
 - Accepting an upstream issue stays a reviewed change in
@@ -95,3 +111,8 @@ fetched first).
   with a failure, and the index counted a failed run as verified.
 - While building the pipeline: a core-only run counted as verification of a
   release with 70 plugin packages; now recorded as `untested_packages`.
+- First CI run (2026-11-12): stopped after 17 minutes at 26.7.8, whose
+  package files the mirror refuses (403) while its catalog is served; 26.7.7
+  and 26.7.9 are fine. Led to the rule for unavailable packages. Measured
+  locally: a core contract run takes 54 s with KVM and 299 s with software
+  emulation (TCG).

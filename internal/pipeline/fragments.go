@@ -135,6 +135,15 @@ type Index struct {
 	Generator string                                  `json:"generator"`
 	Releases  []IndexRelease                          `json:"releases"`
 	Fragments map[string]map[string]*IndexFragmentUse `json:"fragments"` // package -> hash -> use
+	// Unavailable: releases on the mirror that were never built because
+	// their packages are not available (catalog listed, files refused).
+	Unavailable []UnavailableRelease `json:"unavailable,omitempty"`
+}
+
+// UnavailableRelease is a release that could not be built.
+type UnavailableRelease struct {
+	Release string `json:"release"`
+	Unavailable
 }
 
 // IndexRelease is one release with all catalog states seen.
@@ -150,6 +159,9 @@ type IndexRelease struct {
 	// (new release, hotfix, plugin update, new generator or failed run).
 	Verified          *IndexVerification `json:"verified,omitempty"`
 	NeedsVerification bool               `json:"needs_verification"`
+	// SourceUnavailable: a rebuild was due but the mirror refused the
+	// packages; the files are from the previous build.
+	SourceUnavailable *Unavailable `json:"source_unavailable,omitempty"`
 }
 
 // IndexVerification summarizes a contract test run.
@@ -192,9 +204,13 @@ func BuildIndex(dist string) error {
 	for _, d := range dirs {
 		cur, err := ReadComposition(filepath.Join(dist, d.Name(), "composition.json"))
 		if err != nil {
+			if u := ReadUnavailable(filepath.Join(dist, d.Name())); u != nil {
+				idx.Unavailable = append(idx.Unavailable, UnavailableRelease{Release: d.Name(), Unavailable: *u})
+			}
 			continue // not a release directory
 		}
-		ent := IndexRelease{Release: cur.Release, Series: cur.Series, Current: cur.ID(), Status: cur.Status, Files: map[string]string{}}
+		ent := IndexRelease{Release: cur.Release, Series: cur.Series, Current: cur.ID(), Status: cur.Status, Files: map[string]string{},
+			SourceUnavailable: ReadUnavailable(filepath.Join(dist, d.Name()))}
 		comps, _ := filepath.Glob(filepath.Join(dist, d.Name(), "compositions", "*.json"))
 		sort.Strings(comps)
 		for _, p := range comps {
@@ -252,6 +268,9 @@ func BuildIndex(dist string) error {
 	}
 	sort.Slice(idx.Releases, func(i, j int) bool {
 		return pkgrepo.CompareVersions(idx.Releases[i].Release, idx.Releases[j].Release) < 0
+	})
+	sort.Slice(idx.Unavailable, func(i, j int) bool {
+		return pkgrepo.CompareVersions(idx.Unavailable[i].Release, idx.Unavailable[j].Release) < 0
 	})
 	for _, byHash := range idx.Fragments {
 		for _, u := range byHash {

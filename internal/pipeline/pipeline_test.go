@@ -38,11 +38,35 @@ type mirror struct {
 	mu    sync.Mutex
 	files map[string][]byte
 	key   *rsa.PrivateKey
+	// deny answers paths containing a key with that HTTP status
+	deny map[string]int
+}
+
+// denyPackages makes the package files of a release snapshot answer with
+// status (0 removes the rule); the catalog stays available.
+func (m *mirror) denyPackages(release string, status int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.deny == nil {
+		m.deny = map[string]int{}
+	}
+	k := "/MINT/" + release + "/latest/All/"
+	if status == 0 {
+		delete(m.deny, k)
+	} else {
+		m.deny[k] = status
+	}
 }
 
 func (m *mirror) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	for k, code := range m.deny {
+		if strings.Contains(r.URL.Path, k) {
+			http.Error(w, http.StatusText(code), code)
+			return
+		}
+	}
 	if data, ok := m.files[r.URL.Path]; ok {
 		_, _ = w.Write(data)
 		return
@@ -537,5 +561,104 @@ func TestUntested(t *testing.T) {
 	}
 	if got := untested(rel, nil); len(got) != 3 {
 		t.Fatalf("report without packages (older format): %v, want all 3 untested", got)
+	}
+}
+
+// Packages refused by the mirror (withdrawn snapshot, catalog still served):
+// a never-built release is listed as unavailable, a built one is kept and
+// marked, other releases are built, and the marker goes away once the
+// packages are back. Any other HTTP error fails the run after all releases.
+func TestUnavailablePackages(t *testing.T) {
+	m, p, tmp := setup(t)
+	pk := func(v string) []pkgSpec {
+		return []pkgSpec{{"opnsense", v, coreFiles(t, false), nil}, {"os-extra", "1.0", pluginFiles(), nil}}
+	}
+	m.publish(t, "26.7", pk("26.7"))
+	m.publish(t, "26.7.1", pk("26.7.1"))
+	m.publish(t, "26.7.2", pk("26.7.2")) // newest: the key chain needs it
+	readIdx := func() *Index {
+		idx, err := ReadIndex(filepath.Join(p.Dist, "index.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return idx
+	}
+	dropCache := func() {
+		if err := os.RemoveAll(filepath.Join(tmp, "cache")); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// 1. 26.7 never built and refused: listed as unavailable, run succeeds
+	m.denyPackages("26.7", http.StatusForbidden)
+	outs, err := p.Matrix([]string{series}, false, false)
+	if err != nil {
+		t.Fatalf("unavailable release must not fail the run: %v", err)
+	}
+	if o := outcome(t, outs, "26.7"); o.Action != ActionUnavailable {
+		t.Errorf("26.7: %+v", o)
+	}
+	if o := outcome(t, outs, "26.7.1"); o.Action != ActionBuild {
+		t.Errorf("26.7.1 must still be built: %+v", o)
+	}
+	idx := readIdx()
+	if len(idx.Unavailable) != 1 || idx.Unavailable[0].Release != "26.7" || !strings.Contains(idx.Unavailable[0].Reason, "403") {
+		t.Errorf("index unavailable: %+v", idx.Unavailable)
+	}
+	for _, r := range idx.Releases {
+		if r.Release == "26.7" {
+			t.Error("unavailable release must not be in the published releases")
+		}
+	}
+
+	// 2. a rebuild of the built 26.7.1 is due but refused: previous build kept
+	m.denyPackages("26.7.1", http.StatusNotFound)
+	dropCache()
+	outs, err = p.Matrix([]string{series}, false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := outcome(t, outs, "26.7.1")
+	if o.Action != ActionKept || !strings.HasPrefix(o.Composition, "26.7.1~") {
+		t.Errorf("26.7.1 must be kept: %+v", o)
+	}
+	var kept *IndexRelease
+	for i, r := range readIdx().Releases {
+		if r.Release == "26.7.1" {
+			kept = &readIdx().Releases[i]
+		}
+	}
+	if kept == nil || kept.SourceUnavailable == nil {
+		t.Fatalf("26.7.1 must be in the index with source_unavailable: %+v", kept)
+	}
+
+	// 3. packages are back: built again, markers gone
+	m.denyPackages("26.7", 0)
+	m.denyPackages("26.7.1", 0)
+	if outs, err = p.Matrix([]string{series}, false, true); err != nil {
+		t.Fatal(err)
+	}
+	idx = readIdx()
+	if len(idx.Unavailable) != 0 {
+		t.Errorf("26.7 is available again: %+v", idx.Unavailable)
+	}
+	for _, r := range idx.Releases {
+		if r.SourceUnavailable != nil {
+			t.Errorf("%s: marker must be removed after a successful build", r.Release)
+		}
+	}
+
+	// 4. other errors fail the run, but only after the other releases
+	m.denyPackages("26.7.1", http.StatusInternalServerError)
+	dropCache()
+	outs, err = p.Matrix([]string{series}, false, true)
+	if err == nil || !strings.Contains(err.Error(), "26.7.1") {
+		t.Fatalf("HTTP 500 must fail the run, got %v", err)
+	}
+	if o := outcome(t, outs, "26.7.1"); o.Action != ActionFailed {
+		t.Errorf("26.7.1: %+v", o)
+	}
+	if o := outcome(t, outs, "26.7.2"); o.Action != ActionBuild {
+		t.Errorf("26.7.2 must still be built after the failure: %+v", o)
 	}
 }
