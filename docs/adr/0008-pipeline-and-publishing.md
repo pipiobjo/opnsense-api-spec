@@ -93,7 +93,8 @@ fetched first).
   a corrected one.
 - Tags keep pointing at the commit that first published a release; the
   release notes name the generator commit of the current assets.
-- Costs (private repository): the Actions cache is free up to 10 GB per
+- Costs (public since 2026-11-15; hosted runner minutes are free for
+  public repositories). Before that, as a private repository: the Actions cache is free up to 10 GB per
   repository and only billed if that limit is raised (we use about
   0.5 GB); release assets are not billed as storage; the dist artifact
   between jobs (about 10 MB, 7 days) counts toward artifact storage.
@@ -134,3 +135,8 @@ fetched first).
   explicit paths and each contract artifact carries a `release` marker
   file. Lesson: a dry run must cover the no-op path, not only the path
   with work to do.
+- Publishing run with generator 0.6.0 (2026-11-15): 34 minutes, all three
+  contract jobs with KVM (13 min each, 68/69/70 plugins, 0 failed); tag
+  `v0.6.0` created by the publish job. 26.7.8 is served by the mirror again
+  and was rebuilt with its earlier composition, so the 403 was temporary.
+  Repository public since 2026-11-15; runner minutes are free from then on.
