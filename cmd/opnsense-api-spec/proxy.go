@@ -28,15 +28,29 @@ func proxy(c *pkgrepo.Client, arch, release, listen string) error {
 	if err != nil {
 		return err
 	}
-	re := regexp.MustCompile(`^/` + regexp.QuoteMeta(r.ABI) + `/` + regexp.QuoteMeta(r.Series) +
+	h := proxyHandler(c, r.ABI, r.Series, r.Version, filepath.Join(".cache", "proxy", r.ABI, r.Version))
+	fmt.Fprintf(os.Stderr, "serving %s snapshot %s (%s) on http://%s\n", r.Series, r.Version, r.ABI, listen)
+	return http.ListenAndServe(listen, h)
+}
+
+// proxyHandler serves one snapshot from cacheDir, fetching misses upstream.
+// Package files (All/<name>-<version>.pkg) and sets carry their version in
+// the name and never change, so they stay cached. Everything else (catalog,
+// meta.conf, signatures of the catalog) changes when OPNsense publishes a
+// hotfix revision into the same snapshot, so it is fetched again once per
+// handler, i.e. once per proxy start; a stale catalog would install an
+// older core than the one the pipeline derived (seen 2026-11-15: 26.7.9
+// instead of 26.7.9_1).
+func proxyHandler(c *pkgrepo.Client, abi, series, version, cacheDir string) http.Handler {
+	re := regexp.MustCompile(`^/` + regexp.QuoteMeta(abi) + `/` + regexp.QuoteMeta(series) +
 		`/(latest|aux)/([A-Za-z0-9._+,/-]+)$`)
 	// FreeBSD base and kernel sets (signed, checked by opnsense-update) live
 	// per series, not per snapshot: /<ABI>/<series>/sets/{base,kernel}-*.txz[.sig]
-	setsRe := regexp.MustCompile(`^/` + regexp.QuoteMeta(r.ABI) + `/` + regexp.QuoteMeta(r.Series) +
+	setsRe := regexp.MustCompile(`^/` + regexp.QuoteMeta(abi) + `/` + regexp.QuoteMeta(series) +
 		`/sets/((?:base|kernel)-[A-Za-z0-9._+-]+\.txz(?:\.sig)?)$`)
-	cacheDir := filepath.Join(".cache", "proxy", r.ABI, r.Version)
 	var mu sync.Mutex // one upstream fetch at a time per file is enough here
-	h := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+	fresh := map[string]bool{}
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		m := re.FindStringSubmatch(req.URL.Path)
 		if sm := setsRe.FindStringSubmatch(req.URL.Path); m == nil && sm != nil {
 			// sets: same path upstream, cached per series
@@ -48,11 +62,13 @@ func proxy(c *pkgrepo.Client, arch, release, listen string) error {
 			return
 		}
 		local := filepath.Join(cacheDir, m[1], filepath.FromSlash(m[2]))
+		immutable := m[1] == "sets" || strings.HasPrefix(m[2], "All/")
 		mu.Lock()
-		if _, err := os.Stat(local); err != nil {
-			up := fmt.Sprintf("%s/%s/%s/MINT/%s/%s/%s", c.BaseURL, r.ABI, r.Series, r.Version, m[1], m[2])
+		_, err := os.Stat(local)
+		if err != nil || (!immutable && !fresh[local]) {
+			up := fmt.Sprintf("%s/%s/%s/MINT/%s/%s/%s", c.BaseURL, abi, series, version, m[1], m[2])
 			if m[1] == "sets" {
-				up = fmt.Sprintf("%s/%s/%s/sets/%s", c.BaseURL, r.ABI, r.Series, m[2])
+				up = fmt.Sprintf("%s/%s/%s/sets/%s", c.BaseURL, abi, series, m[2])
 			}
 			if err := download(c.HTTP, up, local); err != nil {
 				mu.Unlock()
@@ -60,13 +76,12 @@ func proxy(c *pkgrepo.Client, arch, release, listen string) error {
 				http.NotFound(w, req)
 				return
 			}
+			fresh[local] = true
 		}
 		mu.Unlock()
 		fmt.Fprintf(os.Stderr, "serve %s\n", req.URL.Path)
 		http.ServeFile(w, req, local)
 	})
-	fmt.Fprintf(os.Stderr, "serving %s snapshot %s (%s) on http://%s\n", r.Series, r.Version, r.ABI, listen)
-	return http.ListenAndServe(listen, h)
 }
 
 func download(hc *http.Client, url, dst string) error {
