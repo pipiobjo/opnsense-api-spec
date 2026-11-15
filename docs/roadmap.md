@@ -83,9 +83,12 @@ generator changes.
    entry lists on 26.7.9 pass add -> read back -> update -> read back ->
    delete (was 20); found two published generator errors and a wrong
    endpoint choice in the verifier.
-9. **Availability data for consumers.** The superset view per package
-   (concepts 9.1) published as a stable artifact with checksums and build
-   provenance, the input for clients and providers (ADR 0006).
+9. **Availability data for consumers.** Implemented (2026-11-15, ADR 0010,
+   [capabilities.md](capabilities.md)): one JSON document per package with
+   variants by fragment, exact fragment selection, verification results;
+   built and validated on every run, release `catalog` with `SHA256SUMS`
+   and attestations. Publishing waits for the format review. Open:
+   `moved_from`, `SHA256SUMS` and attestations for the per-release assets.
 10. **Retention and size.** `dist/` is ~540 MB for 34 releases (10 MB
     compressed); the Actions caches about 2.6 GB. Open: keeping the packages
     of final releases, because the mirror can withdraw them.
@@ -122,9 +125,7 @@ GitHub-hosted Linux runners, no self-hosted runner:
 
 ## Later
 
-- Superset view per package with `x-opnsense-availability` and
-  `x-opnsense-moved-from` (concepts 9.1).
+- `moved_from` in the capability data (generated from the diffs).
 - Capability layer for the Go client and the provider (ADR 0006).
-- Write paths with generated test values instead of server defaults.
 - Second derivation: compare endpoint lists with OPNsense's
   `collect_api_endpoints.py`.

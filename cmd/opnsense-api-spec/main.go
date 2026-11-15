@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/pipiobjo/opnsense-api-spec/internal/capability"
 	"github.com/pipiobjo/opnsense-api-spec/internal/openapi"
 	"github.com/pipiobjo/opnsense-api-spec/internal/pipeline"
 	"github.com/pipiobjo/opnsense-api-spec/internal/pkgrepo"
@@ -38,6 +39,9 @@ commands:
                            (only https://127.0.0.1:<port> or localhost);
                            writes *.verified.json and re-renders the OpenAPI
   index                    rebuild dist/index.json (after verify runs)
+  capabilities [-out DIR]  build the capability data (catalog.json and one
+                           document per package) from dist/ into DIR
+                           (default dist/capabilities)
   plan                     print the releases to contract-test as a JSON list
                            (newest release per series, current composition
                            not verified with this generator)
@@ -53,6 +57,7 @@ flags:
   -offline      use cached catalogs instead of downloading them
   -keys FILE    signing key list, extended through the signed key chain
                 (default internal/pkgrepo/keys.json; built-in list if absent)
+  -dist DIR     output root of matrix/index, input of capabilities (default dist)
   -series all   matrix: every series from -series-floor (default 25.7) on`)
 	os.Exit(2)
 }
@@ -92,6 +97,7 @@ func main() {
 	keysPath := fs.String("keys", "internal/pkgrepo/keys.json", "")
 	floor := fs.String("series-floor", "25.7", "")
 	accepted := fs.String("accepted", "verify/accepted.json", "")
+	distDir := fs.String("dist", "dist", "")
 	fs.Usage = usage
 	_ = fs.Parse(args)
 	c := pkgrepo.NewClient(o.base, o.cache)
@@ -105,7 +111,7 @@ func main() {
 			os.Exit(1)
 		}
 	}
-	pl := &pipeline.Pipeline{Client: c, Keys: keys, Arch: o.arch, Dist: "dist",
+	pl := &pipeline.Pipeline{Client: c, Keys: keys, Arch: o.arch, Dist: *distDir,
 		SrcRoot: filepath.Join(".cache", "src"), Log: os.Stderr, KeysPath: *keysPath, SeriesFloor: *floor}
 
 	var err error
@@ -159,6 +165,12 @@ func main() {
 		err = cmdVerify(o, accepted)
 	case "index":
 		err = pipeline.BuildIndex(pl.Dist)
+	case "capabilities":
+		dir := o.out
+		if dir == "" {
+			dir = filepath.Join(pl.Dist, "capabilities")
+		}
+		err = cmdCapabilities(pl.Dist, dir)
 	case "plan":
 		var idx *pipeline.Index
 		if idx, err = pipeline.ReadIndex(filepath.Join(pl.Dist, "index.json")); err == nil {
@@ -289,5 +301,21 @@ func cmdDiff(o opts) error {
 	}
 	fmt.Fprintf(os.Stderr, "%s -> %s: %d package, %d model, %d field, %d endpoint changes\n",
 		a.Version, b.Version, len(r.Packages), len(r.Models), len(r.Fields), len(r.Endpoints))
+	return nil
+}
+
+func cmdCapabilities(dist, dir string) error {
+	cat, docs, err := capability.Build(dist)
+	if err != nil {
+		return err
+	}
+	if err := capability.Write(dir, cat, docs); err != nil {
+		return err
+	}
+	n := 0
+	for _, d := range docs {
+		n += len(d.Resources)
+	}
+	fmt.Fprintf(os.Stderr, "%d packages, %d resources, %d core versions -> %s\n", len(docs), n, len(cat.Cores), dir)
 	return nil
 }

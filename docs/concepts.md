@@ -319,7 +319,7 @@ listed in `verify/accepted.json` with reason and evidence; matching
 results become `accepted` and do not count as failures. Adding an entry is
 a reviewed decision.
 
-## 9. Consumers: clients and providers (planned)
+## 9. Consumers: clients and providers (data implemented, consumers planned)
 
 ### 9.1 Views
 
@@ -327,7 +327,7 @@ a reviewed decision.
 |---|---|
 | per release (composition) | exact description of one firewall state; scripts, documentation |
 | per fragment | one document per core/plugin API, sharing a `common` document |
-| superset per package | all versions merged, with `x-opnsense-availability` (since/until) per operation, field and enum value, and `x-opnsense-moved-from` for moved fields |
+| capability data per package | all versions merged: resources, fields and actions with the fragments they exist in, and the contract test results; plain JSON, not OpenAPI ([capabilities.md](capabilities.md), ADR 0010) |
 
 Generators handle fragments: oapi-codegen produces one Go package per
 fragment and imports shared types from a `common` package (needs
@@ -349,7 +349,8 @@ the same data:
 
 1. read `product_version` (including the hotfix revision) and the installed
    plugin versions (`/api/core/firmware/info`, over HTTP/2);
-2. select the matching fragments;
+2. select the matching fragments (core version -> framework -> fragment per
+   package, [capabilities.md](capabilities.md));
 3. reject requests that use operations, fields or enum values this
    instance does not have, before sending them.
 

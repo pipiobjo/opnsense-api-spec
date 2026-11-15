@@ -1,0 +1,242 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/pipiobjo/opnsense-api-spec/capability.schema.json",
+  "title": "OPNsense capability data, format 1",
+  "description": "Either catalog.json (has 'cores') or a package document (has 'package'). Consumers must ignore keys they do not know; new keys do not change 'format'. See docs/capabilities.md.",
+  "oneOf": [
+    {"$ref": "#/$defs/catalog"},
+    {"$ref": "#/$defs/document"}
+  ],
+  "$defs": {
+    "hash": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+    "hashes": {"type": "array", "items": {"$ref": "#/$defs/hash"}, "minItems": 1, "uniqueItems": true},
+    "in": {
+      "description": "'*': every fragment of the enclosing resource; otherwise the fragments listed",
+      "oneOf": [{"const": "*"}, {"$ref": "#/$defs/hashes"}]
+    },
+    "strings": {"type": "array", "items": {"type": "string"}},
+    "gaps": {"type": "array", "items": {"type": "string"}, "description": "gap codes, docs/concepts.md section 8"},
+    "status": {"enum": ["ok", "accepted", "skipped", "known-gap", "mismatch", "error"]},
+
+    "catalog": {
+      "type": "object",
+      "required": ["format", "generator", "cores", "releases", "packages"],
+      "properties": {
+        "format": {"const": 1},
+        "generator": {"type": "string"},
+        "cores": {
+          "type": "object",
+          "description": "core package version (as the firewall reports it, e.g. 26.7.9_1) -> release and framework",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["release", "series", "framework"],
+            "properties": {
+              "release": {"type": "string"},
+              "series": {"type": "string"},
+              "framework": {"$ref": "#/$defs/hash"}
+            }
+          }
+        },
+        "releases": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["release", "series", "status", "current", "compositions"],
+            "properties": {
+              "release": {"type": "string"},
+              "series": {"type": "string"},
+              "status": {"enum": ["provisional", "final"]},
+              "current": {"type": "string"},
+              "compositions": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["id", "core", "framework", "generator", "fragments"],
+                  "properties": {
+                    "id": {"type": "string"},
+                    "generator": {"type": "string"},
+                    "core": {"type": "string"},
+                    "framework": {"$ref": "#/$defs/hash"},
+                    "fragments": {"type": "object", "additionalProperties": {"$ref": "#/$defs/hash"}},
+                    "verified": {
+                      "type": "object",
+                      "required": ["date", "generator", "instance", "packages", "results"],
+                      "properties": {
+                        "date": {"type": "string"},
+                        "generator": {"type": "string"},
+                        "instance": {"type": "string"},
+                        "packages": {"$ref": "#/$defs/strings"},
+                        "results": {"type": "object", "additionalProperties": {"type": "integer"}}
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "packages": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["file", "fragments"],
+            "properties": {
+              "file": {"type": "string"},
+              "fragments": {"$ref": "#/$defs/hashes"}
+            }
+          }
+        }
+      },
+      "not": {"required": ["package"]}
+    },
+
+    "document": {
+      "type": "object",
+      "required": ["format", "package", "generator", "fragments", "select", "resources"],
+      "properties": {
+        "format": {"const": 1},
+        "package": {"type": "string"},
+        "generator": {"type": "string"},
+        "fragments": {
+          "type": "object",
+          "propertyNames": {"$ref": "#/$defs/hash"},
+          "additionalProperties": {
+            "type": "object",
+            "required": ["versions", "cores", "releases", "order"],
+            "properties": {
+              "versions": {"$ref": "#/$defs/strings"},
+              "cores": {"$ref": "#/$defs/strings"},
+              "releases": {"$ref": "#/$defs/strings"},
+              "order": {"type": "integer", "minimum": 0}
+            }
+          }
+        },
+        "select": {
+          "type": "object",
+          "description": "framework -> package version -> fragment",
+          "propertyNames": {"$ref": "#/$defs/hash"},
+          "additionalProperties": {"type": "object", "additionalProperties": {"$ref": "#/$defs/hash"}}
+        },
+        "resources": {
+          "type": "object",
+          "propertyNames": {"pattern": "^[a-z0-9_]+/[A-Za-z0-9_]+(#[A-Za-z0-9_.]+)?$"},
+          "additionalProperties": {"$ref": "#/$defs/resource"}
+        },
+        "actions": {
+          "type": "object",
+          "propertyNames": {"pattern": "^/api/"},
+          "additionalProperties": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/action"}}
+        }
+      }
+    },
+
+    "resource": {
+      "type": "object",
+      "required": ["kind", "in", "api", "fields"],
+      "properties": {
+        "kind": {"enum": ["settings", "entries"]},
+        "in": {"$ref": "#/$defs/hashes"},
+        "api": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/api"}},
+        "fields": {
+          "type": "object",
+          "additionalProperties": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/field"}}
+        },
+        "verified": {
+          "type": "object",
+          "propertyNames": {"$ref": "#/$defs/hash"},
+          "additionalProperties": {"$ref": "#/$defs/verification"}
+        }
+      }
+    },
+    "api": {
+      "type": "object",
+      "required": ["in", "model", "operations"],
+      "properties": {
+        "in": {"$ref": "#/$defs/in"},
+        "model": {"type": "string"},
+        "model_path": {"type": "string"},
+        "wrapper": {"type": "string"},
+        "apply": {"type": "string", "pattern": "^/api/"},
+        "operations": {
+          "type": "object",
+          "propertyNames": {"enum": ["get", "set", "search", "add", "del", "toggle"]},
+          "additionalProperties": {"$ref": "#/$defs/operation"}
+        }
+      }
+    },
+    "operation": {
+      "type": "object",
+      "required": ["path", "methods", "source"],
+      "properties": {
+        "path": {"type": "string", "pattern": "^/api/"},
+        "methods": {"$ref": "#/$defs/strings"},
+        "params": {"$ref": "#/$defs/strings"},
+        "source": {"enum": ["base", "base-call", "signature-only"]},
+        "gaps": {"$ref": "#/$defs/gaps"}
+      }
+    },
+    "field": {
+      "type": "object",
+      "required": ["in", "type"],
+      "properties": {
+        "in": {"$ref": "#/$defs/in"},
+        "type": {"type": "string"},
+        "base": {"type": "string"},
+        "read_shape": {"enum": ["string", "select", "unknown"]},
+        "multiple": {"type": "boolean"},
+        "required": {"type": "boolean"},
+        "volatile": {"type": "boolean"},
+        "default": {"type": "string"},
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["value"],
+            "properties": {"value": {"type": "string"}, "label": {"type": "string"}, "group": {"type": "string"}}
+          }
+        },
+        "relations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["source", "items"],
+            "properties": {"source": {"type": "string"}, "items": {"type": "string"}}
+          }
+        },
+        "constraints": {"type": "object", "additionalProperties": {"type": "string"}},
+        "gaps": {"$ref": "#/$defs/gaps"}
+      }
+    },
+    "action": {
+      "type": "object",
+      "required": ["in", "kind", "methods", "source"],
+      "properties": {
+        "in": {"$ref": "#/$defs/hashes"},
+        "kind": {"type": "string"},
+        "methods": {"$ref": "#/$defs/strings"},
+        "params": {"$ref": "#/$defs/strings"},
+        "model": {"type": "string"},
+        "source": {"enum": ["base", "base-call", "signature-only"]},
+        "gaps": {"$ref": "#/$defs/gaps"}
+      }
+    },
+    "verification": {
+      "type": "object",
+      "required": ["release", "composition", "generator", "date"],
+      "properties": {
+        "release": {"type": "string"},
+        "composition": {"type": "string"},
+        "generator": {"type": "string"},
+        "date": {"type": "string"},
+        "read": {"$ref": "#/$defs/status"},
+        "write": {"$ref": "#/$defs/status"},
+        "steps": {"type": "array", "items": {"enum": ["add", "read-back", "set", "read-back-set", "del"]}},
+        "sample": {"type": "object"},
+        "generated": {"$ref": "#/$defs/strings"},
+        "runtime_required": {"$ref": "#/$defs/strings"},
+        "findings": {"$ref": "#/$defs/strings"}
+      },
+      "anyOf": [{"required": ["read"]}, {"required": ["write"]}]
+    }
+  }
+}

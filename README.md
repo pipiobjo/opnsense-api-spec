@@ -58,6 +58,14 @@ not; the release notes say why. "Latest" is the newest verified release.
 gh release download opnsense-26.7.9 -R pipiobjo/opnsense-api-spec -p '*.openapi.json'
 ```
 
+For clients that talk to many firewalls there is also the **capability
+data**: every resource, field and action over all versions, with the
+package versions they exist in and the contract test results, as plain
+JSON ([docs/capabilities.md](docs/capabilities.md)). It will be published
+as the release `catalog` once its format is reviewed; until then it is
+built and checked on every pipeline run
+(`go run ./cmd/opnsense-api-spec capabilities`).
+
 ## Usage
 
 ```sh
@@ -182,6 +190,7 @@ such as `~*` (see [ADR 0007](docs/adr/0007-openapi-3-1.md)).
 
 ```
 cmd/opnsense-api-spec/   CLI (releases, build, matrix, diff, verify, proxy, index, plan)
+internal/capability/     capability data per package, catalog, JSON Schema
 internal/pkgrepo/        mirror, catalog, signature, key chain, checksums, archives
 internal/model/          model XML and field type resolution
 internal/controller/     PHP controller patterns, inheritance
