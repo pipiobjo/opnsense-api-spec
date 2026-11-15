@@ -71,7 +71,7 @@ func demoFragment(areaType string, msg string) *fragment.Fragment {
 	del := ep("delNetwork", ir.KindItemDel, "networks.network", "uuid")
 	del.Gaps = []gap.Gap{gap.New(gap.ResultNotReturned, "x")}
 	getItem := ep("getNetwork", ir.KindItemGet, "networks.network", "uuid")
-	getItem.Wrapper = "network"
+	getItem.Wrapper, getItem.Outer = "network", "pac"
 	getAll := ep("getNetworks", ir.KindItemGet, "networks.network") // second get, no uuid: an action
 	status := &ir.Endpoint{Path: "/api/demo/service/status", Package: "os-demo", Module: "demo", Controller: "service",
 		Action: "status", Methods: []string{"GET"}, Kind: ir.KindServiceStatus, Source: ir.SourceBase}
@@ -184,6 +184,9 @@ func TestBuildVariantsAndSelect(t *testing.T) {
 	ops := r.API[0].Operations
 	if ops["get"] == nil || ops["get"].Path != "/api/demo/settings/getNetwork" || ops["add"] == nil || ops["del"].Gaps[0] != "result-not-returned" {
 		t.Errorf("operations: %s", js(ops))
+	}
+	if g := ops["get"]; g.Wrapper != "network" || g.Outer != "pac" || ops["add"].Wrapper != "network" || ops["del"].Wrapper != "" {
+		t.Errorf("per-operation wrapper/outer: %s", js(ops))
 	}
 	if r.API[0].Wrapper != "network" || r.API[0].Apply != "/api/demo/service/reconfigure" || r.API[0].In != All {
 		t.Errorf("api: %s", js(r.API))

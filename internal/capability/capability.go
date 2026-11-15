@@ -135,6 +135,10 @@ type Operation struct {
 	Path    string   `json:"path"`
 	Methods []string `json:"methods"`
 	Params  []string `json:"params,omitempty"`
+	// Wrapper is the key around the object in request and response bodies;
+	// Outer an additional key around the wrapper in the response (rare).
+	Wrapper string   `json:"wrapper,omitempty"`
+	Outer   string   `json:"outer,omitempty"`
 	Source  string   `json:"source"`
 	Gaps    []string `json:"gaps,omitempty"`
 }
@@ -480,7 +484,8 @@ func better(a, b *ir.Endpoint) bool {
 }
 
 func operation(e *ir.Endpoint) *Operation {
-	return &Operation{Path: e.Path, Methods: e.Methods, Params: params(e), Source: string(e.Source), Gaps: gapCodes(e.Gaps)}
+	return &Operation{Path: e.Path, Methods: e.Methods, Params: params(e), Wrapper: e.Wrapper, Outer: e.Outer,
+		Source: string(e.Source), Gaps: gapCodes(e.Gaps)}
 }
 
 func params(e *ir.Endpoint) []string {

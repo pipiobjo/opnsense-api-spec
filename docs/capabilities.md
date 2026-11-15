@@ -128,7 +128,10 @@ in the fragments of the variants that list it.
 
 ### Operations and actions
 
-`operations` holds one endpoint per operation of a resource. `source` says
+`operations` holds one endpoint per operation of a resource. `wrapper`
+is the key around the object in request and response bodies
+(`{"network": {...}}`); `outer`, where present, is one more key around it
+in the response (three os-squid PAC endpoints today). `source` says
 how it was derived (concepts, section 6), `gaps` lists what is uncertain,
 for example `result-not-returned` (the endpoint returns nothing) or
 `post-processed` (the response may differ from the helper's). `apply` is
