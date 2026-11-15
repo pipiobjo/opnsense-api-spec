@@ -1,6 +1,6 @@
 # 0007: OpenAPI 3.1 as the only output format
 
-Status: accepted (gates planned)
+Status: accepted, implemented (Go consumer gate blocking in every pipeline run; openapi-generator checks manual)
 
 ## Context
 

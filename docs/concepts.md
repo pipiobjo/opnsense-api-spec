@@ -269,18 +269,18 @@ fields. See section 9.
 | OpenAPI validation | every release and fragment document is valid against the official OpenAPI 3.1 schema, and every component schema compiles as JSON Schema 2020-12 (fragments together with their common document) | implemented; stops the build |
 | Client functional test | a provider-style scenario with the generated Go client against the test VM: version detection, settings get/partial set/read back, apply, entry add/get/set/search/delete, select fields, validation errors | implemented (`tools/client-smoke.sh <release> --run`, `test/consumer-go/`); 14/14 on 26.7 |
 | Response schema validation | every response of the contract tests validated against the rendered OpenAPI schema (JSON Schema 2020-12), not only against the model, so that decoding problems of generated clients show up generically | implemented (`schema` checks in `verify`) |
-| Consumer smoke test | a Go client generated with oapi-codegen (pinned v2.8.2) compiles together with the scenario (blocking); openapi-generator for other languages (informational) | Go: `tools/client-smoke.sh <release>`; openapi-generator: manual ([ADR 0007](adr/0007-openapi-3-1.md)) |
-| Contract tests | every GET against a real instance, add -> get -> delete per entry list, with all plugins with an API installed | implemented (`tools/testvm.sh`), manual, image versions only |
-| Golden tests | fragment hashes of final releases (25.7.10, 26.1.10, 26.7.7) checked in; a generator change that alters the derived API of an existing release fails per package | implemented (`internal/assemble`, needs extracted sources) |
+| Consumer smoke test | a Go client generated with oapi-codegen (pinned v2.8.2) compiles together with the scenario (blocking); openapi-generator for other languages (informational) | Go: in every pipeline run for the newest release of each series (`tools/client-smoke.sh <release>`); openapi-generator: manual ([ADR 0007](adr/0007-openapi-3-1.md)) |
+| Contract tests | every GET against a real instance, add -> get -> delete per entry list (with server defaults), with all plugins with an API installed | implemented (`tools/testvm.sh`); `verify` exits non-zero on any unexplained finding |
+| Golden tests | fragment hashes of final releases (25.7.10, 26.1.10, 26.7.7) checked in; a generator change that alters the derived API of an existing release fails per package | implemented (`internal/assemble`); CI fetches the sources and fails instead of skipping when they are missing (`GOLDEN_REQUIRED=1`) |
 | Determinism | two builds from the same sources give identical IR, OpenAPI and fragment hashes | implemented (`internal/assemble`) |
 | Invariants | no duplicate paths, every referenced model and package exists, every operation has a method, every local `$ref` resolves; a violation stops the build | implemented (`internal/quality`) |
 | Regression report | per release against its predecessor: operations typed -> untyped, field read shapes -> unknown, new gap codes on existing operations (`<prev>..<release>.quality.json`) | implemented; a report, not a gate |
 | Framework fingerprint | normalized hashes (comments and whitespace removed) of the core files the derivation relies on, per release; changes listed in the quality report | implemented; a report, not a gate |
 | Unknown settings | an untyped leaf element that is not a known setting is reported (`unknown-setting`) instead of becoming a field or vanishing; a typed element is always a field | implemented |
-| Verification tracking | the index records which composition was contract-tested (`verified`, `needs_verification`) | implemented |
-| Contract tests per release | boot the series image, update it through the package proxy to exactly the target release, test | planned |
+| Verification tracking | the index records which composition was contract-tested (`verified`, `needs_verification`); a run with failures or with untested plugin packages (`untested_packages`) does not count as verified | implemented |
+| Contract tests per release | boot the series image, update it through the package proxy to exactly the target release, install all API plugins, test; daily for the newest unverified release of each series, older releases on request | implemented ([ADR 0008](adr/0008-pipeline-and-publishing.md)) |
 | Second derivation | compare the endpoint list with OPNsense's own `collect_api_endpoints.py` | planned |
-| Generated write values | test values from field types instead of server defaults | planned |
+| Generated write values | test values from field types instead of server defaults; today 20 of 188 entry lists on 26.7.9 complete a write cycle, the others need values the server does not default | planned (next step) |
 
 **Contract test environment.** A throwaway VM from the official nano image
 under QEMU/KVM, fresh disk overlay per run, isolated user-mode networks
@@ -372,14 +372,18 @@ the same data:
   generators may ignore `patternProperties` (display values), which is
   harmless. Known tool-specific issue: openapi-generator's TypeScript
   output fails on enum values such as `~*`.
-- Contract tests cover the image versions (26.7, 26.1.6) and write paths
-  only with server defaults.
+- Contract tests run daily for the newest release of each series; older
+  releases show `needs_verification` until someone requests a test. Write
+  paths are tested only with server defaults (see section 8).
 - Generated Go types: nested sections and union members are named
   components (e.g. `UnboundUnboundGeneralWrite`, `AsSelectOptions()`,
   `AsEmptyList()`); only the response wrappers stay anonymous
   (`JSON200.Unbound`).
-- Not yet automated: the daily pipeline, contract tests per release, the
-  superset view and the capability layer (sections 8 and 9).
+- Not built yet: the superset view with availability per version and the
+  capability layer for consumers (section 9).
+- Packages of a release can disappear from the mirror (seen for 26.7.8 in
+  November 2026). An earlier build is then kept and marked
+  `source_unavailable`; a release that was never built cannot be built.
 
 ## 11. Glossary
 
@@ -396,6 +400,6 @@ the same data:
 | wrapper key | the JSON root key of a request/response |
 | apply endpoint | the call that activates stored changes |
 | IR | intermediate representation, the language-neutral output |
-| fragment | the derived API of one package content (planned) |
-| composition | the fragments of one catalog state (planned) |
+| fragment | the derived API of one package content |
+| composition | the fragments of one catalog state |
 | contract test | checking the description against a running instance |

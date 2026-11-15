@@ -8,7 +8,7 @@
 | [0004](0004-contract-tests-throwaway-vm.md) | Contract tests against a throwaway, isolated VM with a snapshot-pinned package proxy | accepted, implemented |
 | [0005](0005-signing-key-chain.md) | Follow signing key rotation only through OPNsense's signed key chain | accepted, implemented |
 | [0006](0006-client-capability-layer.md) | Consumers need a capability layer; the server ignores unknown keys | accepted, planned |
-| [0007](0007-openapi-3-1.md) | OpenAPI 3.1 as the only output format, with compatibility checks per build | accepted, gates planned |
+| [0007](0007-openapi-3-1.md) | OpenAPI 3.1 as the only output format, with compatibility checks per build | accepted, implemented (Go gate blocking; openapi-generator manual) |
 | [0008](0008-pipeline-and-publishing.md) | Daily pipeline on hosted runners; GitHub releases as publication and state | accepted, implemented |
 
 Format: context, decision, consequences, evidence. A superseded ADR stays

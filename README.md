@@ -3,9 +3,10 @@
 Versioned, language-independent API definitions (OpenAPI 3.1) for OPNsense,
 generated from the official release packages.
 
-Status: draft. Core and plugins, all releases from 25.7 on, contract-tested
-against throwaway 26.7 and 26.1.6 instances with all 69 API plugins installed.
-Not an official OPNsense project.
+Status: pre-1.0 (see [Stability](#stability)). Core and all plugins, every
+release from 25.7 on, rebuilt daily. The newest release of each series is
+contract-tested in a throwaway VM with all API plugins installed before it is
+published. Not an official OPNsense project.
 
 Background, versioning model, verification and limitations:
 [docs/concepts.md](docs/concepts.md). Decisions: [docs/adr/](docs/adr/).
@@ -35,6 +36,28 @@ MINT/<release>/packagesite  ──►  core (+ os-*) packages  ──►  IR (JS
    - `opnsense-<release>.coverage.md`: what is typed and what is not,
      per derivation source, module and package
 
+## Getting the specs
+
+Every OPNsense release is a GitHub release of this repository, tag
+`opnsense-<release>` (for example `opnsense-26.7.9`), with these assets:
+
+| Asset | Content |
+|---|---|
+| `opnsense-<release>.openapi.json` | OpenAPI 3.1, core and all plugins |
+| `opnsense-<release>.ir.json` | intermediate representation (language-neutral) |
+| `opnsense-<release>.coverage.md` | what is typed and what is not |
+| `opnsense-<release>.verified.json` | contract test results, if this composition was tested |
+| `composition.json` | packages and fragments of this catalog state |
+| `<previous>.<release>.{json,md}`, `.quality.json` | changes and regressions against the previous release |
+
+A full release means: this exact catalog state (including hotfix revisions)
+was contract-tested with the current generator. A pre-release means it was
+not; the release notes say why. "Latest" is the newest verified release.
+
+```sh
+gh release download opnsense-26.7.9 -R pipiobjo/opnsense-api-spec -p '*.openapi.json'
+```
+
 ## Usage
 
 ```sh
@@ -63,8 +86,10 @@ releases (`verify` input) or run without publishing.
 
 ```sh
 tools/testvm.sh prepare 26.1     # series -> image version (26.1.6), checksum (2 sources) + signature
-tools/testvm.sh verify 26.7      # fresh VM, API key, tests, teardown (~45 s)
-tools/testvm.sh verify 26.1 --plugins   # + all plugins with an API (~9 min)
+tools/testvm.sh verify 26.7      # fresh VM, API key, tests, teardown (~1 min with KVM)
+tools/testvm.sh verify 26.1 --plugins   # + all plugins with an API (~9 to 15 min)
+tools/testvm.sh verify 26.7 --release 26.7.5 --plugins
+                                 # update the series image to exactly 26.7.5 first
 ```
 
 Plugins come from `opnsense-api-spec proxy`, which serves only the signed
@@ -130,17 +155,21 @@ The document also contains `x-opnsense-coverage` and the release gets a
   files are treated as alternatives; files with different content from
   several packages are listed under "file conflicts" (first package wins).
   Plugin operations exist only when the plugin is installed.
-- Contract tests: 26.7 and 26.1.6 with all plugins. Write cycles only use
-  server defaults; entry types that need real values are reported as
-  skipped (with the runtime-required fields).
+- Contract tests: the daily pipeline tests the newest release of each
+  series with all API plugins; older releases are tested on request. Read
+  paths are checked for every GET. Write cycles only use server defaults,
+  so most entry types (168 of 188 on 26.7.9) are reported as skipped with
+  their runtime-required fields; generating valid write values is the next
+  planned step.
 - Large responses over HTTP/1.1 can arrive with broken chunked encoding
   (OPNsense web server); the test client uses HTTP/1.1 on purpose so this
   stays visible.
 
 ## Using the spec
 
-Generated Go client (oapi-codegen v2.4.1) for 26.7.5 core + plugins
-compiles (oapi-codegen v2.8.2, 5094 client methods). oapi-codegen needs
+A Go client generated with oapi-codegen v2.8.2 compiles for every newest
+release of a series (about 5,000 to 5,200 client methods; checked in every
+pipeline run, `tools/client-smoke.sh`). oapi-codegen needs
 `compatibility.always-prefix-enum-values: true` because some enum values
 collide with generated type names. openapi-generator v7.27.0 generates
 Python that compiles; its TypeScript output currently fails on enum values
@@ -149,19 +178,57 @@ such as `~*` (see [ADR 0007](docs/adr/0007-openapi-3-1.md)).
 ## Layout
 
 ```
-cmd/opnsense-api-spec/   CLI (releases, fetch, build)
-internal/pkgrepo/        mirror, catalog, signature, checksums, archives
+cmd/opnsense-api-spec/   CLI (releases, build, matrix, diff, verify, proxy, index, plan)
+internal/pkgrepo/        mirror, catalog, signature, key chain, checksums, archives
 internal/model/          model XML and field type resolution
 internal/controller/     PHP controller patterns, inheritance
-internal/ir/             endpoint classification, apply endpoints, gaps
+internal/ir/             endpoint classification, apply endpoints
+internal/gap/            stable gap codes
 internal/openapi/        OpenAPI 3.1 rendering, coverage
+internal/fragment/       content-addressed fragments per package
+internal/assemble/       release views, golden and determinism tests
+internal/pipeline/       matrix, compositions, status, index, verification plan
 internal/diff/           release-to-release changes (models, fields, endpoints, packages)
+internal/quality/        invariants, regression report, framework fingerprint
+internal/schemacheck/    OpenAPI 3.1 / JSON Schema 2020-12 validation
 internal/verify/         contract tests against a running test instance
-tools/testvm.sh          throwaway OPNsense VM (QEMU/KVM)
+verify/accepted.json     reviewed upstream findings that do not count as failures
+tools/testvm.sh          throwaway OPNsense VM (QEMU/KVM, software emulation fallback)
+tools/ci/                pipeline helpers (state, publish, failure report)
+test/consumer-go/        consumer scenario for the generated Go client
 ```
 
 Dependencies: `github.com/klauspost/compress` (zstd),
 `github.com/ulikunitz/xz` (older catalogs), `golang.org/x/crypto` (BLAKE2b). Everything else is the Go standard library.
+
+## Stability
+
+Pre-1.0. What consumers can rely on:
+
+- Tag names `opnsense-<release>` and composition ids
+  (`26.7.9_1~74eecaac799a`) keep their meaning.
+- The meaning of the `x-opnsense-*` extensions and of the gap codes
+  (`x-opnsense-derivation.gaps[].code`) does not change silently; changes
+  are recorded in the ADRs and the generator version.
+- Every output names the generator version that produced it; the matching
+  git tag is `v<version>`.
+
+What may still change before 1.0: asset names and layout, the IR format,
+how fragments and the index are published, and component names in the
+OpenAPI documents. Pin by tag and composition id, and check the generator
+version when you update.
+
+The assets of a release are replaced when its catalog state changes
+(hotfix revision, plugin update) or the generator changes; the release
+notes name the composition and the generator commit.
+
+## Contributing and security
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Report security problems privately
+as described in [SECURITY.md](SECURITY.md), not in a public issue.
+
+This project is maintained on a best-effort basis; there is no support
+promise.
 
 ## Licence
 

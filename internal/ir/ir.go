@@ -16,9 +16,13 @@ import (
 )
 
 // GeneratorName and GeneratorVersion identify this generator in all output.
+// Bump GeneratorVersion with every change that alters the output: a new
+// version rebuilds every release and marks them unverified until tested
+// again. The publish job tags the first commit that publishes a version as
+// v<GeneratorVersion> (tools/ci/publish.sh).
 const (
 	GeneratorName    = "opnsense-api-spec"
-	GeneratorVersion = "0.6.0-dev"
+	GeneratorVersion = "0.6.0"
 )
 
 // Source says how an endpoint description was derived.

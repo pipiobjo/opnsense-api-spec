@@ -1,6 +1,6 @@
 # 0003: Fragments identified by API content
 
-Status: accepted, implemented 2026-11-10 (replaces "one spec per release number"); superset view and daily pipeline planned
+Status: accepted, implemented 2026-11-10 (replaces "one spec per release number"); daily pipeline implemented 2026-11-12 (ADR 0008); superset view planned
 
 ## Context
 

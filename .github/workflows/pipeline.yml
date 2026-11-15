@@ -45,6 +45,21 @@ defaults:
     shell: bash
 
 jobs:
+  # GitHub disables scheduled workflows of public repositories after 60 days
+  # without repository activity, and nothing would report it. Re-enabling
+  # the workflow through the API on every run keeps the schedule alive
+  # without dummy commits (the approach of the widely used keepalive
+  # actions; to be confirmed by the first 60 quiet days).
+  keepalive:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Re-enable this workflow
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/pipeline.yml/enable"
+
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 180
@@ -257,7 +272,7 @@ jobs:
         run: tools/ci/state.sh save
 
   report:
-    needs: [build, contract, publish]
+    needs: [keepalive, build, contract, publish]
     if: always() && contains(needs.*.result, 'failure')
     runs-on: ubuntu-24.04
     timeout-minutes: 10

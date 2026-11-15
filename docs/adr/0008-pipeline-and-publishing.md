@@ -1,6 +1,6 @@
 # 0008: Daily pipeline on hosted runners, GitHub releases as publication and state
 
-Status: accepted (implemented; dry run passed 2026-11-12)
+Status: accepted, implemented (publishing since 2026-11-13)
 
 ## Context
 

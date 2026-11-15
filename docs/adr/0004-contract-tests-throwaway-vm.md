@@ -1,6 +1,6 @@
 # 0004: Contract tests against a throwaway, isolated VM
 
-Status: accepted, implemented (per-release automation planned)
+Status: accepted, implemented (daily per-release runs since 2026-11-12, ADR 0008)
 
 ## Context
 
@@ -23,8 +23,9 @@ runs on FreeBSD, so containers on Linux are not an option.
 
 ## Consequences
 
-- Needs KVM on the runner (local or self-hosted; availability on hosted CI
-  to be checked).
+- Runs best with KVM. Hosted runners provide it most of the time (4 of 6
+  jobs measured); without it the harness falls back to software emulation
+  (`TESTVM_ACCEL=tcg`), 5 to 8 times slower, and reports it.
 - Any patch release is tested by updating the series image through the
   proxy to exactly that release (implemented 2026-11-11; the proxy also
   serves the signed FreeBSD base/kernel sets of the series).

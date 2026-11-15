@@ -13,6 +13,8 @@
 # in place; the tag keeps pointing at the commit that first published it,
 # the body names the generator commit of the current assets.
 #
+# Also creates the tag v<generator version> if it does not exist yet.
+#
 # Marked as pre-release while the current composition is not contract-tested
 # (needs_verification). Only runs after all gates passed; it never decides
 # anything itself.
@@ -88,3 +90,13 @@ for rel in $(jq -r '.releases[].release' "$DIST/index.json"); do
   published=$((published + 1))
 done
 echo "published $published release(s)"
+
+# The generator version named in the outputs must exist as a tag: create
+# v<version> on the first commit that publishes it. Never move it.
+vtag="v$generator"
+if gh api "repos/{owner}/{repo}/git/ref/tags/$vtag" >/dev/null 2>&1; then
+  echo "tag $vtag exists"
+elif [ "$published" -gt 0 ]; then
+  echo "create tag $vtag at ${commit:0:12}"
+  run gh api "repos/{owner}/{repo}/git/refs" -f ref="refs/tags/$vtag" -f sha="$commit" >/dev/null
+fi

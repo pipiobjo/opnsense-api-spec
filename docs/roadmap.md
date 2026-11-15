@@ -6,7 +6,7 @@ are only involved when something genuinely new happens, and then through an
 automatically created report, not an investigation.
 
 State and reasoning: [concepts.md](concepts.md), decisions:
-[adr/](adr/README.md). Last review: 2026-11-10.
+[adr/](adr/README.md). Last review: 2026-11-15.
 
 ## What a new release needs today
 
@@ -76,9 +76,19 @@ generator changes.
    state as `dist.tar.zst` on the release `state`. Found on the way: a
    failed run and a core-only run counted as verified. Dry run on GitHub
    passed (1 h 38 min from scratch; KVM on 2 of 3 contract jobs, TCG
-   fallback 77 min). Open: first publishing run; OCI later.
-8. **Retention and size.** `dist/` is ~350 MB for 33 releases, the cache
-   ~13 GB; rules for what is kept, and a cache that fits a CI runner.
+   fallback 77 min). First unattended publishing run 2026-11-13. The
+   first runs without contract jobs (2026-11-14, -15) failed in the publish
+   job (artifact layout), fixed. OCI later.
+8. **Generated write values.** Valid test values per field type and from
+   option lists, so the write cycle (add -> get -> set -> get -> delete)
+   covers most entry lists instead of 20 of 188; the accepted values are
+   recorded for consumers' own tests.
+9. **Availability data for consumers.** The superset view per package
+   (concepts 9.1) published as a stable artifact with checksums and build
+   provenance, the input for clients and providers (ADR 0006).
+10. **Retention and size.** `dist/` is ~540 MB for 34 releases (10 MB
+    compressed); the Actions caches about 2.6 GB. Open: keeping the packages
+    of final releases, because the mirror can withdraw them.
 
 ## Target pipeline
 
@@ -102,8 +112,9 @@ GitHub-hosted Linux runners, no self-hosted runner:
   (software emulation, no KVM), so it works without own infrastructure.
 - GitHub provides KVM on hosted Linux runners (introduced for Android
   emulation; the runner user must get access to `/dev/kvm`, usually via a
-  udev rule). Reportedly reliable for public repositories; to be verified
-  for this repository. Fallback: software emulation.
+  udev rule). Measured in a private repository: 4 of 6 contract jobs had
+  KVM (about 14 min with all plugins), the others ran under software
+  emulation (77 to 104 min). Both work; which one was used is reported.
 - Constraints: about 14 GB free disk. Matrix and contract tests run as
   separate jobs; the image is converted from `.bz2` to qcow2 without keeping
   the unpacked file; one release snapshot per contract job; Actions cache.
@@ -117,4 +128,3 @@ GitHub-hosted Linux runners, no self-hosted runner:
 - Write paths with generated test values instead of server defaults.
 - Second derivation: compare endpoint lists with OPNsense's
   `collect_api_endpoints.py`.
-- Licence (open; to be decided before the first publication).
