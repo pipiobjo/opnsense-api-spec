@@ -115,6 +115,9 @@ type Resource struct {
 	API    []*API                `json:"api"`
 	Fields map[string][]*Field   `json:"fields"`
 	Verify map[string]*ResVerify `json:"verified,omitempty"` // fragment -> result
+	// SharedWith lists other resources of this package that address the
+	// same model data (same model class and model path in some fragment).
+	SharedWith []string `json:"shared_with,omitempty"`
 }
 
 // API is how the resource is addressed in some fragments.
@@ -576,6 +579,7 @@ func (d *Doc) finish(order []string) {
 		}
 		d.Resources[id] = out
 	}
+	d.markShared()
 	if len(acts) > 0 {
 		d.Actions = map[string][]*Action{}
 	}
@@ -593,6 +597,36 @@ func (d *Doc) finish(order []string) {
 		}
 	}
 	d.rawRes, d.rawAct = nil, nil
+}
+
+// markShared sets SharedWith: resources whose API variants name the same
+// model class (case-insensitive, as PHP) and model path. Several
+// controllers can expose one model; writing through two of them means two
+// owners of the same data.
+func (d *Doc) markShared() {
+	byData := map[string][]string{}
+	for id, r := range d.Resources {
+		seen := map[string]bool{}
+		for _, a := range r.API {
+			k := strings.ToLower(a.Model) + "#" + a.ModelPath
+			if !seen[k] {
+				seen[k] = true
+				byData[k] = append(byData[k], id)
+			}
+		}
+	}
+	for _, ids := range byData {
+		for _, id := range ids {
+			for _, other := range ids {
+				if other != id {
+					d.Resources[id].SharedWith = addUnique(d.Resources[id].SharedWith, other)
+				}
+			}
+		}
+	}
+	for _, r := range d.Resources {
+		sort.Strings(r.SharedWith)
+	}
 }
 
 type variant struct{ hashes []string }

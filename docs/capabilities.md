@@ -1,6 +1,6 @@
 # Capability data (format 1)
 
-Status: draft for review. The format is the contract between this
+Status: accepted (2026-11-15). The format is the contract between this
 repository and its consumers (the Go client, the OpenTofu/Terraform
 provider, and anyone else); it changes only with a new `format` number.
 
@@ -139,6 +139,19 @@ Endpoints that are not resource operations (service actions such as
 `reconfigure`, custom actions, a second endpoint of the same kind) are in
 `actions`, keyed by path, with variants by fragment.
 
+### Resources that share data
+
+Several controllers can expose the same model. `acmeclient/accounts`,
+`acmeclient/actions` and `acmeclient/settings` all have a settings `set`
+on the whole os-acme-client model; `firewall/filter`, `firewall/npt` and
+others share the settings of the core's firewall model. `shared_with`
+lists the other resources of the package whose API names the same model
+class and model path, so the same stored data. A consumer should manage
+such data through one of them, usually the one that has both `get` and
+`set`; two owners of one object overwrite each other. Over 34 releases,
+36 resources in 12 models have `shared_with`. Entry lists inside a shared
+model are not affected: they have their own model path.
+
 ## Verification
 
 `verified` in a resource maps a fragment to the contract test that covered
@@ -177,6 +190,30 @@ os-frr on 26.7.9:
 
 Consumers should show this to users ("written and read back on 26.7.9",
 "not tested") rather than treat everything as equally reliable.
+
+## What a consumer still decides
+
+The data describes what the firewall does. Some things a client or
+provider needs cannot be derived from it, and the format says nothing
+rather than guess:
+
+- **Secrets.** OPNsense models do not mark a field as secret. Only
+  `UpdateOnlyTextField` is recognisable (written, never returned on read,
+  so a reader always sees it empty). Fields such as a `password` or
+  `secret` of type `TextField` (more than 200 over all packages) look like
+  any other text. A provider has to decide which fields to treat as
+  sensitive, for example by name, and should err towards hiding.
+- **Value types.** Every value is a string on the wire. `base` and
+  `multiple` decide how to present it: `BooleanField` is `"0"`/`"1"`,
+  `IntegerField` and `NumericField` are numbers as strings, `multiple`
+  fields are comma-separated lists, `UniqueIdField` and `AutoNumberField`
+  are set by the firewall. `base` is the nearest class of the core, not
+  the root of the hierarchy (`StrictTextField` and `TextField` are both
+  bases), so a consumer keeps a small table from base to its own type. A
+  change of `base` between variants is often a refactoring in OPNsense
+  with no change on the wire.
+- **Unknown versions.** Business editions and versions newer than the
+  data have no entry; see the fallback order above.
 
 ## Compatibility rules
 

@@ -145,6 +145,10 @@
           "type": "object",
           "propertyNames": {"$ref": "#/$defs/hash"},
           "additionalProperties": {"$ref": "#/$defs/verification"}
+        },
+        "shared_with": {
+          "description": "other resources of this package that address the same model data",
+          "type": "array", "items": {"type": "string"}, "minItems": 1, "uniqueItems": true
         }
       }
     },

@@ -1,6 +1,6 @@
 # 0010: Capability data per package instead of an OpenAPI superset
 
-Status: proposed (format under review), implemented behind a switch 2026-11-15
+Status: accepted 2026-11-15; published as the release `catalog` from the next scheduled run
 
 ## Context
 
@@ -45,9 +45,9 @@ Measured on the published data (34 releases, core and 75 packages):
   `capabilities.tar.zst`, `SHA256SUMS`, build provenance attestations),
   rebuilt by the daily pipeline and replaced only when the checksums
   change. The archive is reproducible (same input, same bytes).
-- Until the format is reviewed, publishing is off (repository variable
-  `CATALOG_PUBLISH`); every run builds and validates the data and keeps it
-  as a workflow artifact.
+- Publishing is controlled by the repository variable `CATALOG_PUBLISH`
+  (on since 2026-11-15, after review); every run builds and validates the
+  data and keeps it as a workflow artifact either way.
 
 ## Consequences
 
@@ -56,6 +56,9 @@ Measured on the published data (34 releases, core and 75 packages):
   per-fragment OpenAPI documents stay as they are for generated clients.
 - Not yet in format 1: `moved_from` for moved fields, write tests of
   settings resources, per-field verification. They can be added without a
-  new format number.
+  new format number. Added during review, before the first publish:
+  `shared_with` (resources that address the same model data).
+- The data does not mark secrets (OPNsense models do not); consumers
+  decide which fields are sensitive (docs/capabilities.md).
 - Consumers pin the hash of `SHA256SUMS` and verify the attestation; the
   release body says how.

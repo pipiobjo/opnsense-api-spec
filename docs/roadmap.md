@@ -87,7 +87,8 @@ generator changes.
    [capabilities.md](capabilities.md)): one JSON document per package with
    variants by fragment, exact fragment selection, verification results;
    built and validated on every run, release `catalog` with `SHA256SUMS`
-   and attestations. Publishing waits for the format review. Open:
+   and attestations. Format accepted 2026-11-15, publishing on; review
+   added `shared_with`. Open:
    `moved_from`, `SHA256SUMS` and attestations for the per-release assets.
 10. **Retention and size.** `dist/` is ~540 MB for 34 releases (10 MB
     compressed); the Actions caches about 2.6 GB. Open: keeping the packages

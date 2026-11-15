@@ -75,8 +75,12 @@ func demoFragment(areaType string, msg string) *fragment.Fragment {
 	getAll := ep("getNetworks", ir.KindItemGet, "networks.network") // second get, no uuid: an action
 	status := &ir.Endpoint{Path: "/api/demo/service/status", Package: "os-demo", Module: "demo", Controller: "service",
 		Action: "status", Methods: []string{"GET"}, Kind: ir.KindServiceStatus, Source: ir.SourceBase}
+	// a second controller on the same model, as acmeclient/accounts next to acmeclient/settings;
+	// the class is written in another case
+	other := &ir.Endpoint{Path: "/api/demo/general/set", Package: "os-demo", Module: "demo", Controller: "general",
+		Action: "set", Methods: []string{"POST"}, Kind: ir.KindModelSet, Source: ir.SourceBase, Model: "OPNsense\\demo\\demo", Wrapper: "demo"}
 	return &fragment.Fragment{Package: "os-demo", Models: []*model.Model{m},
-		Endpoints: []*ir.Endpoint{add, del, get, getAll, getItem, set, status}}
+		Endpoints: []*ir.Endpoint{add, del, get, getAll, getItem, other, set, status}}
 }
 
 func coreFragment() *fragment.Fragment {
@@ -167,6 +171,15 @@ func TestBuildVariantsAndSelect(t *testing.T) {
 	}
 	if en := r.Fields["enabled"]; len(en) != 1 || en[0].In != All || !en[0].Required {
 		t.Errorf("enabled should be one variant in all fragments: %s", js(en))
+	}
+	if s := doc.Resources["demo/settings"].SharedWith; len(s) != 1 || s[0] != "demo/general" {
+		t.Errorf("demo/settings shared_with = %v", s)
+	}
+	if s := doc.Resources["demo/general"].SharedWith; len(s) != 1 || s[0] != "demo/settings" {
+		t.Errorf("demo/general shared_with = %v", s)
+	}
+	if s := r.SharedWith; len(s) != 0 {
+		t.Errorf("entry list must not share with the settings: %v", s)
 	}
 	ops := r.API[0].Operations
 	if ops["get"] == nil || ops["get"].Path != "/api/demo/settings/getNetwork" || ops["add"] == nil || ops["del"].Gaps[0] != "result-not-returned" {

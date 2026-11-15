@@ -61,9 +61,9 @@ gh release download opnsense-26.7.9 -R pipiobjo/opnsense-api-spec -p '*.openapi.
 For clients that talk to many firewalls there is also the **capability
 data**: every resource, field and action over all versions, with the
 package versions they exist in and the contract test results, as plain
-JSON ([docs/capabilities.md](docs/capabilities.md)). It will be published
-as the release `catalog` once its format is reviewed; until then it is
-built and checked on every pipeline run
+JSON ([docs/capabilities.md](docs/capabilities.md)). It is published
+as the release `catalog` (from the scheduled run of 2026-11-16 on) and
+rebuilt and checked on every pipeline run
 (`go run ./cmd/opnsense-api-spec capabilities`).
 
 ## Usage
