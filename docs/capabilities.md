@@ -131,7 +131,14 @@ in the fragments of the variants that list it.
 `operations` holds one endpoint per operation of a resource. `wrapper`
 is the key around the object in request and response bodies
 (`{"network": {...}}`); `outer`, where present, is one more key around it
-in the response (three os-squid PAC endpoints today). `source` says
+in the response (three os-squid PAC endpoints today). `forced` names
+fields the endpoint sets to a fixed value whatever the request says, and
+`computed` fields it fills itself; a value sent for them is overwritten.
+Examples: the bind endpoints `addPrimaryDomain`/`addForwardDomain` force
+`type`; the traffic shaper's `addPipe` forces `origin` and computes
+`number`; unbound's `addForward` computes `type`. Where the controller
+passes such an overlay in a variable, the fields are unknown and the gap
+`overlay-unknown` says so (interfaces lagg, bridge, gif, gre, vip). `source` says
 how it was derived (concepts, section 6), `gaps` lists what is uncertain,
 for example `result-not-returned` (the endpoint returns nothing) or
 `post-processed` (the response may differ from the helper's). `apply` is

@@ -137,10 +137,14 @@ type Operation struct {
 	Params  []string `json:"params,omitempty"`
 	// Wrapper is the key around the object in request and response bodies;
 	// Outer an additional key around the wrapper in the response (rare).
-	Wrapper string   `json:"wrapper,omitempty"`
-	Outer   string   `json:"outer,omitempty"`
-	Source  string   `json:"source"`
-	Gaps    []string `json:"gaps,omitempty"`
+	Wrapper string `json:"wrapper,omitempty"`
+	Outer   string `json:"outer,omitempty"`
+	// Forced: fields this endpoint sets to a fixed value; Computed: fields
+	// it fills itself. A value sent for them is overwritten.
+	Forced   map[string]string `json:"forced,omitempty"`
+	Computed []string          `json:"computed,omitempty"`
+	Source   string            `json:"source"`
+	Gaps     []string          `json:"gaps,omitempty"`
 }
 
 // Field is one variant of a field.
@@ -485,6 +489,7 @@ func better(a, b *ir.Endpoint) bool {
 
 func operation(e *ir.Endpoint) *Operation {
 	return &Operation{Path: e.Path, Methods: e.Methods, Params: params(e), Wrapper: e.Wrapper, Outer: e.Outer,
+		Forced: e.Forced, Computed: e.Computed,
 		Source: string(e.Source), Gaps: gapCodes(e.Gaps)}
 }
 

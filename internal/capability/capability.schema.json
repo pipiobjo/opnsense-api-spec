@@ -177,6 +177,8 @@
         "params": {"$ref": "#/$defs/strings"},
         "wrapper": {"type": "string", "description": "key around the object in request and response bodies"},
         "outer": {"type": "string", "description": "additional key around the wrapper in the response"},
+        "forced": {"type": "object", "additionalProperties": {"type": "string"}, "description": "fields this endpoint sets to a fixed value whatever the request says"},
+        "computed": {"type": "array", "items": {"type": "string"}, "description": "fields this endpoint fills itself"},
         "source": {"enum": ["base", "base-call", "signature-only"]},
         "gaps": {"$ref": "#/$defs/gaps"}
       }

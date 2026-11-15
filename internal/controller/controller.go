@@ -38,6 +38,19 @@ type BaseCall struct {
 	// NoReturn: the action has no return statement at all, so the helper
 	// result is discarded and the response is empty.
 	NoReturn bool `json:"no_return,omitempty"`
+	// Overlay: fields addBase/setBase force regardless of the request, as in
+	// addBase('domain', 'domains.domain', ['type' => 'primary']).
+	Overlay []Overlay `json:"overlay,omitempty"`
+}
+
+// Overlay is one field a helper call forces. Literal values are known;
+// otherwise the controller computes the value (a property, a function).
+// Field "" means the overlay is not an array literal, so its fields are
+// unknown.
+type Overlay struct {
+	Field   string `json:"field"`
+	Value   string `json:"value,omitempty"`
+	Literal bool   `json:"literal,omitempty"`
 }
 
 // Action is one public xxxAction method.
@@ -338,7 +351,43 @@ func baseCall(fn string, args []string) BaseCall {
 	if !ok {
 		bc.Raw = strings.Join(args, ", ")
 	}
+	// the overlay argument: addBase($key, $path, $overlay),
+	// setBase($key, $path, $uuid, $overlay)
+	if i := map[string]int{"addBase": 2, "setBase": 3}[fn]; i > 0 && i < len(args) {
+		bc.Overlay = parseOverlay(args[i])
+	}
 	return bc
+}
+
+var arrayLitRe = regexp.MustCompile(`(?s)^\s*(?:\[(.*)\]|array\s*\((.*)\))\s*$`)
+
+// parseOverlay reads a PHP array literal of field => value pairs.
+func parseOverlay(arg string) []Overlay {
+	m := arrayLitRe.FindStringSubmatch(arg)
+	if m == nil {
+		if strings.TrimSpace(arg) == "null" {
+			return nil
+		}
+		return []Overlay{{}} // a variable: fields unknown
+	}
+	inner := m[1] + m[2]
+	var out []Overlay
+	for _, pair := range splitArgs(inner) {
+		k, v, ok := strings.Cut(pair, "=>")
+		if !ok {
+			continue
+		}
+		field, ok := lit(strings.TrimSpace(k))
+		if !ok {
+			return []Overlay{{}} // computed keys: fields unknown
+		}
+		o := Overlay{Field: field}
+		if val, ok := lit(strings.TrimSpace(v)); ok {
+			o.Value, o.Literal = val, true
+		}
+		out = append(out, o)
+	}
+	return out
 }
 
 // snake converts CamelCase to the URL form the OPNsense router maps back

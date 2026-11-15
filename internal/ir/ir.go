@@ -22,7 +22,7 @@ import (
 // v<GeneratorVersion> (tools/ci/publish.sh).
 const (
 	GeneratorName    = "opnsense-api-spec"
-	GeneratorVersion = "0.7.0"
+	GeneratorVersion = "0.8.0"
 )
 
 // Source says how an endpoint description was derived.
@@ -73,8 +73,13 @@ type Endpoint struct {
 	Outer      string             `json:"outer,omitempty"`      // extra key around the wrapper in the response
 	ModelPath  string             `json:"model_path,omitempty"` // item path for item.* kinds
 	Apply      string             `json:"apply,omitempty"`      // endpoint that activates changes
-	DeclaredIn string             `json:"declared_in"`
-	Gaps       []gap.Gap          `json:"gaps,omitempty"`
+	// Forced: fields the endpoint sets to a fixed value whatever the request
+	// says; Computed: fields it sets to a value of its own (both from the
+	// overlay argument of addBase/setBase).
+	Forced     map[string]string `json:"forced,omitempty"`
+	Computed   []string          `json:"computed,omitempty"`
+	DeclaredIn string            `json:"declared_in"`
+	Gaps       []gap.Gap         `json:"gaps,omitempty"`
 }
 
 // Package is provenance of one input package.
@@ -309,6 +314,19 @@ func classify(e *Endpoint, c *controller.Controller, a *controller.Action, mdl *
 		}
 		e.Kind, e.Source = itemKinds[bc.Func], SourceBaseCall
 		e.ModelPath, e.Wrapper, e.Outer = bc.Path, bc.Key, bc.Outer
+		for _, o := range bc.Overlay {
+			switch {
+			case o.Field == "":
+				e.Gaps = append(e.Gaps, gap.New(gap.OverlayUnknown, "%s forces fields that are not derivable", bc.Func))
+			case o.Literal:
+				if e.Forced == nil {
+					e.Forced = map[string]string{}
+				}
+				e.Forced[o.Field] = o.Value
+			default:
+				e.Computed = append(e.Computed, o.Field)
+			}
+		}
 		setModel()
 		modelGap()
 		switch e.Kind {

@@ -5,6 +5,7 @@ package controller
 
 import (
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -63,7 +64,7 @@ func TestResolveSettings(t *testing.T) {
 	if gh == nil || len(gh.Params) != 1 || gh.Params[0] != (Param{Name: "uuid", Optional: true}) {
 		t.Errorf("getHost params: %+v", gh)
 	}
-	if gh.Calls[0] != (BaseCall{Func: "getBase", Key: "host", Path: "hosts.host", Direct: true}) {
+	if !reflect.DeepEqual(gh.Calls[0], BaseCall{Func: "getBase", Key: "host", Path: "hosts.host", Direct: true}) {
 		t.Errorf("getHost call: %+v", gh.Calls)
 	}
 	if a := action(c, "addHost"); a.Calls[0].Key != "host" || a.Calls[0].Path != "hosts.host" {
@@ -112,5 +113,29 @@ func TestStripCommentsKeepsStrings(t *testing.T) {
 	}
 	if strings.Count(got, "\n") != strings.Count(in, "\n") {
 		t.Error("line count must be preserved")
+	}
+}
+
+func TestOverlay(t *testing.T) {
+	cases := []struct {
+		call string
+		args []string
+		want []Overlay
+	}{
+		{"addBase", []string{"'domain'", "'domains.domain'", "['type' => 'primary']"}, []Overlay{{Field: "type", Value: "primary", Literal: true}}},
+		{"addBase", []string{"'dot'", "'dots.dot'", `[ "type" => $this->type ]`}, []Overlay{{Field: "type"}}},
+		{"setBase", []string{"'vlan'", "'vlan'", "$uuid", "['vlanif' => $new_vlanif]"}, []Overlay{{Field: "vlanif"}}},
+		{"addBase", []string{"'a'", "'b'", "array('x' => '1', 'y' => \"2\")"}, []Overlay{{Field: "x", Value: "1", Literal: true}, {Field: "y", Value: "2", Literal: true}}},
+		{"addBase", []string{"'a'", "'b'", "$overlay"}, []Overlay{{}}},
+		{"addBase", []string{"'a'", "'b'", "null"}, nil},
+		{"addBase", []string{"'a'", "'b'"}, nil},
+		{"setBase", []string{"'a'", "'b'", "['x' => 1]"}, nil}, // third argument of setBase is the uuid
+		{"getBase", []string{"'a'", "'b'", "['x' => '1']"}, nil},
+	}
+	for _, c := range cases {
+		got := baseCall(c.call, c.args).Overlay
+		if !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s(%v): %+v, want %+v", c.call, c.args, got, c.want)
+		}
 	}
 }

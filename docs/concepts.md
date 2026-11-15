@@ -201,6 +201,7 @@ typed, whatever their kind.
 | `helper-used-internally` | custom action that uses a helper internally; untyped |
 | `multiple-helpers` | several helper calls; the one matching the action is documented |
 | `helper-non-literal` | helper called with non-literal arguments; untyped |
+| `overlay-unknown` | `addBase`/`setBase` force fields through an overlay that is not an array literal; which fields is unknown |
 | `no-apply-endpoint` | no apply/reconfigure endpoint found |
 | `model-class-missing`, `model-missing`, `model-path-missing`, `model-path-not-array`, `parent-missing` | the controller refers to something that was not found |
 | `field-type-unresolved` | field type not resolved to a core base class (field level) |
