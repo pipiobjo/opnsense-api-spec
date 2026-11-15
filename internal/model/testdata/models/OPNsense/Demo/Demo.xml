@@ -63,6 +63,15 @@
                 </ttl>
                 <odd type="UnknownField"/>
                 <filters type="TextField"/>
+                <zone type="ModelRelationField">
+                    <Model>
+                        <template>
+                            <source>OPNsense.Demo.Zones</source>
+                            <items>zones.zone</items>
+                            <display>name</display>
+                        </template>
+                    </Model>
+                </zone>
                 <NewUpstreamKeyword>Y</NewUpstreamKeyword>
             </host>
         </hosts>

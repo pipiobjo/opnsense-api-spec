@@ -39,6 +39,9 @@ func TestLoadAllFixture(t *testing.T) {
 		t.Errorf("custom field type via FieldTypes: %+v", n)
 	}
 	check("hosts.host", KindArray, "ArrayField", "")
+	if z := m.Find("hosts.host.zone"); z == nil || len(z.Relations) != 1 || z.Relations[0] != (Relation{Source: "OPNsense.Demo.Zones", Items: "zones.zone"}) {
+		t.Errorf("relation target not parsed: %+v", z)
+	}
 	check("hosts.host.hostname", KindField, "BaseSetField", ShapeString)
 	mode := check("hosts.host.mode", KindField, "BaseListField", ShapeSelect)
 	if len(mode.Options) != 2 || mode.Options[1] != (Option{Value: "b-1", Label: "Mode B", Group: "Grouped"}) {

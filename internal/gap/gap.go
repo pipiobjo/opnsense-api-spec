@@ -29,6 +29,7 @@ const (
 	HelperUsedInternally  Code = "helper-used-internally"   // custom action using a helper internally
 	CustomLogic           Code = "custom-logic"             // own code around a helper call
 	PostProcessed         Code = "post-processed"           // the helper result is transformed before returning
+	ResultNotReturned     Code = "result-not-returned"      // the helper is called but its result is not returned: empty response
 	NoApplyEndpoint       Code = "no-apply-endpoint"        // how changes take effect is unknown
 	MethodUnknown         Code = "http-method-unknown"      // HTTP method not derivable
 	CustomAction          Code = "custom-action"            // request and response not derived

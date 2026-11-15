@@ -22,7 +22,7 @@ import (
 // v<GeneratorVersion> (tools/ci/publish.sh).
 const (
 	GeneratorName    = "opnsense-api-spec"
-	GeneratorVersion = "0.6.0"
+	GeneratorVersion = "0.7.0"
 )
 
 // Source says how an endpoint description was derived.
@@ -329,6 +329,12 @@ func classify(e *Endpoint, c *controller.Controller, a *controller.Action, mdl *
 		if a.Lines > thinLines {
 			e.Gaps = append(e.Gaps, gap.New(gap.CustomLogic, "action adds custom logic around %s; request/response may differ", bc.Func))
 		} else if !bc.Direct && (e.Kind == KindItemGet || e.Kind == KindItemSearch) {
+			e.Gaps = append(e.Gaps, gap.New(gap.PostProcessed, "action post-processes the result of %s; response may differ", bc.Func))
+		} else if bc.NoReturn {
+			// e.g. os-wol delHostAction: "$this->delBase(...);" and no return
+			e.Gaps = append(e.Gaps, gap.New(gap.ResultNotReturned, "action calls %s without returning its result; the response is empty", bc.Func))
+		} else if !bc.Direct {
+			// e.g. return $this->handleFormValidations($this->addBase(...))
 			e.Gaps = append(e.Gaps, gap.New(gap.PostProcessed, "action post-processes the result of %s; response may differ", bc.Func))
 		}
 		return

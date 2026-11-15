@@ -35,6 +35,9 @@ type BaseCall struct {
 	Outer string `json:"outer,omitempty"`
 	// Direct: the action returns the helper result as is (return $this->xBase(...))
 	Direct bool `json:"direct,omitempty"`
+	// NoReturn: the action has no return statement at all, so the helper
+	// result is discarded and the response is empty.
+	NoReturn bool `json:"no_return,omitempty"`
 }
 
 // Action is one public xxxAction method.
@@ -87,6 +90,7 @@ var (
 	funcRe   = regexp.MustCompile(`public\s+function\s+(\w+)Action\s*\(`)
 	callRe   = regexp.MustCompile(`\$this->(searchBase|getBase|addBase|setBase|delBase|toggleBase)\s*\(`)
 	returnRe = regexp.MustCompile(`return\s*$`)
+	returnKw = regexp.MustCompile(`\breturn\b`)
 	outerRe  = regexp.MustCompile(`return\s*(?:array\s*\(|\[)\s*['"](\w+)['"]\s*=>\s*$`)
 	hookRe   = regexp.MustCompile(`function\s+(getModelNodes|setActionHook|setBaseHook)\s*\(`)
 	parentRe = regexp.MustCompile(`parent::\w+Action\s*\(`)
@@ -294,6 +298,8 @@ func ParseFile(src, relFile string) []*Class {
 					bc.Outer, bc.Direct = om[1], true
 				} else if returnRe.MatchString(fbody[:cm[0]]) {
 					bc.Direct = true
+				} else if !returnKw.MatchString(fbody) {
+					bc.NoReturn = true
 				}
 				a.Calls = append(a.Calls, bc)
 			}

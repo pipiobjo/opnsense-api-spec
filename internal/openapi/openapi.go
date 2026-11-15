@@ -253,6 +253,9 @@ func (r *renderer) operation(e *ir.Endpoint, v variant, method string) M {
 		for _, res := range r.verByPath[e.Path] {
 			if res.Method == method {
 				c := M{"check": res.Check, "status": res.Status}
+				if len(res.Steps) > 0 {
+					c["steps"] = res.Steps
+				}
 				if len(res.Findings) > 0 {
 					c["findings"] = res.Findings
 				}
@@ -324,6 +327,22 @@ func (r *renderer) operation(e *ir.Endpoint, v variant, method string) M {
 			op["requestBody"] = M{"required": false, "content": M{"application/json": M{"schema": M{}}}}
 		}
 		op["responses"] = okJSON(M{})
+	}
+	if body, ok := op["requestBody"].(M); ok && kind == ir.KindItemAdd && r.ver != nil {
+		// the entry the test instance accepted, as an example for clients
+		// and for consumers' own tests
+		for _, res := range r.verByPath[e.Path] {
+			if res.Check == "write-cycle" && res.Status == "ok" && res.Sample != nil {
+				body["content"].(M)["application/json"].(M)["examples"] = M{"accepted-by-test-instance": M{
+					"summary": "Accepted by test instance " + r.ver.Instance + " on " + r.ver.Date +
+						". Values of option and relation fields (interfaces, UUIDs) existed on that instance only.",
+					"value": M{e.Wrapper: res.Sample},
+				}}
+			}
+		}
+	}
+	if gap.Has(e.Gaps, gap.ResultNotReturned) {
+		op["responses"] = M{"200": M{"description": "Empty response: the action does not return the result of the operation (upstream behaviour)."}}
 	}
 	if len(params) > 0 {
 		op["parameters"] = params
@@ -578,6 +597,10 @@ func fieldSchema(n *model.Node, dir string) M {
 	}
 	if n.Volatile {
 		s["x-opnsense-volatile"] = true
+	}
+	if len(n.Relations) > 0 {
+		// values are UUIDs of entries in these lists
+		s["x-opnsense-relation"] = n.Relations
 	}
 	var opts []string
 	for _, o := range n.Options {

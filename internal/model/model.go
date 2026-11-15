@@ -56,8 +56,18 @@ type Node struct {
 	Default  *string           `json:"default,omitempty"`
 	Options  []Option          `json:"options,omitempty"`
 	Props    map[string]string `json:"props,omitempty"` // other scalar settings (Mask, MinimumValue, Separator, ...)
-	Children []*Node           `json:"children,omitempty"`
-	Gaps     []gap.Gap         `json:"gaps,omitempty"`
+	// Relations: the entry lists a ModelRelationField refers to (its keys
+	// are UUIDs of entries there).
+	Relations []Relation `json:"relations,omitempty"`
+	Children  []*Node    `json:"children,omitempty"`
+	Gaps      []gap.Gap  `json:"gaps,omitempty"`
+}
+
+// Relation is one target of a ModelRelationField: model class (dotted, as
+// in the XML: "OPNsense.Bind.Domain") and the entry list path within it.
+type Relation struct {
+	Source string `json:"source"`
+	Items  string `json:"items"`
 }
 
 // Model is one parsed model XML.
@@ -460,6 +470,15 @@ func convert(x *xnode, ns string, types *TypeIndex) *Node {
 			n.Options = options(c)
 		case "AsList":
 			setProp(n, name, val)
+		case "Model":
+			setProp(n, name, "(structured)")
+			for j := range c.Children {
+				t := &c.Children[j]
+				src, items := t.child("source"), t.child("items")
+				if src != nil && items != nil {
+					n.Relations = append(n.Relations, Relation{Source: strings.TrimSpace(src.Text), Items: strings.TrimSpace(items.Text)})
+				}
+			}
 		default:
 			if len(c.Children) == 0 {
 				setProp(n, name, val)
