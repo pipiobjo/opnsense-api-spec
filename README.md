@@ -88,7 +88,10 @@ release `opnsense-<release>` (OpenAPI, IR, coverage, contract test results,
 composition, diff). Pre-release means: not contract-tested for this catalog
 state. On failure nothing is published and an issue labelled
 `pipeline-failure` lists the findings. A manual run can re-test older
-releases (`verify` input) or run without publishing.
+releases (`verify` input) or run without publishing. A separate watchdog
+reports a pipeline that stopped running, typing regressions open a
+non-blocking issue, and a weekly digest summarises the rest
+([docs/operations.md](docs/operations.md)).
 
 ## Contract tests (throwaway VM only)
 
@@ -212,7 +215,7 @@ internal/verify/         contract tests against a running test instance
 verify/accepted.json     reviewed upstream findings that do not count as failures
 tools/testvm.sh          throwaway OPNsense VM (QEMU/KVM, software emulation fallback)
 .github/actions/testvm/  the VM as a GitHub Action for other repositories
-tools/ci/                pipeline helpers (state, publish, failure report)
+tools/ci/                pipeline helpers (state, publish, failure report, alerts and digest)
 test/consumer-go/        consumer scenario for the generated Go client
 ```
 

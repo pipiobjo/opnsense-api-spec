@@ -10,6 +10,9 @@
 #   publish   only if every job passed: index, GitHub releases, state
 #   report    on any failure: issue with the findings; nothing is published
 #
+# watchdog.yml checks independently that this workflow still runs and
+# succeeds, and writes the weekly digest.
+#
 # No secrets: the only token is the workflow's own GITHUB_TOKEN. The test VM
 # is isolated as described in tools/testvm.sh (ADR 0004).
 name: pipeline
@@ -57,8 +60,10 @@ jobs:
     permissions:
       actions: write
     steps:
-      - name: Re-enable this workflow
-        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/pipeline.yml/enable"
+      - name: Re-enable this workflow and the watchdog
+        run: |
+          gh api -X PUT "repos/${{ github.repository }}/actions/workflows/pipeline.yml/enable"
+          gh api -X PUT "repos/${{ github.repository }}/actions/workflows/watchdog.yml/enable"
 
   build:
     runs-on: ubuntu-24.04
@@ -207,6 +212,7 @@ jobs:
       contents: write
       id-token: write # attestation of the catalog (keyless, Sigstore)
       attestations: write
+      issues: write # coverage alarm
     env:
       # Capability data (docs/capabilities.md) is published only when the
       # repository variable CATALOG_PUBLISH is "true" and the run publishes;
@@ -278,6 +284,13 @@ jobs:
             .cache/ci/catalog/SHA256SUMS
       - name: Publish capability data
         run: tools/ci/catalog.sh publish ${{ env.CATALOG_LIVE != 'true' && '--dry-run' || '' }}
+      # typing regressions do not block publishing; they open an "attention"
+      # issue once per release and set of regressions (docs/operations.md)
+      - name: Coverage alarm
+        if: github.event_name != 'workflow_dispatch' || inputs.publish
+        env:
+          PREV_INDEX: .cache/ci/index.prev.json
+        run: tools/ci/alerts.sh coverage
 
   report:
     needs: [keepalive, build, contract, publish]

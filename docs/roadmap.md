@@ -97,6 +97,10 @@ generator changes.
     composite action `.github/actions/testvm`
     ([testvm-action.md](testvm-action.md)), used by the daily contract job
     and tested as another repository would use it (`testvm-action.yml`).
+12. **Signals for silent situations.** Done (2026-11-15,
+    [operations.md](operations.md)): watchdog (pipeline disabled or no
+    success for 3 days), coverage alarm (new typing regressions, not
+    blocking), weekly digest issue.
 
 ## Target pipeline
 
