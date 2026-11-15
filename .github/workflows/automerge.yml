@@ -1,0 +1,46 @@
+# SPDX-FileCopyrightText: 2026 opnsense-api-spec contributors
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Dependency updates merge themselves (ADR 0012): Dependabot opens them
+# against dev, grouped and monthly, only for versions at least 7 days old
+# (.github/dependabot.yml). When ci.yml passed on such a pull request, this
+# workflow merges it and starts promote.yml, which tests the result like any
+# other change before main moves.
+#
+# Runs on workflow_run, so the pull request's code is never checked out
+# here with a write token.
+name: automerge
+
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  merge:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.actor.login == 'dependabot[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - name: Merge the tested pull request and promote
+        run: |
+          pr=$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" --jq '[.[] | select(.state == "open" and .base.ref == "dev" and .user.login == "dependabot[bot]")][0].number // empty')
+          [ -n "$pr" ] || { echo "no open Dependabot pull request against dev for $HEAD_SHA"; exit 0; }
+          # merge exactly the commit that was tested
+          gh api -X PUT "repos/$REPO/pulls/$pr/merge" -f merge_method=squash -f sha="$HEAD_SHA" >/dev/null
+          echo "merged #$pr"
+          gh workflow run promote.yml -R "$REPO" --ref dev

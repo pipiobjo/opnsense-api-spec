@@ -1,13 +1,12 @@
 # SPDX-FileCopyrightText: 2026 opnsense-api-spec contributors
 # SPDX-License-Identifier: BSD-2-Clause
 #
-# Signals no failing run can send (docs/operations.md):
-#   watchdog  every day: pipeline.yml still enabled and its last successful
-#             scheduled run younger than 3 days; otherwise one issue
-#             labelled "watchdog", closed again when it recovers. A schedule
-#             GitHub disabled for inactivity is re-enabled.
-#   digest    Mondays (or on request): one issue labelled "digest",
-#             rewritten in place with the last 7 days.
+# The one signal to a person (docs/operations.md, ADR 0012): daily, opens
+# one issue labelled "needs-you" when publishing has been stale for 7 days,
+# pipeline.yml is disabled, or a new release lost typing; edits it while
+# that lasts and closes it when it is over. A schedule GitHub disabled for
+# inactivity is re-enabled without a message.
+#
 # The pipeline's keepalive job re-enables this workflow, and this one the
 # pipeline, so neither is lost to the 60-day inactivity rule alone.
 name: watchdog
@@ -16,11 +15,6 @@ on:
   schedule:
     - cron: "41 17 * * *"
   workflow_dispatch:
-    inputs:
-      digest:
-        description: Also rewrite the weekly digest now
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -37,7 +31,7 @@ defaults:
     shell: bash
 
 jobs:
-  watchdog:
+  check:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -46,14 +40,5 @@ jobs:
       actions: write # re-enable pipeline.yml after GitHub disabled it
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Watchdog
-        run: tools/ci/alerts.sh watchdog
-      - name: Weekly digest
-        env:
-          ON_REQUEST: ${{ inputs.digest }}
-        run: |
-          if [ "$ON_REQUEST" = true ] || [ "$(date -u +%u)" = 1 ]; then
-            tools/ci/alerts.sh digest
-          else
-            echo "digest: Mondays only"
-          fi
+      - name: Check
+        run: tools/ci/alerts.sh check

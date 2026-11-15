@@ -77,8 +77,9 @@ OCI artifacts (ORAS) come later, from the same files.
 
 **Failure**: nothing is published (`publish` needs all jobs; a planned
 release that is still unverified after the contract jobs fails the publish
-gate). `report` opens one issue labelled `pipeline-failure` with the job
-results and the failing checks per release, or comments on the open one.
+gate). `report` writes the job results and the failing checks per release
+to the run's summary page. (Until 2026-11-15 it opened an issue; replaced
+by [ADR 0012](0012-quiet-operation.md).)
 
 **Loud by construction**: `verify` exits non-zero on unexplained findings;
 the workflow shell is `bash -eo pipefail` (the implicit default has no

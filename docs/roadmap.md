@@ -89,7 +89,7 @@ generator changes.
    built and validated on every run, release `catalog` with `SHA256SUMS`
    and attestations. Format accepted 2026-11-15, publishing on; review
    added `shared_with`. Open:
-   `moved_from`, `SHA256SUMS` and attestations for the per-release assets.
+   `moved_from`.
 10. **Retention and size.** `dist/` is ~540 MB for 34 releases (10 MB
     compressed); the Actions caches about 2.6 GB. Open: keeping the packages
     of final releases, because the mirror can withdraw them.
@@ -97,10 +97,12 @@ generator changes.
     composite action `.github/actions/testvm`
     ([testvm-action.md](testvm-action.md)), used by the daily contract job
     and tested as another repository would use it (`testvm-action.yml`).
-12. **Signals for silent situations.** Done (2026-11-15,
-    [operations.md](operations.md)): watchdog (pipeline disabled or no
-    success for 3 days), coverage alarm (new typing regressions, not
-    blocking), weekly digest issue.
+12. **Quiet operation.** Done (2026-11-15, [ADR 0012](adr/0012-quiet-operation.md),
+    [operations.md](operations.md)): one self-closing `needs-you` issue
+    after 7 stale days, nothing on single failures, `main` only through
+    two dry runs (`promote.yml`), dependency updates merged by themselves,
+    `SHA256SUMS` and attestation per release, checked as an anonymous
+    consumer after each live run.
 
 ## Target pipeline
 

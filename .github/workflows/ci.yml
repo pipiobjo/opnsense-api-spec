@@ -3,13 +3,14 @@
 #
 # Code gates on every push and pull request: vet, unit tests, golden and
 # determinism tests against the real golden releases (fetched, so a missing
-# input fails instead of skipping). Publishing is pipeline.yml.
+# input fails instead of skipping). Publishing is pipeline.yml; pushes to
+# dev run this through promote.yml.
 name: ci
 
 on:
-  push:
-    branches: [main]
   pull_request:
+  # promote.yml runs these gates before every move of main
+  workflow_call:
 
 permissions:
   contents: read

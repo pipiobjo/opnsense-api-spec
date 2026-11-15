@@ -13,6 +13,7 @@
 | [0009](0009-generated-write-values.md) | Generated write values, read-back and prerequisite entries in the contract test | accepted, implemented |
 | [0010](0010-capability-data.md) | Capability data per package (plain JSON with variants by fragment) instead of an OpenAPI superset | accepted |
 | [0011](0011-testvm-action.md) | The test VM as a composite action in this repository, used by the contract job and by other repositories | accepted, implemented |
+| [0012](0012-quiet-operation.md) | Quiet operation: one self-closing signal after 7 stale days, `main` only through dry runs, dependencies update themselves | accepted, implemented |
 
 Format: context, decision, consequences, evidence. A superseded ADR stays
 and links to its successor.

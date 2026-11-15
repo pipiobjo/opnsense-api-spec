@@ -53,7 +53,10 @@ tools/testvm.sh verify 26.7 --release 26.7.9 --plugins
 
 ## Pull requests and CI
 
-Pull requests run the code checks (`ci.yml`). The daily pipeline
-(`pipeline.yml`) never runs for pull requests, because it publishes.
+Pull requests go to the branch `dev` and run the code checks (`ci.yml`).
+`main` moves only through `promote.yml`, which runs the code checks and
+two dry runs of the daily pipeline on a commit of `dev` before it
+fast-forwards `main`. The daily pipeline (`pipeline.yml`) never runs for
+pull requests, because it publishes.
 Workflows from first-time contributors need a maintainer's approval
 before they run.

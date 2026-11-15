@@ -1,29 +1,37 @@
 #!/usr/bin/env bash
 # SPDX-FileCopyrightText: 2026 opnsense-api-spec contributors
 # SPDX-License-Identifier: BSD-2-Clause
-# Signals for situations that are not failures of a run (docs/operations.md):
+# The one signal to a person (docs/operations.md, ADR 0012):
 #
-#   tools/ci/alerts.sh coverage   new typing regressions in the releases built
-#                                 by this run (dist/index.json against
-#                                 PREV_INDEX) -> issue labelled "attention"
-#   tools/ci/alerts.sh watchdog   the daily pipeline stopped running or has not
-#                                 succeeded for 3 days -> issue labelled
-#                                 "watchdog"; closed again when it recovers
-#   tools/ci/alerts.sh digest     one issue labelled "digest", rewritten in
-#                                 place: runs, publications, verification,
-#                                 warnings of the last 7 days
+#   tools/ci/alerts.sh check
 #
-# Tests: tools/ci/alerts_test.sh. For them, every read from GitHub can be
-# replaced by a variable (ALERTS_ISSUES, WD_STATE, WD_LAST_SUCCESS,
-# DIGEST_INPUT) and ALERTS_DRY_RUN=1 prints the write calls instead of
-# making them.
+# Opens at most one issue labelled "needs-you", edits it while a condition
+# lasts and closes it when none is left. Conditions:
+#
+#   stale     the last successful scheduled run of pipeline.yml is older
+#             than 7 days (WD_STALE_HOURS); a single failed run is not one
+#   disabled  pipeline.yml is disabled and cannot be re-enabled here (a
+#             workflow GitHub disabled for inactivity is re-enabled silently)
+#   coverage  a release created in the last 14 days lost typing against the
+#             release before it (its *.quality.json lists regressions);
+#             clears by itself 14 days after that release appeared
+#
+# A person never closes the issue; the next check after the cause is gone
+# does. Nothing here is urgent: consumers keep working with the last
+# published data.
+#
+# Tests: tools/ci/alerts_test.sh. Every read from GitHub can be replaced by
+# a variable (ALERTS_ISSUES, WD_STATE, WD_LAST_SUCCESS, WD_FAILED_RUN,
+# WD_COVERAGE) and ALERTS_DRY_RUN=1 prints the write calls instead of making
+# them.
 set -euo pipefail
 
 REPO="${GITHUB_REPOSITORY:-pipiobjo/opnsense-api-spec}"
-DIST="${DIST:-dist}"
 NOW="${ALERTS_NOW:-$(date -u +%s)}"
-STALE_HOURS="${WD_STALE_HOURS:-72}"
+STALE_HOURS="${WD_STALE_HOURS:-168}"
 SERVER="${GITHUB_SERVER_URL:-https://github.com}"
+LABEL=needs-you
+HISTORY_END="${HISTORY_END:-2026-11-16T00:00:00Z}"
 
 # ghw: a write call to GitHub, or its printout in a dry run (with the body)
 ghw() {
@@ -39,241 +47,172 @@ ghw() {
   fi
 }
 
-# issues LABEL: issues with this label in any state, as JSON
-# [{number,state,title,body}]
-issues() {
-  if [ -n "${ALERTS_ISSUES:-}" ]; then
-    jq --arg l "$1" '[.[] | select(.labels | index($l))]' <<<"$ALERTS_ISSUES"
+open_issue() { # number of the open needs-you issue, or nothing
+  if [ -n "${ALERTS_ISSUES+x}" ]; then
+    jq -r --arg l "$LABEL" '[.[] | select((.labels | index($l)) and (.state | ascii_upcase) == "OPEN")][0].number // empty' <<<"$ALERTS_ISSUES"
   else
-    gh issue list -R "$REPO" --label "$1" --state all --limit 500 --json number,state,title,body
+    gh issue list -R "$REPO" --label "$LABEL" --state open --limit 1 --json number --jq '.[0].number // empty'
   fi
-}
-
-label() { # label NAME COLOR DESCRIPTION
-  [ -n "${ALERTS_DRY_RUN:-}" ] && return
-  gh label create "$1" -R "$REPO" --color "$2" --description "$3" 2>/dev/null || true
 }
 
 epoch() { date -u -d "$1" +%s; }
 
-# ---------------------------------------------------------------- coverage
+# ------------------------------------------------------------ inputs
 
-# releases whose catalog state changed in this run (new or rebuilt)
-changed_releases() {
-  local prev="${PREV_INDEX:-$DIST/.index.prev.json}"
-  [ -f "$prev" ] || prev=/dev/null
-  jq -rn --slurpfile c "$DIST/index.json" --slurpfile p <(cat "$prev"; echo '{}') '
-    (($p[0].releases // []) | map({key: .release, value: .current}) | from_entries) as $before
-    | $c[0].releases[] | select($before[.release] != .current) | .release'
+workflow_state() {
+  if [ -n "${WD_STATE+x}" ]; then echo "$WD_STATE"; return; fi
+  gh api "repos/$REPO/actions/workflows/pipeline.yml" --jq .state
 }
 
+last_success() {
+  if [ -n "${WD_LAST_SUCCESS+x}" ]; then echo "$WD_LAST_SUCCESS"; return; fi
+  gh run list -R "$REPO" -w pipeline.yml -e schedule -s success -L 1 --json updatedAt -q '.[0].updatedAt // ""'
+}
+
+# failed_run: the newest failed scheduled run with its failed jobs and steps,
+# as {url, created, jobs: [{name, steps: [..]}]}, or null
+failed_run() {
+  if [ -n "${WD_FAILED_RUN+x}" ]; then echo "$WD_FAILED_RUN"; return; fi
+  local id
+  id=$(gh run list -R "$REPO" -w pipeline.yml -e schedule -s failure -L 1 --json databaseId -q '.[0].databaseId // empty')
+  [ -n "$id" ] || { echo null; return; }
+  gh run view "$id" -R "$REPO" --json url,createdAt,jobs --jq '{url, created: .createdAt,
+    jobs: [.jobs[] | select(.conclusion == "failure")
+      | {name, steps: [.steps[] | select(.conclusion == "failure") | .name]}]}'
+}
+
+# coverage: regressions of releases created in the last COVERAGE_DAYS days
+# (14), as [{release, from, regressions: [..]}]. Only new releases count:
+# an old loss is recorded in its release and is not a reason to write to
+# anyone, and a finished series would otherwise keep the issue open for
+# ever.
 coverage() {
-  label attention FBCA04 "Not blocking; look when convenient"
-  local known; known=$(issues attention)
-  local rel f n=0
-  for rel in $(changed_releases); do
-    local found="" body comp key
-    comp=$(jq -r --arg r "$rel" '.releases[] | select(.release == $r) | .current' "$DIST/index.json")
-    for f in "$DIST/$rel/"*"..$rel.quality.json"; do
+  if [ -n "${WD_COVERAGE+x}" ]; then echo "$WD_COVERAGE"; return; fi
+  local since tags tag dir out="[]" f
+  since=$(date -u -d "@$((NOW - ${COVERAGE_DAYS:-14} * 86400))" +%FT%TZ)
+  # all releases up to 26.7.9 were created at once on 2026-11-12 and 26.7.8
+  # again on 2026-11-15; their creation date says nothing about when
+  # OPNsense released them
+  [[ "$since" > "$HISTORY_END" ]] || since="$HISTORY_END"
+  tags=$(gh release list -R "$REPO" --limit 1000 --json tagName,createdAt \
+    --jq ".[] | select(.createdAt >= \"$since\") | .tagName" | sed -n 's/^opnsense-//p')
+  dir=$(mktemp -d)
+  for tag in $tags; do
+    rm -f "$dir"/*.quality.json
+    gh release download "opnsense-$tag" -R "$REPO" -p '*.quality.json' -D "$dir" >/dev/null 2>&1 || continue
+    for f in "$dir"/*.quality.json; do
       [ -f "$f" ] || continue
-      [ "$(jq '.regressions | length' "$f")" -gt 0 ] || continue
-      found+="$f "
+      out=$(jq -c --slurpfile q "$f" --arg r "$tag" \
+        '. + [$q[0] | select((.regressions // []) | length > 0) | {release: $r, from, regressions}]' <<<"$out")
     done
-    [ -n "$found" ] || continue
-    # same regressions, same issue: the key is the release and the sorted list
-    # shellcheck disable=SC2086 # list of file names without spaces
-    key="coverage:$rel:$(jq -r '.regressions[]' $found | sort -u | sha256sum | cut -c1-16)"
-    if jq -e --arg k "<!-- $key -->" 'any(.[]; .body | contains($k))' <<<"$known" >/dev/null; then
-      echo "coverage: $rel already reported ($key)"
-      continue
-    fi
-    body=$(mktemp)
-    {
-      echo "The derivation lost typing in OPNsense $rel (catalog state \`$comp\`) compared"
-      echo "with the release before it. Nothing is blocked: the release was built and"
-      echo "published as usual, with these operations or fields untyped."
-      echo
-      for f in $found; do
-        echo "### $(jq -r .from "$f") -> $rel"
-        echo
-        jq -r '.regressions[0:50][] | "- `\(.)`"' "$f"
-        local more; more=$(jq '.regressions | length - 50' "$f")
-        [ "$more" -gt 0 ] && echo "- ... and $more more"
-        local fw; fw=$(jq -r '.framework_changed | join(", ")' "$f")
-        [ -n "$fw" ] && echo && echo "Framework files changed: $fw"
-        echo
-      done
-      echo "## What this means"
-      echo
-      echo "An operation that was typed (request and response derived from the model) is"
-      echo "now known only by path and parameters, or a field's read shape is unknown."
-      echo "Generated clients lose the types; the provider would lose the resource or"
-      echo "attribute, which its schema check blocks."
-      echo
-      echo "## What to do"
-      echo
-      echo "Session: read the diff in the release [opnsense-$rel]($SERVER/$REPO/releases/tag/opnsense-$rel)"
-      echo "for these controllers or fields and extend the derivation patterns, or"
-      echo "confirm that the upstream code really became custom. Close this issue then."
-      echo
-      echo "<!-- $key -->"
-    } > "$body"
-    ghw issue create -R "$REPO" --title "Coverage dropped in $rel" --label attention --body-file "$body"
-    rm -f "$body"
-    n=$((n + 1))
   done
-  echo "coverage: $n new report(s)"
+  rm -rf "$dir"
+  echo "$out"
 }
 
-# ---------------------------------------------------------------- watchdog
+# ------------------------------------------------------------ check
 
-watchdog() {
-  label watchdog 5319E7 "Something did not run"
-  local state last problems=() open
-  state="${WD_STATE:-$(gh api "repos/$REPO/actions/workflows/pipeline.yml" --jq .state)}"
-  if [ -n "${WD_LAST_SUCCESS+x}" ]; then
-    last="$WD_LAST_SUCCESS"
-  else
-    last=$(gh run list -R "$REPO" -w pipeline.yml -e schedule -s success -L 1 --json updatedAt -q '.[0].updatedAt // ""')
-  fi
+check() {
+  local state last failed cov open body stale="" problems=0
+  state=$(workflow_state)
+  last=$(last_success)
+  cov=$(coverage)
+  open=$(open_issue)
+  body=$(mktemp)
+
   case "$state" in
-    active) ;;
+    active) state_msg="" ;;
     disabled_inactivity)
-      problems+=("The workflow \`pipeline.yml\` was disabled by GitHub for inactivity; the watchdog re-enabled it.")
-      ghw api -X PUT "repos/$REPO/actions/workflows/pipeline.yml/enable" ;;
-    *) problems+=("The workflow \`pipeline.yml\` is \`$state\` (not re-enabled automatically).") ;;
+      ghw api -X PUT "repos/$REPO/actions/workflows/pipeline.yml/enable"
+      echo "check: pipeline.yml was disabled for inactivity, re-enabled"
+      state_msg="" ;;
+    *) state_msg="The workflow \`pipeline.yml\` is \`$state\`; it is only re-enabled automatically after GitHub disabled it for inactivity." ;;
   esac
+
   if [ -z "$last" ]; then
-    problems+=("No successful scheduled run of \`pipeline.yml\` was found.")
+    stale="No successful scheduled run of \`pipeline.yml\` was found."
   else
     local age=$(( (NOW - $(epoch "$last")) / 3600 ))
     if [ "$age" -ge "$STALE_HOURS" ]; then
-      problems+=("The last successful scheduled run ended $last, $age hours ago (limit $STALE_HOURS).")
+      stale="The last successful scheduled run ended $last, $((age / 24)) days ago."
     fi
   fi
-  open=$(issues watchdog | jq -r '[.[] | select(.state == "OPEN" or .state == "open")][0].number // empty')
-  local body; body=$(mktemp)
-  if [ "${#problems[@]}" -gt 0 ]; then
-    {
-      printf -- '- %s\n' "${problems[@]}"
+
+  {
+    echo "Written and closed by the \`watchdog\` workflow; nothing here is urgent."
+    echo "Updated $(date -u -d "@$NOW" +'%F %H:%M UTC')."
+    echo
+    if [ -n "$stale" ] || [ -n "$state_msg" ]; then
+      problems=$((problems + 1))
+      echo "## Publishing has stopped"
       echo
-      echo "Runs: $SERVER/$REPO/actions/workflows/pipeline.yml"
+      echo "**What is stale.** $stale $state_msg"
       echo
-      echo "## What to do"
+      failed=$(failed_run)
+      if [ "$failed" != null ] && [ -n "$failed" ]; then
+        echo "**Why.** The newest failed scheduled run, $(jq -r .created <<<"$failed"):"
+        echo "$(jq -r .url <<<"$failed")"
+        echo
+        jq -r '.jobs[] | "- job `\(.name)`, step \(if (.steps | length) > 0 then (.steps | map("`\(.)`") | join(", ")) else "(none recorded)" end)"' <<<"$failed"
+        echo
+        echo "The run's summary page has the contract test findings, if any."
+      else
+        echo "**Why.** No failed scheduled run was found: the workflow did not run at all"
+        echo "(disabled, account or billing problem, GitHub outage)."
+      fi
       echo
-      echo "If a \`pipeline-failure\` issue is open, that is the cause: fix it there."
-      echo "Otherwise look at the Actions tab: a disabled workflow, an account, billing or"
-      echo "runner problem, or a GitHub outage. Nothing is published while the pipeline"
-      echo "does not succeed; consumers keep the last published data."
-    } > "$body"
+      echo "**If you do nothing.** Everything published keeps working. New OPNsense"
+      echo "releases and plugin updates are not described until a run succeeds;"
+      echo "clients use the newest data they have and read back every write."
+      echo
+    fi
+    if [ "$(jq length <<<"$cov")" -gt 0 ]; then
+      problems=$((problems + 1))
+      echo "## Typing lost in a new release"
+      echo
+      jq -r --arg url "$SERVER/$REPO/releases/tag/opnsense-" '.[] |
+        "**What.** OPNsense \(.release) has operations or fields that were typed in \(.from) and are not any more ([release](\($url)\(.release))):", "",
+        (.regressions[0:20][] | "- `\(.)`"),
+        (if (.regressions | length) > 20 then "- ... and \(.regressions | length - 20) more" else empty end), ""' <<<"$cov"
+      echo "**Why.** Either upstream rewrote these controllers as custom code, or the"
+      echo "derivation does not recognise a new pattern."
+      echo
+      echo "**If you do nothing.** The release is published with these parts untyped."
+      echo "Consumers lose them for this release. This section disappears 14 days"
+      echo "after the release appeared; the loss stays recorded in the release's"
+      echo "\`*.quality.json\`."
+      echo
+    fi
+    echo "## To fix"
+    echo
+    echo "Start a Claude Code session in this repository with the link to this issue"
+    echo "(skill \`opnsense-pipeline-triage\`). This issue closes itself after the fix."
+  } > "$body"
+
+  if [ "$problems" -gt 0 ]; then
+    gh_label
     if [ -n "$open" ]; then
-      ghw issue comment "$open" -R "$REPO" --body-file "$body"
+      # editing sends no new e-mail; the opening did
+      ghw issue edit "$open" -R "$REPO" --body-file "$body"
     else
-      ghw issue create -R "$REPO" --title "Pipeline not healthy ($(date -u -d "@$NOW" +%F))" --label watchdog --body-file "$body"
+      ghw issue create -R "$REPO" --title "Needs you: opnsense-api-spec" --label "$LABEL" --body-file "$body"
     fi
-    echo "watchdog: ${#problems[@]} problem(s)"
+    echo "check: $problems condition(s)"
   else
     if [ -n "$open" ]; then
-      echo "Recovered: last successful scheduled run $last." > "$body"
-      ghw issue close "$open" -R "$REPO" --comment "$(cat "$body")"
+      ghw issue close "$open" -R "$REPO" --comment "Resolved: last successful scheduled run $last, no typing loss in the newest releases."
     fi
-    echo "watchdog: healthy (last success $last)"
+    echo "check: nothing needs a person (last success $last)"
   fi
   rm -f "$body"
 }
 
-# ---------------------------------------------------------------- digest
-
-# digest_input: everything the digest shows, as one JSON document
-digest_input() {
-  if [ -n "${DIGEST_INPUT:-}" ]; then cat "$DIGEST_INPUT"; return; fi
-  local since runs releases catalog issues_open annotations="[]" id job
-  since=$(date -u -d "@$((NOW - 7 * 86400))" +%FT%TZ)
-  runs=$(gh api "repos/$REPO/actions/runs?created=>=$since&per_page=100" --paginate \
-    --jq '[.workflow_runs[] | {id, workflow: .name, event, conclusion, created_at, branch: .head_branch}]' | jq -s 'add // []')
-  releases=$(gh api "repos/$REPO/releases?per_page=100" --paginate \
-    --jq '[.[] | {tag: .tag_name, updated: ([.assets[].updated_at] | max)}]' | jq -s 'add // []')
-  catalog=$(gh release download catalog -R "$REPO" -p catalog.json -O - 2>/dev/null || echo null)
-  issues_open=$(gh issue list -R "$REPO" --state open --json number,title,labels \
-    --jq '[.[] | {number, title, labels: [.labels[].name]}]')
-  for id in $(jq -r '.[] | select(.workflow == "pipeline") | .id' <<<"$runs"); do
-    for job in $(gh api "repos/$REPO/actions/runs/$id/jobs" --jq '.jobs[].id'); do
-      annotations=$(jq -s 'add' <(echo "$annotations") \
-        <(gh api "repos/$REPO/check-runs/$job/annotations" --jq '[.[] | {level: .annotation_level, message}]' 2>/dev/null || echo '[]'))
-    done
-  done
-  jq -n --arg since "$since" --argjson runs "$runs" --argjson releases "$releases" \
-    --argjson catalog "$catalog" --argjson issues "$issues_open" --argjson annotations "$annotations" \
-    '{since: $since, runs: $runs, releases: $releases, catalog: $catalog, issues: $issues, annotations: $annotations}'
-}
-
-digest_render() { # stdin: digest input; stdout: markdown
-  jq -r --arg now "$(date -u -d "@$NOW" +'%F %H:%M UTC')" --arg url "$SERVER/$REPO" '
-    def vkey: split(".") | map(tonumber? // 0);
-    . as $d
-    | "Weekly digest, rewritten in place (\($now)); covers the 7 days since \($d.since[0:10]).",
-      "Not a failure report: failures and missing runs open their own issues.",
-      "",
-      "## Runs",
-      "",
-      "| Workflow | success | failure | other |",
-      "|---|---|---|---|",
-      # "dynamic" runs are GitHub-internal (Dependabot graph updates)
-      ($d.runs | map(select(.event != "dynamic")) | group_by(.workflow)[] | "| \(.[0].workflow) | \(map(select(.conclusion == "success")) | length) | \(map(select(.conclusion == "failure")) | length) | \(map(select(.conclusion != "success" and .conclusion != "failure")) | length) |"),
-      (if ($d.runs | map(select(.event != "dynamic")) | length) == 0 then "| (none) | | | |" else empty end),
-      "",
-      "Last successful scheduled pipeline run: \([$d.runs[] | select(.workflow == "pipeline" and .event == "schedule" and .conclusion == "success") | .created_at] | max // "none in these 7 days")",
-      "",
-      "## Published",
-      "",
-      # "state" is storage of the pipeline, not a publication
-      ([$d.releases[] | select(.tag != "state" and .updated != null and .updated >= $d.since)] as $r
-        | if ($r | length) == 0 then "Nothing published or updated."
-          elif ($r | length) > 10 then
-            "\($r | length) releases updated (a new generator republishes all): \($r | map(.tag | sub("^opnsense-"; "")) | sort_by(vkey) | join(", "))"
-          else ($r | sort_by(.updated) | reverse | .[] | "- [\(.tag)](\($url)/releases/tag/\(.tag)), \(.updated[0:10])") end),
-      "",
-      "## Verification (newest release per series)",
-      "",
-      (if $d.catalog == null then "No capability data published yet (release `catalog`)."
-       else
-         "| Series | Release | Status | Tested | Results |",
-         "|---|---|---|---|---|",
-         ($d.catalog.releases | group_by(.series)[] | max_by(.release | vkey) as $r
-          | ($r.compositions[] | select(.id == $r.current)) as $c
-          | "| \($r.series) | \($r.release) | \($r.status) | \(if $c.verified then "\($c.verified.date[0:10]) (\($c.verified.packages | length) packages)" else "not tested" end) | \(if $c.verified then ($c.verified.results | to_entries | map("\(.key) \(.value)") | join(", ")) else "-" end) |")
-       end),
-      "",
-      "## Warnings in pipeline runs",
-      "",
-      ([$d.annotations[] | select(.level == "warning")] | group_by(.message) | map({n: length, m: .[0].message}) | sort_by(-.n)
-        | if length == 0 then "None." else (.[0:30][] | "- \(.n) x \(.m | gsub("\n"; " ") | .[0:200])") end),
-      "",
-      "## Open issues",
-      "",
-      (if ($d.issues | length) == 0 then "None."
-       else ($d.issues[] | "- #\(.number) \(.title)\(if (.labels | length) > 0 then " (\(.labels | join(", ")))" else "" end)") end)
-  '
-}
-
-digest() {
-  label digest C5DEF5 "Weekly digest, rewritten in place"
-  local body open; body=$(mktemp)
-  digest_input | digest_render > "$body"
-  open=$(issues digest | jq -r '[.[] | select(.state == "OPEN" or .state == "open")][0].number // empty')
-  if [ -n "$open" ]; then
-    # editing the body sends no notification: the digest is for a glance
-    ghw issue edit "$open" -R "$REPO" --body-file "$body"
-  else
-    ghw issue create -R "$REPO" --title "Weekly digest" --label digest --body-file "$body"
-  fi
-  rm -f "$body"
+gh_label() {
+  [ -n "${ALERTS_DRY_RUN:-}" ] && return
+  gh label create "$LABEL" -R "$REPO" --color D93F0B --description "Opened and closed by the watchdog; see the issue text" 2>/dev/null || true
 }
 
 case "${1:-}" in
-  coverage) coverage ;;
-  watchdog) watchdog ;;
-  digest) digest ;;
-  digest-render) digest_render ;;
-  *) echo "usage: $0 coverage | watchdog | digest" >&2; exit 2 ;;
+  check) check ;;
+  *) echo "usage: $0 check" >&2; exit 2 ;;
 esac

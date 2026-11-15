@@ -1,2 +1,2 @@
 [tools]
-go = "1.27.3"
+go = "1.27"  # newest patch release: Go security fixes arrive without a commit

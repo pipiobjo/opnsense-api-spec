@@ -13,6 +13,11 @@
 # in place; the tag keeps pointing at the commit that first published it,
 # the body names the generator commit of the current assets.
 #
+# Every published release gets SHA256SUMS over its assets (written to
+# .cache/ci/sums/<release>/ for the provenance attestation step); the list of
+# published releases goes to .cache/ci/published.txt for
+# tools/ci/check-published.sh.
+#
 # Also creates the tag v<generator version> if it does not exist yet.
 #
 # Marked as pre-release while the current composition is not contract-tested
@@ -64,6 +69,9 @@ a registered trademark of Deciso B.V.
 EOF
 }
 
+SUMS="$ROOT/.cache/ci/sums"
+rm -rf "$SUMS"; mkdir -p "$SUMS"
+: > "$ROOT/.cache/ci/published.txt"
 published=0
 for rel in $(jq -r '.releases[].release' "$DIST/index.json"); do
   tag="opnsense-$rel"
@@ -76,6 +84,10 @@ for rel in $(jq -r '.releases[].release' "$DIST/index.json"); do
   latest=false; [ "$rel" = "$newest" ] && [ "$pre" = false ] && latest=true
   mapfile -t assets < <(find "$DIST/$rel" -maxdepth 1 -type f | sort)
   [ "${#assets[@]}" -gt 0 ] || { echo "error: no files in dist/$rel" >&2; exit 1; }
+  mkdir -p "$SUMS/$rel"
+  (cd "$DIST/$rel" && sha256sum -- "${assets[@]##*/}") > "$SUMS/$rel/SHA256SUMS"
+  assets+=("$SUMS/$rel/SHA256SUMS")
+  echo "$rel" >> "$ROOT/.cache/ci/published.txt"
   body=$(mktemp); notes "$rel" > "$body"
   if grep -qx "$tag" <<<"$existing"; then
     echo "update $tag (pre-release=$pre)"

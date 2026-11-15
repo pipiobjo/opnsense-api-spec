@@ -1,17 +1,16 @@
 #!/usr/bin/env bash
 # SPDX-FileCopyrightText: 2026 opnsense-api-spec contributors
 # SPDX-License-Identifier: BSD-2-Clause
-# Failure report of a pipeline run (ADR 0008): one open issue labelled
-# pipeline-failure; later failures add a comment instead of a new issue.
-# Close the issue once the cause is fixed (or accepted in
-# verify/accepted.json with evidence).
+# Failure report of a pipeline run (ADR 0008, ADR 0012): written to the
+# run's summary page only. A failed run sends no message; the watchdog
+# opens one "needs-you" issue when publishing has been stale for 7 days and
+# links the newest failed run, whose summary this is.
 #
 # Input: RESULTS (toJSON(needs) of the workflow), RUN_URL, and the
 # downloaded verified-<release> artifacts under VERIFIED_DIR (default
 # .ci/in/verified), each with a file "release" naming its release.
 set -euo pipefail
 
-LABEL="pipeline-failure"
 body=$(mktemp)
 {
   echo "Pipeline run: $RUN_URL"
@@ -47,16 +46,9 @@ body=$(mktemp)
     echo "No contract test findings; see the failed job's log (gates, matrix, client smoke test or publish)."
   fi
   echo
-  echo "Nothing was published. A finding is either a generator bug (fix it), or an"
+  echo "Nothing was published; the next scheduled run retries. A finding is either a generator bug (fix it), or an"
   echo "upstream behaviour to accept in \`verify/accepted.json\` with reason and evidence."
 } > "$body"
 
-gh label create "$LABEL" --color B60205 --description "Scheduled pipeline failed; nothing published" 2>/dev/null || true
-open=$(gh issue list --label "$LABEL" --state open --json number --jq '.[0].number // empty')
-if [ -n "$open" ]; then
-  gh issue comment "$open" --body-file "$body"
-  echo "commented on issue #$open"
-else
-  gh issue create --title "Pipeline failed ($(date -u +%F))" --label "$LABEL" --body-file "$body"
-fi
+cat "$body" >> "${GITHUB_STEP_SUMMARY:-/dev/stdout}"
 rm -f "$body"
