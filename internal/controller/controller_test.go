@@ -127,6 +127,7 @@ func TestOverlay(t *testing.T) {
 		{"setBase", []string{"'vlan'", "'vlan'", "$uuid", "['vlanif' => $new_vlanif]"}, []Overlay{{Field: "vlanif"}}},
 		{"addBase", []string{"'a'", "'b'", "array('x' => '1', 'y' => \"2\")"}, []Overlay{{Field: "x", Value: "1", Literal: true}, {Field: "y", Value: "2", Literal: true}}},
 		{"addBase", []string{"'a'", "'b'", "$overlay"}, []Overlay{{}}},
+		{"addBase", []string{"'errorpage'", "'errorpage'", "array('pagecontent' => base64_encode($this->request->getPost('errorpage')['pagecontent']))"}, []Overlay{{Field: "pagecontent", FromRequest: true}}},
 		{"addBase", []string{"'a'", "'b'", "null"}, nil},
 		{"addBase", []string{"'a'", "'b'"}, nil},
 		{"setBase", []string{"'a'", "'b'", "['x' => 1]"}, nil}, // third argument of setBase is the uuid

@@ -76,10 +76,14 @@ type Endpoint struct {
 	// Forced: fields the endpoint sets to a fixed value whatever the request
 	// says; Computed: fields it sets to a value of its own (both from the
 	// overlay argument of addBase/setBase).
-	Forced     map[string]string `json:"forced,omitempty"`
-	Computed   []string          `json:"computed,omitempty"`
-	DeclaredIn string            `json:"declared_in"`
-	Gaps       []gap.Gap         `json:"gaps,omitempty"`
+	Forced   map[string]string `json:"forced,omitempty"`
+	Computed []string          `json:"computed,omitempty"`
+	// Transformed: fields stored in another form than sent (derived from
+	// the request, e.g. base64-encoded); writable, but they read back
+	// differently.
+	Transformed []string  `json:"transformed,omitempty"`
+	DeclaredIn  string    `json:"declared_in"`
+	Gaps        []gap.Gap `json:"gaps,omitempty"`
 }
 
 // Package is provenance of one input package.
@@ -318,6 +322,8 @@ func classify(e *Endpoint, c *controller.Controller, a *controller.Action, mdl *
 			switch {
 			case o.Field == "":
 				e.Gaps = append(e.Gaps, gap.New(gap.OverlayUnknown, "%s forces fields that are not derivable", bc.Func))
+			case o.FromRequest:
+				e.Transformed = append(e.Transformed, o.Field)
 			case o.Literal:
 				if e.Forced == nil {
 					e.Forced = map[string]string{}

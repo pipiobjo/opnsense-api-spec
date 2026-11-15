@@ -136,7 +136,9 @@ fields the endpoint sets to a fixed value whatever the request says, and
 `computed` fields it fills itself; a value sent for them is overwritten.
 Examples: the bind endpoints `addPrimaryDomain`/`addForwardDomain` force
 `type`; the traffic shaper's `addPipe` forces `origin` and computes
-`number`; unbound's `addForward` computes `type`. Where the controller
+`number`; unbound's `addForward` computes `type`. `transformed` fields
+are writable but stored in another form (nginx error pages store the page
+content base64-encoded), so they read back differently. Where the controller
 passes such an overlay in a variable, the fields are unknown and the gap
 `overlay-unknown` says so (interfaces lagg, bridge, gif, gre, vip). `source` says
 how it was derived (concepts, section 6), `gaps` lists what is uncertain,

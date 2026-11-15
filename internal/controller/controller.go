@@ -51,6 +51,10 @@ type Overlay struct {
 	Field   string `json:"field"`
 	Value   string `json:"value,omitempty"`
 	Literal bool   `json:"literal,omitempty"`
+	// FromRequest: the value is derived from the request itself (as in
+	// base64_encode($this->request->getPost(...))): the field is
+	// writable, but stored in another form.
+	FromRequest bool `json:"from_request,omitempty"`
 }
 
 // Action is one public xxxAction method.
@@ -384,6 +388,8 @@ func parseOverlay(arg string) []Overlay {
 		o := Overlay{Field: field}
 		if val, ok := lit(strings.TrimSpace(v)); ok {
 			o.Value, o.Literal = val, true
+		} else if strings.Contains(v, "->request->") || strings.Contains(v, "getPost(") {
+			o.FromRequest = true
 		}
 		out = append(out, o)
 	}

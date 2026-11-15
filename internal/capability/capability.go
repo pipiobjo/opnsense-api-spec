@@ -141,10 +141,11 @@ type Operation struct {
 	Outer   string `json:"outer,omitempty"`
 	// Forced: fields this endpoint sets to a fixed value; Computed: fields
 	// it fills itself. A value sent for them is overwritten.
-	Forced   map[string]string `json:"forced,omitempty"`
-	Computed []string          `json:"computed,omitempty"`
-	Source   string            `json:"source"`
-	Gaps     []string          `json:"gaps,omitempty"`
+	Forced      map[string]string `json:"forced,omitempty"`
+	Computed    []string          `json:"computed,omitempty"`
+	Transformed []string          `json:"transformed,omitempty"` // writable, stored in another form
+	Source      string            `json:"source"`
+	Gaps        []string          `json:"gaps,omitempty"`
 }
 
 // Field is one variant of a field.
@@ -489,7 +490,7 @@ func better(a, b *ir.Endpoint) bool {
 
 func operation(e *ir.Endpoint) *Operation {
 	return &Operation{Path: e.Path, Methods: e.Methods, Params: params(e), Wrapper: e.Wrapper, Outer: e.Outer,
-		Forced: e.Forced, Computed: e.Computed,
+		Forced: e.Forced, Computed: e.Computed, Transformed: e.Transformed,
 		Source: string(e.Source), Gaps: gapCodes(e.Gaps)}
 }
 
