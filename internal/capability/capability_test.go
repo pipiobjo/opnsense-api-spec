@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -320,3 +321,53 @@ func js(v any) string {
 }
 
 func controllerParam(name string) controller.Param { return controller.Param{Name: name} }
+
+func TestFamilies(t *testing.T) {
+	ep := func(action string) *ir.Endpoint { return &ir.Endpoint{Action: action, Path: "/api/m/c/" + action} }
+	pick := func(fs []family) map[string]map[string]string {
+		out := map[string]map[string]string{}
+		for _, f := range fs {
+			m := map[string]string{}
+			for op, e := range f.chosen {
+				m[op] = e.Action
+			}
+			out[f.name] = m
+		}
+		return out
+	}
+	// bind: three families with their own add and search, shared get/set/del
+	var bind []cand
+	for _, f := range []string{"Primary", "Secondary", "Forward"} {
+		bind = append(bind, cand{ep("add" + f + "Domain"), "add"}, cand{ep("search" + f + "Domain"), "search"})
+	}
+	bind = append(bind, cand{ep("getDomain"), "get"}, cand{ep("setDomain"), "set"}, cand{ep("delDomain"), "del"})
+	got := pick(families(bind))
+	want := map[string]map[string]string{
+		"primary":   {"add": "addPrimaryDomain", "search": "searchPrimaryDomain", "get": "getDomain", "set": "setDomain", "del": "delDomain"},
+		"secondary": {"add": "addSecondaryDomain", "search": "searchSecondaryDomain", "get": "getDomain", "set": "setDomain", "del": "delDomain"},
+		"forward":   {"add": "addForwardDomain", "search": "searchForwardDomain", "get": "getDomain", "set": "setDomain", "del": "delDomain"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("bind families:\n got %v\nwant %v", got, want)
+	}
+	// wol: the shared name decides, the other get is an action
+	wol := []cand{{ep("getwake"), "get"}, {ep("getHost"), "get"}, {ep("addHost"), "add"}, {ep("delHost"), "del"}, {ep("setHost"), "set"}}
+	if got := pick(families(wol)); got[""]["get"] != "getHost" || len(got) != 1 {
+		t.Errorf("wol: %v", got)
+	}
+	// wireguard: getClientBuilder is an action beside getClient
+	wg := []cand{{ep("getClientBuilder"), "get"}, {ep("getClient"), "get"}, {ep("addClient"), "add"}, {ep("setClient"), "set"}}
+	if got := pick(families(wg)); got[""]["get"] != "getClient" {
+		t.Errorf("wireguard: %v", got)
+	}
+	// different names per operation: no families, better() picks
+	odd := []cand{{ep("addA"), "add"}, {ep("addB"), "add"}, {ep("searchC"), "search"}, {ep("searchD"), "search"}, {ep("getX"), "get"}}
+	if got := families(odd); len(got) != 1 || got[0].name != "" {
+		t.Errorf("unrelated names must not become families: %v", pick(got))
+	}
+	// one endpoint per operation: unchanged
+	plain := []cand{{ep("addItem"), "add"}, {ep("getItem"), "get"}}
+	if got := pick(families(plain)); !reflect.DeepEqual(got, map[string]map[string]string{"": {"add": "addItem", "get": "getItem"}}) {
+		t.Errorf("plain: %v", got)
+	}
+}

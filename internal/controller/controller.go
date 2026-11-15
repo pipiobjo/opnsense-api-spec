@@ -109,7 +109,7 @@ var (
 	returnRe = regexp.MustCompile(`return\s*$`)
 	returnKw = regexp.MustCompile(`\breturn\b`)
 	outerRe  = regexp.MustCompile(`return\s*(?:array\s*\(|\[)\s*['"](\w+)['"]\s*=>\s*$`)
-	hookRe   = regexp.MustCompile(`function\s+(getModelNodes|setActionHook|setBaseHook)\s*\(`)
+	hookRe   = regexp.MustCompile(`function\s+(getModelNodes|setActionHook|setBaseHook|__call)\s*\(`)
 	parentRe = regexp.MustCompile(`parent::\w+Action\s*\(`)
 	litRe    = regexp.MustCompile(`^\s*(['"])([^'"]*)['"]\s*$`)
 )
@@ -310,7 +310,7 @@ func ParseFile(src, relFile string) []*Class {
 				if aClose < 0 {
 					continue
 				}
-				bc := baseCall(fbody[cm[2]:cm[3]], splitArgs(fbody[aOpen+1:aClose]))
+				bc := baseCall(fbody[cm[2]:cm[3]], splitArgs(fbody[aOpen+1:aClose]), fbody[:cm[0]])
 				if om := outerRe.FindStringSubmatch(fbody[:cm[0]]); om != nil {
 					bc.Outer, bc.Direct = om[1], true
 				} else if returnRe.MatchString(fbody[:cm[0]]) {
@@ -334,7 +334,9 @@ func lit(s string) (string, bool) {
 	return "", false
 }
 
-func baseCall(fn string, args []string) BaseCall {
+// baseCall reads one helper call; before is the action's code up to the
+// call, where an overlay passed as a variable is assembled.
+func baseCall(fn string, args []string, before string) BaseCall {
 	bc := BaseCall{Func: fn}
 	get := func(i int) (string, bool) {
 		if i >= len(args) {
@@ -358,23 +360,112 @@ func baseCall(fn string, args []string) BaseCall {
 	// the overlay argument: addBase($key, $path, $overlay),
 	// setBase($key, $path, $uuid, $overlay)
 	if i := map[string]int{"addBase": 2, "setBase": 3}[fn]; i > 0 && i < len(args) {
-		bc.Overlay = parseOverlay(args[i])
+		bc.Overlay = parseOverlay(args[i], before)
 	}
 	return bc
 }
 
 var arrayLitRe = regexp.MustCompile(`(?s)^\s*(?:\[(.*)\]|array\s*\((.*)\))\s*$`)
 
-// parseOverlay reads a PHP array literal of field => value pairs.
-func parseOverlay(arg string) []Overlay {
+var varRe = regexp.MustCompile(`^\s*\$([A-Za-z_][A-Za-z0-9_]*)\s*$`)
+
+// parseOverlay reads the overlay argument: a PHP array literal of field =>
+// value pairs, null, or a variable assembled in the code before the call
+// (overlayVar). Anything else: fields unknown.
+func parseOverlay(arg, before string) []Overlay {
 	m := arrayLitRe.FindStringSubmatch(arg)
 	if m == nil {
 		if strings.TrimSpace(arg) == "null" {
 			return nil
 		}
-		return []Overlay{{}} // a variable: fields unknown
+		if v := varRe.FindStringSubmatch(arg); v != nil {
+			return overlayVar(v[1], before)
+		}
+		return []Overlay{{}} // an expression: fields unknown
 	}
-	inner := m[1] + m[2]
+	return overlayPairs(m[1] + m[2])
+}
+
+// overlayVar derives the fields of an overlay variable from the code before
+// the call, the way OPNsense's interface controllers build it:
+//
+//	$overlay = null;            // or [] / array() / an array literal
+//	$overlay['laggif'] = $name; // one field per assignment
+//
+// Every assignment to the variable must have one of these forms, with a
+// literal key; otherwise, or when no field is assigned, the fields are
+// unknown, and so are any other uses of the variable before the call
+// (".=", passing it on, reading it), and the fields of an overlay assembled
+// after the action read the request. Overlays built by a helper method are
+// not followed. Conditional assignments count: the controller may overwrite the
+// field, so it is not the client's to send.
+func overlayVar(name, before string) []Overlay {
+	q := regexp.QuoteMeta(name)
+	// "$x =" and "$x[...] =", but not "==", "=>" or "$x[...] ==="
+	assignRe := regexp.MustCompile(`\$` + q + `\s*(\[[^\]]*\])?\s*=([^=>][^;]*);`)
+	// an overlay assembled after reading the request may depend on it
+	// (os-dnsmasq clears different fields per option type): not one fixed
+	// set of fields
+	if strings.Contains(before, "->request->") || strings.Contains(before, "getPost(") {
+		return []Overlay{{}}
+	}
+	assigns := assignRe.FindAllStringSubmatch(before, -1)
+	// every use of the variable must be one of these assignments (no
+	// ".=", no passing it to a function, no reading it)
+	if len(regexp.MustCompile(`\$`+q+`\b`).FindAllStringIndex(before, -1)) != len(assigns) {
+		return []Overlay{{}}
+	}
+	var out []Overlay
+	seen := map[string]bool{}
+	for _, a := range assigns {
+		key, rhs := strings.TrimSpace(a[1]), strings.TrimSpace(a[2])
+		if key == "" {
+			switch {
+			case rhs == "null" || rhs == "[]" || regexp.MustCompile(`^array\s*\(\s*\)$`).MatchString(rhs):
+				continue
+			case arrayLitRe.MatchString(rhs):
+				pairs := overlayPairs(arrayLitRe.FindStringSubmatch(rhs)[1] + arrayLitRe.FindStringSubmatch(rhs)[2])
+				if len(pairs) == 1 && pairs[0].Field == "" {
+					return pairs
+				}
+				for _, o := range pairs {
+					if !seen[o.Field] {
+						seen[o.Field] = true
+						out = append(out, o)
+					}
+				}
+				continue
+			}
+			return []Overlay{{}} // assigned from an expression
+		}
+		field, ok := lit(strings.TrimSpace(key[1 : len(key)-1]))
+		if !ok {
+			return []Overlay{{}} // computed key
+		}
+		if seen[field] {
+			continue
+		}
+		seen[field] = true
+		out = append(out, overlayValue(field, rhs))
+	}
+	if len(out) == 0 {
+		return []Overlay{{}}
+	}
+	return out
+}
+
+func overlayValue(field, v string) Overlay {
+	o := Overlay{Field: field}
+	if val, ok := lit(strings.TrimSpace(v)); ok {
+		o.Value, o.Literal = val, true
+	} else if strings.Contains(v, "->request->") || strings.Contains(v, "getPost(") {
+		o.FromRequest = true
+	}
+	return o
+}
+
+// overlayPairs reads the inside of an array literal of field => value.
+func overlayPairs(inner string) []Overlay {
 	var out []Overlay
 	for _, pair := range splitArgs(inner) {
 		k, v, ok := strings.Cut(pair, "=>")
@@ -385,13 +476,7 @@ func parseOverlay(arg string) []Overlay {
 		if !ok {
 			return []Overlay{{}} // computed keys: fields unknown
 		}
-		o := Overlay{Field: field}
-		if val, ok := lit(strings.TrimSpace(v)); ok {
-			o.Value, o.Literal = val, true
-		} else if strings.Contains(v, "->request->") || strings.Contains(v, "getPost(") {
-			o.FromRequest = true
-		}
-		out = append(out, o)
+		out = append(out, overlayValue(field, v))
 	}
 	return out
 }
@@ -492,6 +577,12 @@ func Resolve(classes map[string]*Class) []*Controller {
 					cp.Overrides = prev.DeclaredIn
 				}
 				actions[k] = &cp
+			}
+		}
+		for _, h := range ctl.Hooks {
+			if h == "__call" {
+				ctl.Gaps = append(ctl.Gaps, gap.New(gap.MagicCall,
+					"the controller answers other action names through __call (%s); more endpoints than these may exist", ctl.Class))
 			}
 		}
 		for _, a := range actions {

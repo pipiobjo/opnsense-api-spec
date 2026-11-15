@@ -38,8 +38,12 @@ compressed with zstd. The core document is the largest (1.8 MB).
 - **Resource**: `<module>/<controller>` for a settings model (one object,
   `get`/`set`), `<module>/<controller>#<model path>` for an entry list
   (entries keyed by UUID: `search`, `get`, `add`, `set`, `del`, `toggle`).
-  Example: `quagga/ospfsettings#networks.network`. An identifier is never
-  reused for something else.
+  Example: `quagga/ospfsettings#networks.network`. Where one model path is
+  served by several families of endpoints, each family is its own
+  resource, `<module>/<controller>#<model path>@<family>`, with `family`
+  set (bind: `bind/domain#domains.domain@primary`, `@secondary`,
+  `@forward`, each with its own `add` and `search`, sharing `get`, `set`
+  and `del`). An identifier is never reused for something else.
 - **Field**: dotted path below the resource (`general.enabled` in settings,
   `area` in an entry). Fields of nested entry lists belong to their own
   resource, not to the settings.
@@ -138,9 +142,13 @@ Examples: the bind endpoints `addPrimaryDomain`/`addForwardDomain` force
 `type`; the traffic shaper's `addPipe` forces `origin` and computes
 `number`; unbound's `addForward` computes `type`. `transformed` fields
 are writable but stored in another form (nginx error pages store the page
-content base64-encoded), so they read back differently. Where the controller
-passes such an overlay in a variable, the fields are unknown and the gap
-`overlay-unknown` says so (interfaces lagg, bridge, gif, gre, vip). `source` says
+content base64-encoded), so they read back differently. An overlay kept in
+a variable counts when every use of the variable before the call is an
+assignment with a literal key (the interface controllers' `laggif`,
+`bridgeif`, `gifif`, `greif`). Where the fields cannot be derived (built by
+a helper method, assembled after reading the request, or an expression),
+the gap `overlay-unknown` says so: today os-dnsmasq options, virtual IPs
+and wireguard's `addServer`. `source` says
 how it was derived (concepts, section 6), `gaps` lists what is uncertain,
 for example `result-not-returned` (the endpoint returns nothing) or
 `post-processed` (the response may differ from the helper's). `apply` is
@@ -162,7 +170,8 @@ class and model path, so the same stored data. A consumer should manage
 such data through one of them, usually the one that has both `get` and
 `set`; two owners of one object overwrite each other. Over 34 releases,
 36 resources in 12 models have `shared_with`. Entry lists inside a shared
-model are not affected: they have their own model path.
+model are not affected: they have their own model path. The families of
+one model path (above) share their data by design and list each other.
 
 ## Verification
 

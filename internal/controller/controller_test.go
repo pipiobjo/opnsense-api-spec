@@ -117,24 +117,59 @@ func TestStripCommentsKeepsStrings(t *testing.T) {
 }
 
 func TestOverlay(t *testing.T) {
+	lagg := `
+        $overlay = [];
+        $ifnames = [];
+        foreach ($this->getModel()->lagg->iterateItems() as $node) {
+            $ifnames[] = (string)$node->laggif;
+        }
+        for ($i = 0; true; ++$i) {
+            $laggif = sprintf('lagg%d', $i);
+            if (!in_array($laggif, $ifnames)) {
+                $overlay['laggif'] = $laggif;
+                break;
+            }
+        }
+        `
+	laggSet := `
+        $node = $this->getModel()->getNodeByReference('lagg.' . $uuid);
+        $overlay = null;
+        if (!empty($node)) {
+            $overlay['laggif'] = (string)$node->laggif;
+        }
+        `
 	cases := []struct {
-		call string
-		args []string
-		want []Overlay
+		call   string
+		args   []string
+		before string
+		want   []Overlay
 	}{
-		{"addBase", []string{"'domain'", "'domains.domain'", "['type' => 'primary']"}, []Overlay{{Field: "type", Value: "primary", Literal: true}}},
-		{"addBase", []string{"'dot'", "'dots.dot'", `[ "type" => $this->type ]`}, []Overlay{{Field: "type"}}},
-		{"setBase", []string{"'vlan'", "'vlan'", "$uuid", "['vlanif' => $new_vlanif]"}, []Overlay{{Field: "vlanif"}}},
-		{"addBase", []string{"'a'", "'b'", "array('x' => '1', 'y' => \"2\")"}, []Overlay{{Field: "x", Value: "1", Literal: true}, {Field: "y", Value: "2", Literal: true}}},
-		{"addBase", []string{"'a'", "'b'", "$overlay"}, []Overlay{{}}},
-		{"addBase", []string{"'errorpage'", "'errorpage'", "array('pagecontent' => base64_encode($this->request->getPost('errorpage')['pagecontent']))"}, []Overlay{{Field: "pagecontent", FromRequest: true}}},
-		{"addBase", []string{"'a'", "'b'", "null"}, nil},
-		{"addBase", []string{"'a'", "'b'"}, nil},
-		{"setBase", []string{"'a'", "'b'", "['x' => 1]"}, nil}, // third argument of setBase is the uuid
-		{"getBase", []string{"'a'", "'b'", "['x' => '1']"}, nil},
+		{"addBase", []string{"'domain'", "'domains.domain'", "['type' => 'primary']"}, "", []Overlay{{Field: "type", Value: "primary", Literal: true}}},
+		{"addBase", []string{"'dot'", "'dots.dot'", `[ "type" => $this->type ]`}, "", []Overlay{{Field: "type"}}},
+		{"setBase", []string{"'vlan'", "'vlan'", "$uuid", "['vlanif' => $new_vlanif]"}, "", []Overlay{{Field: "vlanif"}}},
+		{"addBase", []string{"'a'", "'b'", "array('x' => '1', 'y' => \"2\")"}, "", []Overlay{{Field: "x", Value: "1", Literal: true}, {Field: "y", Value: "2", Literal: true}}},
+		{"addBase", []string{"'a'", "'b'", "$overlay"}, "", []Overlay{{}}},
+		{"addBase", []string{"'errorpage'", "'errorpage'", "array('pagecontent' => base64_encode($this->request->getPost('errorpage')['pagecontent']))"}, "", []Overlay{{Field: "pagecontent", FromRequest: true}}},
+		{"addBase", []string{"'a'", "'b'", "null"}, "", nil},
+		{"addBase", []string{"'a'", "'b'"}, "", nil},
+		{"setBase", []string{"'a'", "'b'", "['x' => 1]"}, "", nil}, // third argument of setBase is the uuid
+		{"getBase", []string{"'a'", "'b'", "['x' => '1']"}, "", nil},
+		// a variable assembled before the call (interface controllers)
+		{"addBase", []string{"'lagg'", "'lagg'", "$overlay"}, lagg, []Overlay{{Field: "laggif"}}},
+		{"setBase", []string{"'lagg'", "'lagg'", "$uuid", "$overlay"}, laggSet, []Overlay{{Field: "laggif"}}},
+		{"addBase", []string{"'a'", "'b'", "$o"}, "$o = ['type' => 'x'];\n$o['n'] = 'y';", []Overlay{{Field: "type", Value: "x", Literal: true}, {Field: "n", Value: "y", Literal: true}}},
+		{"addBase", []string{"'a'", "'b'", "$o"}, "$o = $this->defaults();\n$o['n'] = 'y';", []Overlay{{}}},
+		{"addBase", []string{"'a'", "'b'", "$o"}, "$o[$key] = 'y';", []Overlay{{}}},
+		{"addBase", []string{"'a'", "'b'", "$o"}, "$o = [];\nif ($o == $p) {}", []Overlay{{}}},
+		{"addBase", []string{"'a'", "'b'", "$o"}, "$other['x'] = 1;", []Overlay{{}}},
+		{"addBase", []string{"'a'", "'b'", "$this->overlay()"}, "", []Overlay{{}}},
+		{"addBase", []string{"'a'", "'b'", "$o"}, "$o['x'] = 'y';\n$o['x'] .= 'z';", []Overlay{{}}},
+		{"addBase", []string{"'a'", "'b'", "$o"}, "$o['x'] = 'y';\n$this->fill($o);", []Overlay{{}}},
+		// depends on the request: not one fixed set of fields
+		{"addBase", []string{"'a'", "'b'", "$o"}, "$t = $this->request->getPost('o');\nif ($t['type'] === 'set') { $o['set_tag'] = ''; }", []Overlay{{}}},
 	}
 	for _, c := range cases {
-		got := baseCall(c.call, c.args).Overlay
+		got := baseCall(c.call, c.args, c.before).Overlay
 		if !reflect.DeepEqual(got, c.want) {
 			t.Errorf("%s(%v): %+v, want %+v", c.call, c.args, got, c.want)
 		}

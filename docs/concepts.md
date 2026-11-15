@@ -201,7 +201,8 @@ typed, whatever their kind.
 | `helper-used-internally` | custom action that uses a helper internally; untyped |
 | `multiple-helpers` | several helper calls; the one matching the action is documented |
 | `helper-non-literal` | helper called with non-literal arguments; untyped |
-| `overlay-unknown` | `addBase`/`setBase` force fields through an overlay that is not an array literal; which fields is unknown |
+| `magic-call` | the controller answers other action names through PHP's `__call` (unbound's `*Dot` endpoints, aliases of `*Forward` with `type` dot); those endpoints are not in the spec |
+| `overlay-unknown` | `addBase`/`setBase` force fields through an overlay whose fields cannot be derived (a helper method, an overlay assembled after reading the request, an expression); which fields is unknown |
 | `no-apply-endpoint` | no apply/reconfigure endpoint found |
 | `model-class-missing`, `model-missing`, `model-path-missing`, `model-path-not-array`, `parent-missing` | the controller refers to something that was not found |
 | `field-type-unresolved` | field type not resolved to a core base class (field level) |

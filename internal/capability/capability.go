@@ -110,7 +110,11 @@ type Fragment struct {
 
 // Resource is a settings model or an entry list.
 type Resource struct {
-	Kind   string                `json:"kind"` // settings, entries
+	Kind string `json:"kind"` // settings, entries
+	// Family: one of several resources on the same model path, told apart
+	// by their own add and search endpoints (bind: primary, secondary,
+	// forward domains); the identifier ends in "@<family>".
+	Family string                `json:"family,omitempty"`
 	In     []string              `json:"in"`
 	API    []*API                `json:"api"`
 	Fields map[string][]*Field   `json:"fields"`
@@ -351,6 +355,7 @@ func readJSON(path string, v any) error {
 // per-fragment raw values, merged into variants by finish
 type rawResource struct {
 	kind   string
+	family string
 	api    map[string]*API
 	fields map[string]map[string]*Field // field -> hash -> descriptor
 }
@@ -390,10 +395,6 @@ func (d *Doc) add(hash string, f *fragment.Fragment) {
 		models[m.Class] = m
 	}
 	// group endpoints per resource; prefer one endpoint per operation
-	type cand struct {
-		e  *ir.Endpoint
-		op string
-	}
 	groups := map[string][]cand{}
 	kinds := map[string]string{}
 	var loose []*ir.Endpoint
@@ -406,61 +407,64 @@ func (d *Doc) add(hash string, f *fragment.Fragment) {
 		groups[id] = append(groups[id], cand{e, op})
 		kinds[id] = kind
 	}
-	for id, cs := range groups {
-		chosen := map[string]*ir.Endpoint{}
-		for _, c := range cs {
-			if prev := chosen[c.op]; prev == nil || better(c.e, prev) {
-				chosen[c.op] = c.e
+	for gid, all := range groups {
+		for _, fam := range families(all) {
+			id, cs, chosen := gid, all, fam.chosen
+			if fam.name != "" {
+				id = gid + "@" + fam.name
 			}
-		}
-		var first *ir.Endpoint
-		ops := map[string]*Operation{}
-		for _, c := range cs {
-			if chosen[c.op] != c.e {
-				loose = append(loose, c.e) // second endpoint of the same kind: an action
+			kinds[id] = kinds[gid]
+			var first *ir.Endpoint
+			ops := map[string]*Operation{}
+			for _, c := range cs {
+				if chosen[c.op] != c.e {
+					if !fam.member[c.e] {
+						loose = append(loose, c.e) // second endpoint of the same kind: an action
+					}
+					continue
+				}
+				ops[c.op] = operation(c.e)
+				if first == nil || c.e.Path < first.Path {
+					first = c.e
+				}
+			}
+			r := res[id]
+			if r == nil {
+				r = &rawResource{kind: kinds[id], family: fam.name, api: map[string]*API{}, fields: map[string]map[string]*Field{}}
+				res[id] = r
+			}
+			a := &API{Model: first.Model, ModelPath: first.ModelPath, Operations: ops}
+			for _, c := range cs {
+				if chosen[c.op] == c.e {
+					if a.Wrapper == "" {
+						a.Wrapper = c.e.Wrapper
+					}
+					if a.Apply == "" {
+						a.Apply = c.e.Apply
+					}
+				}
+			}
+			r.api[hash] = a
+			m := models[first.Model]
+			if m == nil {
 				continue
 			}
-			ops[c.op] = operation(c.e)
-			if first == nil || c.e.Path < first.Path {
-				first = c.e
+			var root *model.Node
+			if r.kind == "settings" {
+				root = m.Root
+			} else {
+				root = m.Find(first.ModelPath)
 			}
-		}
-		r := res[id]
-		if r == nil {
-			r = &rawResource{kind: kinds[id], api: map[string]*API{}, fields: map[string]map[string]*Field{}}
-			res[id] = r
-		}
-		a := &API{Model: first.Model, ModelPath: first.ModelPath, Operations: ops}
-		for _, c := range cs {
-			if chosen[c.op] == c.e {
-				if a.Wrapper == "" {
-					a.Wrapper = c.e.Wrapper
+			if root == nil {
+				continue
+			}
+			walk(root, "", func(path string, n *model.Node) {
+				if r.fields[path] == nil {
+					r.fields[path] = map[string]*Field{}
 				}
-				if a.Apply == "" {
-					a.Apply = c.e.Apply
-				}
-			}
+				r.fields[path][hash] = field(n)
+			})
 		}
-		r.api[hash] = a
-		m := models[first.Model]
-		if m == nil {
-			continue
-		}
-		var root *model.Node
-		if r.kind == "settings" {
-			root = m.Root
-		} else {
-			root = m.Find(first.ModelPath)
-		}
-		if root == nil {
-			continue
-		}
-		walk(root, "", func(path string, n *model.Node) {
-			if r.fields[path] == nil {
-				r.fields[path] = map[string]*Field{}
-			}
-			r.fields[path][hash] = field(n)
-		})
 	}
 	for _, e := range loose {
 		a := acts[e.Path]
@@ -471,6 +475,166 @@ func (d *Doc) add(hash string, f *fragment.Fragment) {
 		a.byHash[hash] = &Action{Kind: string(e.Kind), Methods: e.Methods, Params: params(e), Model: e.Model,
 			Source: string(e.Source), Gaps: gapCodes(e.Gaps)}
 	}
+}
+
+// cand is an endpoint and the operation it serves in its resource.
+type cand struct {
+	e  *ir.Endpoint
+	op string
+}
+
+// family is one resource cut out of an endpoint group: the endpoint chosen
+// per operation, and the endpoints that belong to some family of the group
+// (so they are not reported again as actions).
+type family struct {
+	name   string // "" when the group is one resource
+	chosen map[string]*ir.Endpoint
+	member map[*ir.Endpoint]bool
+}
+
+// families splits the endpoints of one model path. Usually there is one
+// endpoint per operation. When an operation has several:
+//
+//   - one of them carries the name the single endpoints share (getHost
+//     beside addHost/delHost, getClient beside getClientBuilder): that one
+//     belongs to the resource, the others are actions;
+//   - every such operation has the same set of names, at least two (bind:
+//     addPrimaryDomain/addSecondaryDomain/addForwardDomain and the same three
+//     search endpoints): one resource per name, "<id>@<family>", each with
+//     its own endpoints and the shared ones (getDomain, setDomain,
+//     delDomain); the family is the name without the shared part, in lower
+//     case ("primary");
+//   - otherwise better() picks one, the others are actions.
+func families(cs []cand) []family {
+	byOp := map[string][]*ir.Endpoint{}
+	for _, c := range cs {
+		byOp[c.op] = append(byOp[c.op], c.e)
+	}
+	shared := map[string]int{}
+	var multi []string
+	for op, es := range byOp {
+		if len(es) == 1 {
+			shared[stem(op, es[0])]++
+		} else {
+			multi = append(multi, op)
+		}
+	}
+	sort.Strings(multi)
+	base := ""
+	for st, n := range shared {
+		if n > shared[base] || (n == shared[base] && st < base) {
+			base = st
+		}
+	}
+	single := family{chosen: map[string]*ir.Endpoint{}, member: map[*ir.Endpoint]bool{}}
+	for op, es := range byOp {
+		if len(es) == 1 {
+			single.chosen[op] = es[0]
+		}
+	}
+	if len(multi) == 0 {
+		return []family{single}
+	}
+	// the shared name decides
+	byName := true
+	for _, op := range multi {
+		var hit *ir.Endpoint
+		for _, e := range byOp[op] {
+			if base != "" && stem(op, e) == base {
+				hit = e
+			}
+		}
+		if hit == nil {
+			byName = false
+			break
+		}
+		single.chosen[op] = hit
+	}
+	if byName {
+		return []family{single}
+	}
+	// the same names under every operation with several endpoints
+	names := stems(multi[0], byOp[multi[0]])
+	sameNames := len(names) >= 2
+	for _, op := range multi[1:] {
+		if !equalStrings(stems(op, byOp[op]), names) {
+			sameNames = false
+		}
+	}
+	if sameNames {
+		var out []family
+		member := map[*ir.Endpoint]bool{}
+		for _, op := range multi {
+			for _, e := range byOp[op] {
+				member[e] = true
+			}
+		}
+		for _, n := range names {
+			f := family{name: familyName(n, base), chosen: map[string]*ir.Endpoint{}, member: member}
+			for op, es := range byOp {
+				if len(es) == 1 {
+					f.chosen[op] = es[0]
+					continue
+				}
+				for _, e := range es {
+					if stem(op, e) == n {
+						f.chosen[op] = e
+					}
+				}
+			}
+			out = append(out, f)
+		}
+		return out
+	}
+	for _, op := range multi {
+		var pick *ir.Endpoint
+		for _, e := range byOp[op] {
+			if pick == nil || better(e, pick) {
+				pick = e
+			}
+		}
+		single.chosen[op] = pick
+	}
+	return []family{single}
+}
+
+// stem is the action name without the operation verb: addPrimaryDomain
+// -> PrimaryDomain, getwake -> wake, searchItem -> Item.
+func stem(op string, e *ir.Endpoint) string {
+	a := e.Action
+	if len(a) >= len(op) && strings.EqualFold(a[:len(op)], op) {
+		return a[len(op):]
+	}
+	return a
+}
+
+func stems(op string, es []*ir.Endpoint) []string {
+	var out []string
+	for _, e := range es {
+		out = append(out, stem(op, e))
+	}
+	sort.Strings(out)
+	return out
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// familyName: PrimaryDomain with the shared name Domain -> primary.
+func familyName(name, base string) string {
+	if base != "" && len(name) > len(base) && strings.HasSuffix(name, base) {
+		name = name[:len(name)-len(base)]
+	}
+	return strings.ToLower(name)
 }
 
 // better: base-call endpoints over others, endpoints taking a uuid over
@@ -564,7 +728,7 @@ func field(n *model.Node) *Field {
 func (d *Doc) finish(order []string) {
 	res, acts := d.raw()
 	for id, r := range res {
-		out := &Resource{Kind: r.kind, Fields: map[string][]*Field{}}
+		out := &Resource{Kind: r.kind, Family: r.family, Fields: map[string][]*Field{}}
 		for _, h := range order {
 			if r.api[h] != nil {
 				out.In = append(out.In, h)
