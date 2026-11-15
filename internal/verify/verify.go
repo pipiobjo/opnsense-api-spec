@@ -35,6 +35,17 @@ type Result struct {
 	// RuntimeRequired: fields the instance rejected as missing when adding
 	// an entry with server defaults (write-cycle only), without wrapper
 	RuntimeRequired []string `json:"runtime_required,omitempty"`
+	// Sample (write-cycle only): the entry the instance accepted, in write
+	// form without wrapper. Values of option fields come from this
+	// instance's options (interfaces, relations) and may not exist elsewhere.
+	Sample map[string]any `json:"sample,omitempty"`
+	// Generated (write-cycle only): fields that needed a generated value
+	// because the server default was rejected.
+	Generated []string `json:"generated,omitempty"`
+	// Steps (write-cycle only): the steps that completed: add, read-back,
+	// set, read-back-set, del. A missing "set" means the update was not
+	// tested (no set endpoint, or the changed value was rejected).
+	Steps []string `json:"steps,omitempty"`
 }
 
 // Report is the outcome of a run.
@@ -526,11 +537,19 @@ func writeValue(v any) any {
 	return ""
 }
 
-// writeCycles: for every entry list with get/add/del, add an entry built
-// from the server defaults (plus a description/name where required), read
-// it back and delete it.
+// writeCycles: for every entry list with get/add/del, add an entry, read
+// it back, change one field, read it back again and delete it.
+//
+// The entry starts from the server defaults (the empty-entry template),
+// with a description where the model has one. When the instance rejects
+// fields, each rejected field gets a generated value (values.go) and the
+// add is retried. A rejected relation without anything to point at gets a
+// prerequisite entry in the target list (created the same way, deleted
+// afterwards). A field whose candidates are exhausted makes the cycle
+// "skipped" with the reason. Nothing is applied (no reconfigure), so the
+// running test instance is not changed beyond its stored configuration.
 func writeCycles(c *Client, rel *ir.Release, models map[string]*model.Model, packages map[string]bool) []*Result {
-	type family struct{ get, add, del, set *ir.Endpoint }
+	w := &writer{c: c, byList: map[string]*family{}}
 	fams := map[string]*family{}
 	for _, e := range rel.Endpoints {
 		if e.ModelPath == "" || e.Source != ir.SourceBaseCall || !packages[e.Package] {
@@ -544,7 +563,7 @@ func writeCycles(c *Client, rel *ir.Release, models map[string]*model.Model, pac
 		}
 		switch e.Kind {
 		case ir.KindItemGet:
-			f.get = e
+			f.gets = append(f.gets, e)
 		case ir.KindItemAdd:
 			f.add = e
 		case ir.KindItemDel:
@@ -554,104 +573,422 @@ func writeCycles(c *Client, rel *ir.Release, models map[string]*model.Model, pac
 		}
 	}
 	var keys []string
-	for k := range fams {
+	for k, f := range fams {
+		if f.add == nil || f.del == nil {
+			continue
+		}
+		if f.get = entryGet(f.gets, f.add); f.get == nil {
+			continue
+		}
+		if m := models[f.add.Model]; m != nil {
+			f.entry = m.Find(f.add.ModelPath)
+		}
+		w.byList[f.add.Model+"#"+f.add.ModelPath] = f
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 	var out []*Result
 	for _, k := range keys {
-		f := fams[k]
-		if f.get == nil || f.add == nil || f.del == nil {
-			continue
-		}
-		r := &Result{Path: f.add.Path, Method: "POST", Check: "write-cycle"}
-		out = append(out, r)
-		code, v, raw, err := c.do("GET", f.get.Path, nil)
-		if err != nil || code != 200 {
-			fail(r, code, raw, err)
-			continue
-		}
-		root, _ := v.(map[string]any)
-		if f.get.Outer != "" {
-			root, _ = root[f.get.Outer].(map[string]any)
-		}
-		tmpl, _ := root[f.get.Wrapper].(map[string]any)
-		body, _ := writeValue(tmpl).(map[string]any)
-		if body == nil {
-			body = map[string]any{}
-		}
-		m := models[f.add.Model]
-		if m != nil {
-			if n := m.Find(f.add.ModelPath); n != nil {
-				for _, ch := range n.Children {
-					if ch.Kind == model.KindField && (ch.Type == "DescriptionField" || ch.Name == "description" || ch.Name == "descr") {
-						body[ch.Name] = "contract-test"
-					}
-				}
-			}
-		}
-		code, v, raw, err = c.do("POST", f.add.Path, map[string]any{f.add.Wrapper: body})
-		if err != nil || code != 200 {
-			fail(r, code, raw, err)
-			continue
-		}
-		r.HTTP = code
-		c.schema(f.add, "POST", f.add.Path, v)
-		res, _ := v.(map[string]any)
-		uuid, _ := res["uuid"].(string)
-		if res["result"] != "saved" || uuid == "" {
-			r.Status = "skipped"
-			// fields OPNsense requires at runtime vs. required in the model
-			var runtime, notInModel []string
-			if vals, ok := res["validations"].(map[string]any); ok {
-				for k := range vals {
-					runtime = append(runtime, k)
-				}
-			}
-			sort.Strings(runtime)
-			req := map[string]bool{}
-			if m != nil {
-				if n := m.Find(f.add.ModelPath); n != nil {
-					for _, ch := range n.Children {
-						if ch.Required && ch.Default == nil {
-							req[f.add.Wrapper+"."+ch.Name] = true
-						}
-					}
-				}
-			}
-			for _, k := range runtime {
-				if !req[k] {
-					notInModel = append(notInModel, k)
-				}
-			}
-			r.Findings = append(r.Findings, "add with server defaults rejected; runtime-required: "+strings.Join(runtime, ", "))
-			for _, k := range runtime {
-				r.RuntimeRequired = append(r.RuntimeRequired, strings.TrimPrefix(k, f.add.Wrapper+"."))
-			}
-			if len(notInModel) > 0 {
-				r.Findings = append(r.Findings, "required at runtime but not marked Required in the model: "+strings.Join(notInModel, ", "))
-			}
-			continue
-		}
-		code, v, raw, err = c.do("GET", f.get.Path+"/"+uuid, nil)
-		if err != nil || code != 200 {
-			r.Findings = append(r.Findings, fmt.Sprintf("get/%s: HTTP %d %s", uuid, code, trunc(raw)))
-		} else {
-			c.schema(f.get, "GET", f.get.Path+"/{uuid}", v)
-			if _, ok := v.(map[string]any)[f.get.Wrapper]; !ok {
-				r.Findings = append(r.Findings, "get by uuid: root key "+f.get.Wrapper+" missing")
-			}
-		}
-		code, v, raw, err = c.do("POST", f.del.Path+"/"+uuid, map[string]any{})
-		if err != nil || code != 200 {
-			r.Findings = append(r.Findings, fmt.Sprintf("del: HTTP %d %s", code, trunc(raw)))
-		} else {
-			c.schema(f.del, "POST", f.del.Path+"/{uuid}", v)
-			if res, _ := v.(map[string]any); res["result"] != "deleted" {
-				r.Findings = append(r.Findings, "del: "+trunc(raw))
-			}
-		}
-		r.Status = status(r.Findings)
+		out = append(out, w.cycle(fams[k]))
 	}
 	return out
+}
+
+type family struct {
+	gets               []*ir.Endpoint
+	get, add, del, set *ir.Endpoint
+	entry              *model.Node
+}
+
+type writer struct {
+	c      *Client
+	byList map[string]*family // model class + "#" + entry list path
+}
+
+// maxRounds bounds the add retries of one entry list; maxDepth bounds
+// prerequisite chains (a record needs a zone, a zone needs nothing).
+const (
+	maxRounds = 8
+	maxDepth  = 2
+)
+
+// added is the outcome of adding one entry.
+type added struct {
+	uuid     string
+	body     map[string]any
+	chosen   map[string]bool // fields set on purpose (compared on read-back)
+	tried    map[string]int  // generated fields -> candidate index
+	runtime  []string        // fields rejected with server defaults
+	notes    []string
+	cleanups []func() []string // delete prerequisites, newest first
+	err      *Result           // set when the add failed or was skipped
+}
+
+func (w *writer) add(f *family, depth int) *added {
+	c := w.c
+	res := &added{chosen: map[string]bool{}, tried: map[string]int{}}
+	r := &Result{Path: f.add.Path, Method: "POST", Check: "write-cycle"}
+	code, v, raw, err := c.do("GET", f.get.Path, nil)
+	if err != nil || code != 200 {
+		res.err = fail(r, code, raw, err)
+		return res
+	}
+	root, _ := v.(map[string]any)
+	if f.get.Outer != "" {
+		root, _ = root[f.get.Outer].(map[string]any)
+	}
+	tmpl, _ := root[f.get.Wrapper].(map[string]any)
+	body, _ := writeValue(tmpl).(map[string]any)
+	if body == nil {
+		body = map[string]any{}
+	}
+	if f.entry != nil {
+		for _, ch := range f.entry.Children {
+			if ch.Kind == model.KindField && (ch.Type == "DescriptionField" || ch.Name == "description" || ch.Name == "descr") {
+				if cands := candidates(ch, nil); len(cands) > 0 {
+					body[ch.Name] = cands[0]
+					res.chosen[ch.Name] = true
+				}
+			}
+		}
+	}
+	prefix := f.add.Wrapper + "."
+	related := map[string]bool{}
+	for round := 0; ; round++ {
+		code, v, raw, err = c.do("POST", f.add.Path, map[string]any{f.add.Wrapper: body})
+		if err != nil || code != 200 {
+			res.err = fail(r, code, raw, err)
+			return res
+		}
+		if round == 0 && depth == 0 {
+			c.schema(f.add, "POST", f.add.Path, v)
+		}
+		out, _ := v.(map[string]any)
+		if id, _ := out["uuid"].(string); out["result"] == "saved" && id != "" {
+			res.uuid, res.body = id, body
+			return res
+		}
+		vals, _ := out["validations"].(map[string]any)
+		if len(vals) == 0 {
+			r.Status, r.Findings = "error", []string{"add failed without validation messages: " + trunc(raw)}
+			res.err = r
+			return res
+		}
+		var fields []string
+		for k := range vals {
+			fields = append(fields, strings.TrimPrefix(k, prefix))
+		}
+		sort.Strings(fields)
+		if round == 0 {
+			res.runtime = fields
+		}
+		var stuck []string
+		for _, fld := range fields {
+			n := node(f.entry, fld)
+			cands := candidates(n, lookup(tmpl, fld))
+			i, seen := res.tried[fld]
+			if seen {
+				i++
+			}
+			if i < len(cands) {
+				res.tried[fld] = i
+				res.chosen[fld] = true
+				assign(body, fld, cands[i])
+				continue
+			}
+			if !related[fld] && depth < maxDepth {
+				if id, note, cleanup := w.prerequisite(n, depth+1); id != "" {
+					related[fld] = true
+					res.tried[fld] = len(cands)
+					res.chosen[fld] = true
+					res.notes = append(res.notes, note)
+					res.cleanups = append([]func() []string{cleanup}, res.cleanups...)
+					assign(body, fld, id)
+					continue
+				}
+			}
+			stuck = append(stuck, fmt.Sprintf("%s (%v)", fld, vals[prefix+fld]))
+		}
+		if len(stuck) > 0 || round+1 >= maxRounds {
+			r.Status = "skipped"
+			reason := "no accepted value for: " + strings.Join(stuck, "; ")
+			if len(stuck) == 0 {
+				reason = fmt.Sprintf("not accepted after %d rounds: %s", maxRounds, strings.Join(fields, ", "))
+			}
+			r.Findings = append(r.Findings, "add rejected; runtime-required: "+strings.Join(res.runtime, ", "), reason)
+			r.RuntimeRequired = res.runtime
+			res.err = r
+			return res
+		}
+	}
+}
+
+// prerequisite creates an entry in the list a relation field points to and
+// returns its uuid, a note and the function that deletes it again.
+func (w *writer) prerequisite(n *model.Node, depth int) (string, string, func() []string) {
+	if n == nil {
+		return "", "", nil
+	}
+	for _, rel := range n.Relations {
+		f := w.byList[strings.ReplaceAll(rel.Source, ".", `\`)+"#"+rel.Items]
+		if f == nil {
+			continue
+		}
+		a := w.add(f, depth)
+		if a.uuid == "" {
+			for _, cl := range a.cleanups {
+				cl()
+			}
+			continue
+		}
+		cleanup := func() []string {
+			var fs []string
+			if code, _, raw, err := w.c.do("POST", f.del.Path+"/"+a.uuid, map[string]any{}); err != nil || code != 200 {
+				fs = append(fs, fmt.Sprintf("deleting prerequisite %s/%s: HTTP %d %s", f.del.Path, a.uuid, code, trunc(raw)))
+			}
+			for _, cl := range a.cleanups {
+				fs = append(fs, cl()...)
+			}
+			return fs
+		}
+		return a.uuid, "note: prerequisite entry created via " + f.add.Path, cleanup
+	}
+	return "", "", nil
+}
+
+func (w *writer) cycle(f *family) *Result {
+	c := w.c
+	a := w.add(f, 0)
+	defer func() {
+		for _, cl := range a.cleanups {
+			cl()
+		}
+	}()
+	if a.err != nil {
+		if a.err.Status == "skipped" {
+			if nm := notRequiredInModel(f.entry, a.runtime); len(nm) > 0 {
+				a.err.Findings = append([]string{"required at runtime but not marked Required in the model: " + strings.Join(nm, ", ")}, a.err.Findings...)
+			}
+		}
+		return a.err
+	}
+	r := &Result{Path: f.add.Path, Method: "POST", Check: "write-cycle", HTTP: 200, RuntimeRequired: a.runtime}
+	if nm := notRequiredInModel(f.entry, a.runtime); len(nm) > 0 {
+		r.Findings = append(r.Findings, "required at runtime but not marked Required in the model: "+strings.Join(nm, ", "))
+	}
+	r.Findings = append(r.Findings, a.notes...)
+	for fld := range a.tried {
+		r.Generated = append(r.Generated, fld)
+	}
+	sort.Strings(r.Generated)
+	r.Sample = a.body
+	r.Steps = append(r.Steps, "add")
+	uuid, body := a.uuid, a.body
+
+	// read back what we chose (values the server changes itself, such as
+	// ids, audit fields or serials, are not writes of ours)
+	sent := map[string]any{}
+	for fld := range a.chosen {
+		if !writeOnly(node(f.entry, fld)) {
+			assign(sent, fld, lookup(body, fld))
+		}
+	}
+	if fs := readBack(c, f.get, uuid, sent, "add"); len(fs) > 0 {
+		r.Findings = append(r.Findings, fs...)
+	} else {
+		r.Steps = append(r.Steps, "read-back")
+	}
+
+	// change one field and read it back
+	if f.set == nil {
+		r.Findings = append(r.Findings, "note: update not tested (no set endpoint)")
+	} else if fld, val := changeable(f.entry, body, a.chosen); fld == "" {
+		r.Findings = append(r.Findings, "note: update not tested (no field to change)")
+	} else {
+		code, v, raw, err := c.do("POST", f.set.Path+"/"+uuid, map[string]any{f.set.Wrapper: map[string]any{fld: val}})
+		res, _ := v.(map[string]any)
+		switch {
+		case err != nil || code != 200:
+			r.Findings = append(r.Findings, fmt.Sprintf("set: HTTP %d %s", code, trunc(raw)))
+		case res["result"] != "saved" && res["validations"] != nil:
+			// the changed value broke a rule involving other fields; this
+			// says nothing about the endpoint, but update is not verified
+			r.Findings = append(r.Findings, fmt.Sprintf("note: update not tested (%s=%q rejected: %s)", fld, val, trunc(raw)))
+		case res["result"] != "saved":
+			r.Findings = append(r.Findings, "set "+fld+": "+trunc(raw))
+		default:
+			c.schema(f.set, "POST", f.set.Path+"/{uuid}", v)
+			r.Steps = append(r.Steps, "set")
+			if fs := readBack(c, f.get, uuid, map[string]any{fld: val}, "set"); len(fs) > 0 {
+				r.Findings = append(r.Findings, fs...)
+			} else {
+				r.Steps = append(r.Steps, "read-back-set")
+			}
+		}
+	}
+
+	code, v, raw, err := c.do("POST", f.del.Path+"/"+uuid, map[string]any{})
+	if code == 500 && strings.Contains(string(raw), "locked") && lookup(body, "lock") == "1" && f.set != nil {
+		// e.g. interface assignments: "Interface locked, unset lock first
+		// before removal"; lock defaults to 1. Clients must unlock first.
+		if c2, v2, _, _ := c.do("POST", f.set.Path+"/"+uuid, map[string]any{f.set.Wrapper: map[string]any{"lock": "0"}}); c2 == 200 {
+			if res2, _ := v2.(map[string]any); res2["result"] == "saved" {
+				r.Findings = append(r.Findings, "note: delete refused while lock=1 (the default); deleted after setting lock=0")
+				code, v, raw, err = c.do("POST", f.del.Path+"/"+uuid, map[string]any{})
+			}
+		}
+	}
+	res, _ := v.(map[string]any)
+	switch {
+	case err != nil || code != 200:
+		r.Findings = append(r.Findings, fmt.Sprintf("del: HTTP %d %s", code, trunc(raw)))
+	case gap.Has(f.del.Gaps, gap.ResultNotReturned) && len(raw) == 0:
+		r.Steps = append(r.Steps, "del") // empty answer, as the spec says
+	case res["result"] != "deleted":
+		r.Findings = append(r.Findings, "del: "+trunc(raw))
+	default:
+		c.schema(f.del, "POST", f.del.Path+"/{uuid}", v)
+		r.Steps = append(r.Steps, "del")
+	}
+	for _, cl := range a.cleanups {
+		r.Findings = append(r.Findings, cl()...)
+	}
+	a.cleanups = nil
+	r.Status = writeStatus(r.Findings)
+	if r.Status == "mismatch" {
+		r = knownGap(r, f.get)
+	}
+	return r
+}
+
+// writeOnly: fields the server never returns (passwords and the like).
+func writeOnly(n *model.Node) bool {
+	return n != nil && (n.BaseType == "UpdateOnlyTextField" || n.Type == "UpdateOnlyTextField")
+}
+
+// readBack gets the entry and compares every sent field (write form).
+// Differences are findings prefixed "read-back".
+func readBack(c *Client, get *ir.Endpoint, uuid string, sent map[string]any, step string) []string {
+	code, v, raw, err := c.do("GET", get.Path+"/"+uuid, nil)
+	if err != nil || code != 200 {
+		return []string{fmt.Sprintf("get/%s after %s: HTTP %d %s", uuid, step, code, trunc(raw))}
+	}
+	c.schema(get, "GET", get.Path+"/{uuid}", v)
+	root, _ := v.(map[string]any)
+	if get.Outer != "" {
+		root, _ = root[get.Outer].(map[string]any)
+	}
+	got, ok := root[get.Wrapper].(map[string]any)
+	if !ok {
+		return []string{"get by uuid: root key " + get.Wrapper + " missing"}
+	}
+	var out []string
+	var walk func(prefix string, s map[string]any)
+	walk = func(prefix string, s map[string]any) {
+		var ks []string
+		for k := range s {
+			ks = append(ks, k)
+		}
+		sort.Strings(ks)
+		for _, k := range ks {
+			p := strings.TrimPrefix(prefix+"."+k, ".")
+			if sub, ok := s[k].(map[string]any); ok {
+				walk(p, sub)
+				continue
+			}
+			want, _ := s[k].(string)
+			have := writeValue(lookup(got, p))
+			if hs, ok := have.(string); !ok || !sameValue(want, hs) {
+				out = append(out, fmt.Sprintf("read-back after %s: %s sent %q, read %v", step, p, want, have))
+			}
+		}
+	}
+	walk("", sent)
+	return out
+}
+
+// sameValue compares written and read values; comma-separated lists are
+// compared as sets (the server may reorder them).
+func sameValue(a, b string) bool {
+	if a == b {
+		return true
+	}
+	if !strings.Contains(a, ",") && !strings.Contains(b, ",") {
+		return false
+	}
+	as, bs := strings.Split(a, ","), strings.Split(b, ",")
+	sort.Strings(as)
+	sort.Strings(bs)
+	return strings.Join(as, ",") == strings.Join(bs, ",")
+}
+
+// changeable picks a field for the set step and a new value that satisfies
+// the field's mask: the description first, else another field we chose.
+func changeable(entry *model.Node, body map[string]any, chosen map[string]bool) (string, string) {
+	var order []string
+	for _, name := range []string{"description", "descr"} {
+		if chosen[name] {
+			order = append(order, name)
+		}
+	}
+	var rest []string
+	for f := range chosen {
+		if f != "description" && f != "descr" && !strings.Contains(f, ".") {
+			rest = append(rest, f)
+		}
+	}
+	sort.Strings(rest)
+	for _, f := range append(order, rest...) {
+		n := node(entry, f)
+		if writeOnly(n) {
+			continue
+		}
+		cur, _ := lookup(body, f).(string)
+		for _, cand := range candidates(n, nil) {
+			if cand != cur {
+				return f, cand
+			}
+		}
+	}
+	return "", ""
+}
+
+func notRequiredInModel(entry *model.Node, fields []string) []string {
+	var out []string
+	for _, f := range fields {
+		n := node(entry, f)
+		if n == nil || !(n.Required && n.Default == nil) {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// writeStatus: read-back differences and failed steps are mismatches;
+// notes (update not tested) and the remark about runtime-required fields
+// are not. Whether the update was tested is in Result.Steps.
+func writeStatus(f []string) string {
+	for _, s := range f {
+		if !strings.HasPrefix(s, "required at runtime but not marked Required") && !strings.HasPrefix(s, "note: ") {
+			return "mismatch"
+		}
+	}
+	return "ok"
+}
+
+// entryGet picks the get endpoint of an entry list: the one taking a uuid
+// with the add endpoint's wrapper (os-wol has getHost and getwake for the
+// same list; only getHost reads an entry).
+func entryGet(gets []*ir.Endpoint, add *ir.Endpoint) *ir.Endpoint {
+	var best *ir.Endpoint
+	for _, g := range gets {
+		takesUUID := len(g.Params) > 0
+		switch {
+		case g.Wrapper == add.Wrapper && takesUUID:
+			return g
+		case best == nil || (g.Wrapper == add.Wrapper && best.Wrapper != add.Wrapper):
+			best = g
+		}
+	}
+	return best
 }

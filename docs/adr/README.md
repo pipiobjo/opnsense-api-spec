@@ -10,6 +10,7 @@
 | [0006](0006-client-capability-layer.md) | Consumers need a capability layer; the server ignores unknown keys | accepted, planned |
 | [0007](0007-openapi-3-1.md) | OpenAPI 3.1 as the only output format, with compatibility checks per build | accepted, implemented (Go gate blocking; openapi-generator manual) |
 | [0008](0008-pipeline-and-publishing.md) | Daily pipeline on hosted runners; GitHub releases as publication and state | accepted, implemented |
+| [0009](0009-generated-write-values.md) | Generated write values, read-back and prerequisite entries in the contract test | accepted, implemented |
 
 Format: context, decision, consequences, evidence. A superseded ADR stays
 and links to its successor.

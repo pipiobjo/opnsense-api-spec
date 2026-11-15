@@ -79,10 +79,10 @@ generator changes.
    fallback 77 min). First unattended publishing run 2026-11-13. The
    first runs without contract jobs (2026-11-14, -15) failed in the publish
    job (artifact layout), fixed. OCI later.
-8. **Generated write values.** Valid test values per field type and from
-   option lists, so the write cycle (add -> get -> set -> get -> delete)
-   covers most entry lists instead of 20 of 188; the accepted values are
-   recorded for consumers' own tests.
+8. ~~**Generated write values.**~~ Done (2026-11-15, ADR 0009): 162 of 188
+   entry lists on 26.7.9 pass add -> read back -> update -> read back ->
+   delete (was 20); found two published generator errors and a wrong
+   endpoint choice in the verifier.
 9. **Availability data for consumers.** The superset view per package
    (concepts 9.1) published as a stable artifact with checksums and build
    provenance, the input for clients and providers (ADR 0006).

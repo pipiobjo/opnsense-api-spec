@@ -11,6 +11,7 @@ import (
 	"github.com/pipiobjo/opnsense-api-spec/internal/controller"
 	"github.com/pipiobjo/opnsense-api-spec/internal/ir"
 	"github.com/pipiobjo/opnsense-api-spec/internal/model"
+	"github.com/pipiobjo/opnsense-api-spec/internal/verify"
 )
 
 // fixture app: one Demo module with settings + service controllers
@@ -211,5 +212,32 @@ func TestRenderFragmentUsesCommon(t *testing.T) {
 		if _, ok := cs[n]; !ok {
 			t.Errorf("common document lacks %s", n)
 		}
+	}
+}
+
+func TestRenderVerifiedSample(t *testing.T) {
+	rel, _ := build(t)
+	ver := &verify.Report{Instance: "0.0.1_1", Date: "2026-11-15T00:00:00Z", Results: []*verify.Result{
+		{Path: "/api/demo/settings/addHost", Method: "POST", Check: "write-cycle", Status: "ok",
+			Steps: []string{"add", "read-back", "del"}, Sample: map[string]any{"hostname": "ct1"}},
+	}}
+	doc, _ := RenderVerified(rel, ver)
+	b, _ := json.Marshal(doc)
+	var v map[string]any
+	_ = json.Unmarshal(b, &v)
+	ex := dig(t, v, "paths", "/api/demo/settings/addHost", "post", "requestBody", "content", "application/json", "examples", "accepted-by-test-instance", "value", "host", "hostname")
+	if ex != "ct1" {
+		t.Errorf("example: %v", ex)
+	}
+	checks := dig(t, v, "paths", "/api/demo/settings/addHost", "post", "x-opnsense-verified", "checks").([]any)
+	if steps := checks[0].(map[string]any)["steps"].([]any); len(steps) != 3 {
+		t.Errorf("steps: %v", steps)
+	}
+	// a skipped or failed cycle gives no example
+	ver.Results[0].Status = "skipped"
+	doc, _ = RenderVerified(rel, ver)
+	b, _ = json.Marshal(doc)
+	if strings.Contains(string(b), "accepted-by-test-instance") {
+		t.Error("only accepted entries may become examples")
 	}
 }

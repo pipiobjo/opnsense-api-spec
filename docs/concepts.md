@@ -197,6 +197,7 @@ typed, whatever their kind.
 | `get-model-nodes-override` | `getModelNodes` overridden; `get` may return a subset |
 | `custom-logic` | own code around a generic helper |
 | `post-processed` | the helper result is transformed before it is returned |
+| `result-not-returned` | the action calls a helper but does not return its result; the response is empty (an upstream quirk, e.g. `os-wol` `delHost`) |
 | `helper-used-internally` | custom action that uses a helper internally; untyped |
 | `multiple-helpers` | several helper calls; the one matching the action is documented |
 | `helper-non-literal` | helper called with non-literal arguments; untyped |
@@ -213,7 +214,7 @@ Codes counted as "the instance may answer with another shape"
 `known-gap`. The document also carries `x-opnsense-coverage` (gaps counted
 by code), and each release has a `coverage.md`.
 
-Further extensions: `x-opnsense-package` (which package provides an
+Further extensions: `x-opnsense-relation` (on relation fields: the model and entry list whose UUIDs are valid values), `x-opnsense-package` (which package provides an
 operation, with alternatives), `x-opnsense-apply` (the call that activates
 changes), `x-opnsense-name-collision` (field names differing only in case
 or `_`), `x-opnsense-verified` and `x-opnsense-runtime-required` (from
@@ -270,7 +271,7 @@ fields. See section 9.
 | Client functional test | a provider-style scenario with the generated Go client against the test VM: version detection, settings get/partial set/read back, apply, entry add/get/set/search/delete, select fields, validation errors | implemented (`tools/client-smoke.sh <release> --run`, `test/consumer-go/`); 14/14 on 26.7 |
 | Response schema validation | every response of the contract tests validated against the rendered OpenAPI schema (JSON Schema 2020-12), not only against the model, so that decoding problems of generated clients show up generically | implemented (`schema` checks in `verify`) |
 | Consumer smoke test | a Go client generated with oapi-codegen (pinned v2.8.2) compiles together with the scenario (blocking); openapi-generator for other languages (informational) | Go: in every pipeline run for the newest release of each series (`tools/client-smoke.sh <release>`); openapi-generator: manual ([ADR 0007](adr/0007-openapi-3-1.md)) |
-| Contract tests | every GET against a real instance, add -> get -> delete per entry list (with server defaults), with all plugins with an API installed | implemented (`tools/testvm.sh`); `verify` exits non-zero on any unexplained finding |
+| Contract tests | every GET against a real instance; per entry list add -> read back -> update -> read back -> delete with generated values; all plugins with an API installed | implemented (`tools/testvm.sh`, [ADR 0009](adr/0009-generated-write-values.md)); `verify` exits non-zero on any unexplained finding |
 | Golden tests | fragment hashes of final releases (25.7.10, 26.1.10, 26.7.7) checked in; a generator change that alters the derived API of an existing release fails per package | implemented (`internal/assemble`); CI fetches the sources and fails instead of skipping when they are missing (`GOLDEN_REQUIRED=1`) |
 | Determinism | two builds from the same sources give identical IR, OpenAPI and fragment hashes | implemented (`internal/assemble`) |
 | Invariants | no duplicate paths, every referenced model and package exists, every operation has a method, every local `$ref` resolves; a violation stops the build | implemented (`internal/quality`) |
@@ -280,7 +281,7 @@ fields. See section 9.
 | Verification tracking | the index records which composition was contract-tested (`verified`, `needs_verification`); a run with failures or with untested plugin packages (`untested_packages`) does not count as verified | implemented |
 | Contract tests per release | boot the series image, update it through the package proxy to exactly the target release, install all API plugins, test; daily for the newest unverified release of each series, older releases on request | implemented ([ADR 0008](adr/0008-pipeline-and-publishing.md)) |
 | Second derivation | compare the endpoint list with OPNsense's own `collect_api_endpoints.py` | planned |
-| Generated write values | test values from field types instead of server defaults; today 20 of 188 entry lists on 26.7.9 complete a write cycle, the others need values the server does not default | planned (next step) |
+| Generated write values | values from field types and constraints for the fields the server rejects, options from the instance, prerequisite entries for relations; accepted entries become request examples | implemented ([ADR 0009](adr/0009-generated-write-values.md)); 26.7.9: 162 of 188 entry lists pass |
 
 **Contract test environment.** A throwaway VM from the official nano image
 under QEMU/KVM, fresh disk overlay per run, isolated user-mode networks
@@ -373,8 +374,10 @@ the same data:
   harmless. Known tool-specific issue: openapi-generator's TypeScript
   output fails on enum values such as `~*`.
 - Contract tests run daily for the newest release of each series; older
-  releases show `needs_verification` until someone requests a test. Write
-  paths are tested only with server defaults (see section 8).
+  releases show `needs_verification` until someone requests a test. Some
+  entry lists cannot be written automatically (relations to lists without
+  an add endpoint, cross-field rules); each is listed with its reason in
+  the contract test results.
 - Generated Go types: nested sections and union members are named
   components (e.g. `UnboundUnboundGeneralWrite`, `AsSelectOptions()`,
   `AsEmptyList()`); only the response wrappers stay anonymous

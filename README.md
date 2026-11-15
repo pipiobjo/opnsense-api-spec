@@ -101,13 +101,15 @@ The VM runs under QEMU/KVM with a fresh overlay per run, four NICs and
 isolated user-mode networks (`restrict=on`); the only way in is
 `127.0.0.1:18443`. `verify` refuses any other target. It checks every GET
 against the model (root key, fields, read shapes) and runs
-add -> get -> delete per entry list. Results go to
+add -> read back -> update -> read back -> delete per entry list. Results go to
 `opnsense-<release>.verified.json` and into the spec:
 
 - `x-opnsense-verified` per operation (instance, date, checks, findings)
 - `x-opnsense-runtime-required` on entry Write schemas: fields the instance
   rejected as missing, including PHP-enforced ones the model does not mark
   `Required`
+- a request example on each add operation: the entry the instance accepted
+  (see [ADR 0009](docs/adr/0009-generated-write-values.md))
 
 Builds with `-plugins` (and `matrix`) also write per-package fragments
 (content-addressed), the composition of each catalog state
@@ -157,10 +159,11 @@ The document also contains `x-opnsense-coverage` and the release gets a
   Plugin operations exist only when the plugin is installed.
 - Contract tests: the daily pipeline tests the newest release of each
   series with all API plugins; older releases are tested on request. Read
-  paths are checked for every GET. Write cycles only use server defaults,
-  so most entry types (168 of 188 on 26.7.9) are reported as skipped with
-  their runtime-required fields; generating valid write values is the next
-  planned step.
+  paths are checked for every GET. Every entry list is added, read back,
+  updated, read back and deleted with generated values (26.7.9: 162 of 188
+  pass; the others are listed with the reason, mostly relations the test
+  cannot satisfy). The accepted entry is the request example of each add
+  operation.
 - Large responses over HTTP/1.1 can arrive with broken chunked encoding
   (OPNsense web server); the test client uses HTTP/1.1 on purpose so this
   stays visible.
