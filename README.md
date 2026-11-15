@@ -98,7 +98,12 @@ tools/testvm.sh verify 26.7      # fresh VM, API key, tests, teardown (~1 min wi
 tools/testvm.sh verify 26.1 --plugins   # + all plugins with an API (~9 to 15 min)
 tools/testvm.sh verify 26.7 --release 26.7.5 --plugins
                                  # update the series image to exactly 26.7.5 first
+tools/testvm.sh start 26.7 --release latest --plugins "os-frr"
+                                 # leave a VM running for your own tests (.cache/vm/state.env)
 ```
+
+Other repositories get the same VM in GitHub Actions through the action
+`.github/actions/testvm` ([docs/testvm-action.md](docs/testvm-action.md)).
 
 Plugins come from `opnsense-api-spec proxy`, which serves only the signed
 package snapshot of the VM's release (`MINT/<release>`) and is reachable from
@@ -206,6 +211,7 @@ internal/schemacheck/    OpenAPI 3.1 / JSON Schema 2020-12 validation
 internal/verify/         contract tests against a running test instance
 verify/accepted.json     reviewed upstream findings that do not count as failures
 tools/testvm.sh          throwaway OPNsense VM (QEMU/KVM, software emulation fallback)
+.github/actions/testvm/  the VM as a GitHub Action for other repositories
 tools/ci/                pipeline helpers (state, publish, failure report)
 test/consumer-go/        consumer scenario for the generated Go client
 ```

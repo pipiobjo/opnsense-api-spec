@@ -1,0 +1,182 @@
+# SPDX-FileCopyrightText: 2026 opnsense-api-spec contributors
+# SPDX-License-Identifier: BSD-2-Clause
+name: OPNsense test VM
+description: >-
+  Throwaway OPNsense instance on 127.0.0.1 for tests: verified official image,
+  updated to a release, plugins installed, throwaway API key. Isolated: no
+  route to the LAN or the internet. See docs/testvm-action.md.
+
+inputs:
+  command:
+    description: "start (boot and prepare) or stop (shut down, delete the disk)"
+    default: start
+  series:
+    description: "release series, for example 26.7 (start only)"
+    default: ""
+  release:
+    description: "exact release (26.7.9), 'latest' (newest on the mirror), or 'image' (no update)"
+    default: latest
+  plugins:
+    description: "space-separated package names, 'all' (every plugin with an API in this release), or empty"
+    default: ""
+  require-plugins:
+    description: "fail when a requested plugin could not be installed"
+    default: "true"
+  free-disk:
+    description: "delete large preinstalled toolchains on GitHub-hosted runners (the VM disk needs room)"
+    default: "true"
+
+outputs:
+  url:
+    description: "base URL of the instance (https://127.0.0.1:<port>, self-signed certificate)"
+    value: ${{ steps.start.outputs.url }}
+  keyfile:
+    description: "path of a JSON file with 'key' and 'secret' of a throwaway API key (mode 0600)"
+    value: ${{ steps.start.outputs.keyfile }}
+  version:
+    description: "product version the instance reports, for example 26.7.9_1"
+    value: ${{ steps.start.outputs.version }}
+  release:
+    description: "release the instance was updated to"
+    value: ${{ steps.start.outputs.release }}
+  plugins:
+    description: "comma-separated plugins that are installed"
+    value: ${{ steps.start.outputs.plugins }}
+  failed:
+    description: "comma-separated plugins that could not be installed"
+    value: ${{ steps.start.outputs.failed }}
+  acceleration:
+    description: "kvm or tcg (software emulation, several times slower)"
+    value: ${{ steps.start.outputs.accel }}
+  dir:
+    description: "directory with console.log and proxy.log, for upload on failure"
+    value: ${{ steps.paths.outputs.vm }}
+
+runs:
+  using: composite
+  steps:
+    - name: Paths
+      id: paths
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        root=$(cd "$ACTION_PATH/../../.." && pwd)
+        echo "root=$root" >> "$GITHUB_OUTPUT"
+        echo "vm=$root/.cache/vm" >> "$GITHUB_OUTPUT"
+
+    - name: Stop
+      if: inputs.command == 'stop'
+      shell: bash
+      run: '"${{ steps.paths.outputs.root }}/tools/testvm.sh" down'
+
+    - name: Check inputs
+      if: inputs.command == 'start'
+      shell: bash
+      env:
+        SERIES: ${{ inputs.series }}
+      run: |
+        [[ "$SERIES" =~ ^[0-9]{2}\.[0-9]+$ ]] || { echo "::error::input 'series' must look like 26.7"; exit 1; }
+    - name: Check command
+      if: inputs.command != 'start' && inputs.command != 'stop'
+      shell: bash
+      run: echo "::error::input 'command' must be start or stop" && exit 1
+
+    - name: Free disk space
+      if: inputs.command == 'start' && inputs.free-disk == 'true' && runner.environment == 'github-hosted'
+      shell: bash
+      run: |
+        sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+        df -h /
+
+    - name: Install QEMU
+      if: inputs.command == 'start'
+      shell: bash
+      run: |
+        if ! command -v qemu-system-x86_64 >/dev/null || ! command -v socat >/dev/null; then
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends qemu-system-x86 qemu-utils socat
+        fi
+
+    - name: Go
+      if: inputs.command == 'start'
+      id: go
+      shell: bash
+      run: |
+        # an existing Go (1.21 or newer) fetches the version go.mod needs by itself;
+        # do not replace a Go the calling workflow set up
+        if command -v go >/dev/null; then echo "have=true" >> "$GITHUB_OUTPUT"; else echo "have=false" >> "$GITHUB_OUTPUT"; fi
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      if: inputs.command == 'start' && steps.go.outputs.have != 'true'
+      with:
+        go-version-file: ${{ steps.paths.outputs.root }}/go.mod
+        cache: false
+
+    - name: Acceleration (KVM or software emulation)
+      if: inputs.command == 'start'
+      shell: bash
+      run: |
+        if [ -e /dev/kvm ] && ! { [ -r /dev/kvm ] && [ -w /dev/kvm ]; }; then
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+        fi
+        if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
+          echo "TESTVM_ACCEL=kvm" >> "$GITHUB_ENV"
+          echo "acceleration: KVM"
+        else
+          echo "TESTVM_ACCEL=tcg" >> "$GITHUB_ENV"
+          echo "TESTVM_CPUS=$(nproc)" >> "$GITHUB_ENV"
+          echo "::warning::no KVM on this runner: software emulation (TCG), several times slower"
+        fi
+
+    - name: Image version
+      if: inputs.command == 'start'
+      id: image
+      shell: bash
+      run: |
+        v=$("${{ steps.paths.outputs.root }}/tools/testvm.sh" image-version "${{ inputs.series }}")
+        [ -n "$v" ] || { echo "::error::no image for series ${{ inputs.series }}"; exit 1; }
+        echo "version=$v" >> "$GITHUB_OUTPUT"
+    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      if: inputs.command == 'start'
+      id: cache
+      with:
+        path: |
+          ${{ steps.paths.outputs.vm }}/base-${{ inputs.series }}.qcow2
+          ${{ steps.paths.outputs.vm }}/base-${{ inputs.series }}.version
+        key: testvm-base-${{ inputs.series }}-${{ steps.image.outputs.version }}
+    - name: Prepare image (download, checksum against 2 sources, signature)
+      if: inputs.command == 'start' && steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        TESTVM_DROP_RAW: "1"
+      run: '"${{ steps.paths.outputs.root }}/tools/testvm.sh" prepare "${{ inputs.series }}"'
+
+    - name: Start
+      if: inputs.command == 'start'
+      id: start
+      shell: bash
+      env:
+        SERIES: ${{ inputs.series }}
+        RELEASE: ${{ inputs.release }}
+        PLUGINS: ${{ inputs.plugins }}
+        REQUIRE: ${{ inputs.require-plugins }}
+        VMDIR: ${{ steps.paths.outputs.vm }}
+      run: |
+        args=()
+        case "$RELEASE" in
+          image|"") ;;
+          *) args+=(--release "$RELEASE") ;;
+        esac
+        [ -n "$PLUGINS" ] && args+=(--plugins "$PLUGINS")
+        "${{ steps.paths.outputs.root }}/tools/testvm.sh" start "$SERIES" "${args[@]}"
+        echo "::add-mask::$(jq -r .secret "$VMDIR/apikey.json")"
+        cat "$VMDIR/state.env" >> "$GITHUB_OUTPUT"
+        failed=$(sed -n 's/^failed=//p' "$VMDIR/state.env")
+        if [ -n "$failed" ]; then
+          if [ "$REQUIRE" = true ]; then
+            echo "::error::plugins not installed: $failed"; exit 1
+          fi
+          echo "::warning::plugins not installed: $failed"
+        fi

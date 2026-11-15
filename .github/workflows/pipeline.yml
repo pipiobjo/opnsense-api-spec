@@ -151,55 +151,35 @@ jobs:
           name: dist
       - name: Unpack dist
         run: mkdir -p dist && zstd -dc dist.tar.zst | tar -C dist -xf - && rm dist.tar.zst
-      - name: Free disk space
-        run: |
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
-          df -h /
-      - name: Install QEMU
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends qemu-system-x86 qemu-utils socat
-      - name: Acceleration (KVM or software emulation)
-        run: |
-          if [ -e /dev/kvm ]; then
-            echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
-            sudo udevadm control --reload-rules
-            sudo udevadm trigger --name-match=kvm
-          fi
-          if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
-            echo "TESTVM_ACCEL=kvm" >> "$GITHUB_ENV"
-            echo "acceleration: KVM" | tee -a "$GITHUB_STEP_SUMMARY"
-          else
-            echo "TESTVM_ACCEL=tcg" >> "$GITHUB_ENV"
-            echo "TESTVM_CPUS=$(nproc)" >> "$GITHUB_ENV"
-            echo "::warning::no KVM on this runner: software emulation (TCG), several times slower"
-            echo "acceleration: software emulation (TCG, no /dev/kvm)" >> "$GITHUB_STEP_SUMMARY"
-          fi
-      - name: Image version
-        id: image
-        run: echo "version=$(tools/testvm.sh image-version ${{ matrix.series }})" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        id: vmcache
+      - name: Test VM ${{ matrix.release }} with all plugins
+        id: vm
+        uses: ./.github/actions/testvm
         with:
-          path: |
-            .cache/vm/base-${{ matrix.series }}.qcow2
-            .cache/vm/base-${{ matrix.series }}.version
-          key: vm-base-${{ matrix.series }}-${{ steps.image.outputs.version }}
-      - name: Prepare image (download, checksum against 2 sources, signature)
-        if: steps.vmcache.outputs.cache-hit != 'true'
-        env:
-          TESTVM_DROP_RAW: "1"
-        run: tools/testvm.sh prepare ${{ matrix.series }}
+          series: ${{ matrix.series }}
+          release: ${{ matrix.release }}
+          plugins: all
+          # the contract test records what was installed; a missing plugin is
+          # reported, not fatal
+          require-plugins: "false"
       - name: Contract test ${{ matrix.release }}
         run: |
-          tools/testvm.sh verify ${{ matrix.series }} --release ${{ matrix.release }} --plugins 2>&1 | tee .cache/vm/verify.log
+          tools/testvm.sh contract "dist/${{ matrix.release }}/opnsense-${{ matrix.release }}.ir.json" 2>&1 | tee .cache/vm/verify.log
+      - name: Stop test VM
+        if: always()
+        uses: ./.github/actions/testvm
+        with:
+          command: stop
       - name: Summary
         if: always()
+        env:
+          PLUGINS: ${{ steps.vm.outputs.plugins }}
+          FAILED: ${{ steps.vm.outputs.failed }}
         run: |
           f="dist/${{ matrix.release }}/opnsense-${{ matrix.release }}.verified.json"
           {
             echo "### ${{ matrix.release }} (instance $(jq -r '.instance_version // "-"' "$f" 2>/dev/null))"
-            grep -E '^plugins: ' .cache/vm/verify.log || true
+            echo "acceleration: ${{ steps.vm.outputs.acceleration || '-' }}"
+            echo "plugins: $(tr ',' '\n' <<<"$PLUGINS" | grep -c .) installed, failed: ${FAILED:-none}"
             echo '```'
             jq -r '[.results[] | "\(.check)/\(.status)"] | group_by(.) | map("\(.[0]) \(length)") | .[]' "$f" 2>/dev/null || echo "no results"
             echo '```'

@@ -1,0 +1,86 @@
+# SPDX-FileCopyrightText: 2026 opnsense-api-spec contributors
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Tests the test VM action (.github/actions/testvm) the way another
+# repository uses it: no dist/, no Go set up beforehand, one plugin, then
+# checks through the API with the key it hands back. The daily pipeline
+# uses the same action with all plugins (pipeline.yml, contract job).
+name: testvm-action
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/actions/testvm/**
+      - .github/workflows/testvm-action.yml
+      - tools/testvm.sh
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: testvm-action
+  cancel-in-progress: true
+
+jobs:
+  consumer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Start test VM
+        id: vm
+        uses: ./.github/actions/testvm
+        with:
+          series: "26.1"
+          release: latest
+          plugins: os-frr
+      - name: Check outputs and API access
+        env:
+          URL: ${{ steps.vm.outputs.url }}
+          KEYFILE: ${{ steps.vm.outputs.keyfile }}
+          VERSION: ${{ steps.vm.outputs.version }}
+          RELEASE: ${{ steps.vm.outputs.release }}
+          PLUGINS: ${{ steps.vm.outputs.plugins }}
+          ACCEL: ${{ steps.vm.outputs.acceleration }}
+        run: |
+          fail() { echo "::error::$*"; exit 1; }
+          echo "url=$URL version=$VERSION release=$RELEASE plugins=$PLUGINS acceleration=$ACCEL"
+          [[ "$URL" =~ ^https://127\.0\.0\.1:[0-9]+$ ]] || fail "url is not on 127.0.0.1: $URL"
+          [ "$(stat -c %a "$KEYFILE")" = 600 ] || fail "key file is not 0600"
+          [[ "$RELEASE" =~ ^26\.1\.[0-9]+$ ]] || fail "release: $RELEASE"
+          case "$VERSION" in "$RELEASE"|"$RELEASE"_*) ;; *) fail "version $VERSION does not match release $RELEASE" ;; esac
+          [ "$PLUGINS" = os-frr ] || fail "plugins: $PLUGINS"
+          k=$(jq -r .key "$KEYFILE"); s=$(jq -r .secret "$KEYFILE")
+          got=$(curl -sk -u "$k:$s" "$URL/api/core/firmware/status" | jq -r '.product_version // .product.product_version // empty')
+          [ "$got" = "$VERSION" ] || fail "firmware/status with the key: '$got'"
+          curl -sk -u "$k:$s" "$URL/api/quagga/general/get" | jq -e '.general' >/dev/null || fail "os-frr API not reachable"
+          code=$(curl -sk -o /dev/null -w '%{http_code}' -u "$k:wrong" "$URL/api/core/firmware/status")
+          [ "$code" = 401 ] || [ "$code" = 403 ] || fail "a wrong secret was not rejected (HTTP $code)"
+          echo "all checks passed" >> "$GITHUB_STEP_SUMMARY"
+      - name: Stop test VM
+        if: always()
+        id: stop
+        uses: ./.github/actions/testvm
+        with:
+          command: stop
+      - name: Check stopped
+        env:
+          URL: ${{ steps.vm.outputs.url }}
+          DIR: ${{ steps.vm.outputs.dir }}
+        run: |
+          if curl -sk -m 5 -o /dev/null "$URL/"; then echo "::error::VM still answers after stop"; exit 1; fi
+          [ ! -e "$DIR/apikey.json" ] || { echo "::error::API key left behind"; exit 1; }
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: testvm-logs
+          path: |
+            .cache/vm/console.log
+            .cache/vm/proxy.log
+          retention-days: 7

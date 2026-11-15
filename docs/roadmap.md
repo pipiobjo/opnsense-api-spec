@@ -93,6 +93,10 @@ generator changes.
 10. **Retention and size.** `dist/` is ~540 MB for 34 releases (10 MB
     compressed); the Actions caches about 2.6 GB. Open: keeping the packages
     of final releases, because the mirror can withdraw them.
+11. **Test VM for other repositories.** Done (2026-11-15, ADR 0011): the
+    composite action `.github/actions/testvm`
+    ([testvm-action.md](testvm-action.md)), used by the daily contract job
+    and tested as another repository would use it (`testvm-action.yml`).
 
 ## Target pipeline
 

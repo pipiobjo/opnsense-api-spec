@@ -14,9 +14,15 @@
 #   tools/testvm.sh down           stop the VM (and proxy), delete the overlay
 #   tools/testvm.sh update 26.7.5  update the running VM to exactly that
 #                                  release (through the package proxy)
+#   tools/testvm.sh start 26.7 [--release 26.7.5|latest] [--plugins all|"os-a os-b"]
+#                                  up + apikey [+ update] [+ plugins], leaves
+#                                  the VM running and writes .cache/vm/state.env
+#                                  (url, keyfile, version, plugins); used by
+#                                  the action .github/actions/testvm
+#   tools/testvm.sh contract dist/26.7.5/opnsense-26.7.5.ir.json
+#                                  contract tests against the running VM
 #   tools/testvm.sh verify 26.7 [--release 26.7.5] [--plugins]
-#                                  up + apikey [+ update] [+ plugins]
-#                                  + contract tests + down
+#                                  start + contract tests + down
 #
 # Isolation: user-mode networking with restrict=on (no route to the LAN or the
 # internet). The only way in is a port forward on 127.0.0.1:${PORT:-18443} to
@@ -182,7 +188,7 @@ down() {
     kill "$(cat "$VM/proxy.pid")"; echo "proxy stopped"
   fi
   rm -f "$VM/qemu.pid" "$VM/proxy.pid" "$VM/proxy.release" "$VM/run.qcow2" "$VM/apikey.json" "$VM/cookies.txt" \
-    "$VM/plugins-installed.txt" "$VM/plugins-failed.txt"
+    "$VM/plugins-installed.txt" "$VM/plugins-failed.txt" "$VM/state.env"
 }
 
 api() { # api METHOD PATH [JSON]
@@ -306,37 +312,103 @@ plugins() {
   printf '%s\n' "${installed[@]}" > "$VM/plugins-installed.txt"
 }
 
-verify() {
+# listfile FILE: non-empty lines of FILE, comma-separated
+listfile() { grep -v '^$' "$1" 2>/dev/null | paste -sd, - || true; }
+
+# latest_release SERIES: newest release of a series on the mirror
+latest_release() {
+  (cd "$ROOT" && go run ./cmd/opnsense-api-spec releases) | awk -v s="$1" '$2 == s {print $1}' | sort -V | tail -1
+}
+
+# ensure_ir REL: the IR of REL, from dist/ or from the published release
+# (repositories that use the action have no dist/)
+ensure_ir() {
+  local rel="$1" f="$ROOT/dist/$1/opnsense-$1.ir.json"
+  [ -f "$f" ] && return
+  mkdir -p "$(dirname "$f")"
+  curl -fsSL -m 120 -o "$f" \
+    "https://github.com/${TESTVM_SPEC_REPO:-pipiobjo/opnsense-api-spec}/releases/download/opnsense-$rel/opnsense-$rel.ir.json" \
+    || { rm -f "$f"; die "no IR for $rel (not in dist/ and not published)"; }
+}
+
+start() {
   local series="$1"; shift
-  local with_plugins="" v irf
+  local want_plugins="" image
   while [ $# -gt 0 ]; do
     case "$1" in
-      --plugins) with_plugins=--plugins ;;
+      --plugins)
+        case "${2:-}" in ""|--*) want_plugins=all ;; *) want_plugins="$2"; shift ;; esac ;;
       --release)
-        case "${2:-}" in ""|--*) die "--release needs a release, e.g. --release 26.7.5" ;; esac
+        case "${2:-}" in ""|--*) die "--release needs a release, e.g. --release 26.7.5 or latest" ;; esac
         TARGET="$2"; shift ;;
       *) die "unknown option $1" ;;
     esac
     shift
   done
-  v=$(vm_version "$series"); irf="$ROOT/dist/$v/opnsense-$v.ir.json"
-  [ -f "$irf" ] || die "no IR for $v; run: go run ./cmd/opnsense-api-spec build -release $v -plugins -out dist/$v"
-  local image; image=$(cat "$VM/base-$series.version" 2>/dev/null || echo "$series")
+  if [ "${TARGET:-}" = latest ]; then
+    TARGET=$(latest_release "$series"); [ -n "$TARGET" ] || die "no release found for series $series"
+  fi
+  case "${TARGET:-$series}" in "$series"|"$series".*) ;; *) die "release ${TARGET} is not in series $series" ;; esac
+  image=$(cat "$VM/base-$series.version" 2>/dev/null || echo "$series")
+  rm -f "$VM/state.env"
   up "$series"
   trap down EXIT
   apikey
   if [ -n "${TARGET:-}" ] && [ "$TARGET" != "$image" ]; then
     update "$TARGET"
   fi
-  local pk="opnsense"
-  if [ "$with_plugins" = "--plugins" ]; then
+  : > "$VM/plugins-installed.txt"; : > "$VM/plugins-failed.txt"
+  if [ "$want_plugins" = all ]; then
+    ensure_ir "$(vm_version "$series")"
     plugins "$series"
-    # the list of successful installs; /api/core/firmware/info is not used
-    # because its large response arrives broken over HTTP/1.1 (26.7)
-    pk="opnsense,$(paste -sd, "$VM/plugins-installed.txt")"
+  elif [ -n "$want_plugins" ]; then
+    # shellcheck disable=SC2086 # a space-separated list of package names
+    plugins "$series" $want_plugins
   fi
+  local version; version=$(product_version)
+  [ -n "$version" ] || die "VM does not answer with the new API key"
+  {
+    echo "url=$URL"
+    echo "keyfile=$VM/apikey.json"
+    echo "version=$version"
+    echo "release=$(vm_version "$series")"
+    echo "accel=$ACCEL"
+    echo "plugins=$(listfile "$VM/plugins-installed.txt")"
+    echo "failed=$(listfile "$VM/plugins-failed.txt")"
+  } > "$VM/state.env"
+  trap - EXIT
+  echo "VM ready: $URL, $version"
+}
+
+verify() {
+  local series="$1"; shift
+  local args=() v irf
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --plugins) args+=(--plugins all) ;;
+      --release)
+        case "${2:-}" in ""|--*) die "--release needs a release, e.g. --release 26.7.5" ;; esac
+        TARGET="$2"; args+=(--release "$2"); shift ;;
+      *) die "unknown option $1" ;;
+    esac
+    shift
+  done
+  v=$(vm_version "$series"); irf="$ROOT/dist/$v/opnsense-$v.ir.json"
+  [ -f "$irf" ] || die "no IR for $v; run: go run ./cmd/opnsense-api-spec build -release $v -plugins -out dist/$v"
+  start "$series" "${args[@]}"
+  trap down EXIT
+  contract "$irf"
+}
+
+# contract IRFILE: contract tests against the running VM (after start)
+contract() {
+  # the list of successful installs; /api/core/firmware/info is not used
+  # because its large response arrives broken over HTTP/1.1 (26.7)
+  local pk="opnsense" more
+  more=$(listfile "$VM/plugins-installed.txt")
+  [ -n "$more" ] && pk="opnsense,$more"
   (cd "$ROOT" && go run ./cmd/opnsense-api-spec verify -write -packages "$pk" \
-    -ir "$irf" -url "$URL" -keyfile "$VM/apikey.json")
+    -ir "$1" -url "$URL" -keyfile "$VM/apikey.json")
 }
 
 case "${1:-}" in
@@ -347,6 +419,8 @@ case "${1:-}" in
   down)    down ;;
   plugins) s="${2:?series}"; shift 2; plugins "$s" "$@" ;;
   update)  TARGET="${2:?release}"; update "$TARGET" ;;
+  start)   s="${2:?series}"; shift 2; start "$s" "$@" ;;
+  contract) running || die "no VM running; run: $0 start <series>"; contract "${2:?IR file}" ;;
   verify)  s="${2:?series}"; shift 2; verify "$s" "$@" ;;
-  *) sed -n '4,20p' "$0"; exit 2 ;;
+  *) sed -n '4,27p' "$0"; exit 2 ;;
 esac
