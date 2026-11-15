@@ -54,7 +54,9 @@ back, delete.
 
 - 26.7.9 with all plugins: 162 of 188 entry lists pass (150 with update,
   17 with an automatically created prerequisite), 23 skipped with the
-  reason, 2 known gaps (was: 20 passing).
+  reason, 2 known gaps (was: 20 passing). The CI run on all three series
+  (generator 0.7.0) found no mismatch: 25.7.11 160 ok of 180, 26.1.11 162
+  of 184, 26.7.9 163 of 188.
 - The stronger check found two generator errors that had been published:
   an action that calls a helper without returning its result
   (`os-wol` `delHost`, new gap code `result-not-returned`), and a wrapped
