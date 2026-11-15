@@ -191,6 +191,7 @@ jobs:
             jq -r '.results[] | select(.status == "mismatch" or .status == "error") | "- FAIL \(.check) \(.path): \(.findings // [] | join("; "))"' "$f" 2>/dev/null || true
           } >> "$GITHUB_STEP_SUMMARY"
           mkdir -p out
+          echo "${{ matrix.release }}" > out/release
           cp "$f" "dist/${{ matrix.release }}/opnsense-${{ matrix.release }}.openapi.json" out/ 2>/dev/null || true
           cp .cache/vm/verify.log .cache/vm/console.log .cache/vm/proxy.log out/ 2>/dev/null || true
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -212,18 +213,31 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
+      # Explicit paths: download-artifact unpacks a single match of a pattern
+      # into the target directory itself and several matches into
+      # subdirectories, so nothing below may depend on the number of matches.
+      # (A run without contract jobs failed here on 2026-11-14 and -15.)
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          pattern: "{dist,verified-*}"
+          name: dist
+          path: .ci/in/dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: needs.contract.result == 'success'
+        with:
+          pattern: verified-*
+          path: .ci/in/verified
       - name: Merge contract test results
         run: |
-          mkdir -p dist .cache/ci && zstd -dc dist/dist.tar.zst | tar -C dist -xf - && rm dist/dist.tar.zst
+          mkdir -p dist .cache/ci && zstd -dc .ci/in/dist/dist.tar.zst | tar -C dist -xf -
           mv dist/.index.prev.json .cache/ci/index.prev.json
-          for d in verified-*; do
-            [ -d "$d" ] || continue
-            rel=${d#verified-}
-            cp "$d/opnsense-$rel.verified.json" "$d/opnsense-$rel.openapi.json" "dist/$rel/"
-          done
+          if [ -d .ci/in/verified ]; then
+            while IFS= read -r f; do
+              d=$(dirname "$f"); rel=$(cat "$f")
+              [ -d "dist/$rel" ] || { echo "::error::contract result for unknown release $rel"; exit 1; }
+              cp "$d/opnsense-$rel.verified.json" "$d/opnsense-$rel.openapi.json" "dist/$rel/"
+              echo "merged contract test result of $rel"
+            done < <(find .ci/in/verified -name release -type f)
+          fi
           go run ./cmd/opnsense-api-spec index
       - name: Gate (every planned release is verified now)
         env:
@@ -256,6 +270,7 @@ jobs:
         continue-on-error: true
         with:
           pattern: verified-*
+          path: .ci/in/verified
       - name: Open or update the failure issue
         env:
           RESULTS: ${{ toJSON(needs) }}

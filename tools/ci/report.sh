@@ -7,7 +7,8 @@
 # verify/accepted.json with evidence).
 #
 # Input: RESULTS (toJSON(needs) of the workflow), RUN_URL, and the
-# downloaded verified-<release>/ artifact directories in the working dir.
+# downloaded verified-<release> artifacts under VERIFIED_DIR (default
+# .ci/in/verified), each with a file "release" naming its release.
 set -euo pipefail
 
 LABEL="pipeline-failure"
@@ -20,9 +21,10 @@ body=$(mktemp)
   jq -r 'to_entries[] | "| \(.key) | \(.value.result) |"' <<<"$RESULTS"
   echo
   found=0
-  for d in verified-*/; do
-    [ -d "$d" ] || continue
-    rel=${d#verified-}; rel=${rel%/}
+  # One directory per contract job, marked by the file "release" (the
+  # layout of downloaded artifacts depends on how many there are).
+  while IFS= read -r m; do
+    d=$(dirname "$m"); rel=$(cat "$m")
     f="$d/opnsense-$rel.verified.json"
     if [ ! -f "$f" ]; then
       echo "### $rel: no contract test result"
@@ -40,7 +42,7 @@ body=$(mktemp)
     echo "### $rel (test instance $(jq -r .instance_version "$f"))"
     echo "$fails" | head -n 50
     echo
-  done
+  done < <(find "${VERIFIED_DIR:-.ci/in/verified}" -name release -type f 2>/dev/null)
   if [ "$found" = 0 ]; then
     echo "No contract test findings; see the failed job's log (gates, matrix, client smoke test or publish)."
   fi

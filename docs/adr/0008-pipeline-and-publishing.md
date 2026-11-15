@@ -126,3 +126,11 @@ fetched first).
   three of them verified, `latest` = 26.7.9. CI and local builds of the same
   generator produce identical files except for the expected differences
   (local contract test annotations, 26.7.8, the 26.7.9_1 hotfix).
+- First runs without contract jobs (2026-11-14 and -15, nothing new
+  upstream): the publish job failed, so the most common daily case had
+  never been exercised. `download-artifact` with a pattern unpacks a single
+  match into the target directory itself and several matches into
+  subdirectories; the job assumed subdirectories. Downloads now use
+  explicit paths and each contract artifact carries a `release` marker
+  file. Lesson: a dry run must cover the no-op path, not only the path
+  with work to do.
