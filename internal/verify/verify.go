@@ -583,7 +583,7 @@ func writeCycles(c *Client, rel *ir.Release, models map[string]*model.Model, pac
 		if m := models[f.add.Model]; m != nil {
 			f.entry = m.Find(f.add.ModelPath)
 		}
-		w.byList[f.add.Model+"#"+f.add.ModelPath] = f
+		w.byList[listKey(f.add.Model, f.add.ModelPath)] = f
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
@@ -725,12 +725,19 @@ func (w *writer) add(f *family, depth int) *added {
 
 // prerequisite creates an entry in the list a relation field points to and
 // returns its uuid, a note and the function that deletes it again.
+// listKey identifies an entry list by model class and item path. Relations
+// name the class with dots and in any case ("OPNsense.quagga.ospf" for
+// OPNsense\Quagga\OSPF); PHP class names are case-insensitive.
+func listKey(class, items string) string {
+	return strings.ToLower(strings.ReplaceAll(class, ".", `\`)) + "#" + items
+}
+
 func (w *writer) prerequisite(n *model.Node, depth int) (string, string, func() []string) {
 	if n == nil {
 		return "", "", nil
 	}
 	for _, rel := range n.Relations {
-		f := w.byList[strings.ReplaceAll(rel.Source, ".", `\`)+"#"+rel.Items]
+		f := w.byList[listKey(rel.Source, rel.Items)]
 		if f == nil {
 			continue
 		}

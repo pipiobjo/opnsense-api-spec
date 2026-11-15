@@ -239,7 +239,7 @@ func hostCycle(t *testing.T, f *fakeInstance) *Result {
 		{Name: "iface", Kind: model.KindField, Type: "InterfaceField", BaseType: "BaseListField", Shape: model.ShapeSelect},
 		{Name: "description", Kind: model.KindField, Type: "DescriptionField", BaseType: "DescriptionField"},
 		{Name: "zone", Kind: model.KindField, Type: "ModelRelationField", BaseType: "BaseListField", Shape: model.ShapeSelect,
-			Relations: []model.Relation{{Source: "Test.Zones", Items: "zones.zone"}}},
+			Relations: []model.Relation{{Source: "test.zones", Items: "zones.zone"}}}, // case as in real models
 	}}
 	f2 := &family{get: ep("getHost", ir.KindItemGet), add: ep("addHost", ir.KindItemAdd), set: ep("setHost", ir.KindItemSet), del: ep("delHost", ir.KindItemDel), entry: entry}
 	zep := func(action string, kind ir.Kind) *ir.Endpoint {
@@ -247,7 +247,7 @@ func hostCycle(t *testing.T, f *fakeInstance) *Result {
 	}
 	zones := &family{get: zep("getZone", ir.KindItemGet), add: zep("addZone", ir.KindItemAdd), del: zep("delZone", ir.KindItemDel),
 		entry: &model.Node{Kind: model.KindArray, Children: []*model.Node{{Name: "name", Kind: model.KindField, Type: "TextField", BaseType: "TextField"}}}}
-	w := &writer{c: c, byList: map[string]*family{`Test\Zones#zones.zone`: zones}}
+	w := &writer{c: c, byList: map[string]*family{listKey(`Test\Zones`, "zones.zone"): zones}}
 	return w.cycle(f2)
 }
 

@@ -119,7 +119,7 @@ documents keep them.
 | `multiple`, `required`, `volatile` | as in the model; `volatile` fields are not stored |
 | `default` | the model default; absent means empty |
 | `options` | static options from the model; dynamic options (interfaces, certificates) only exist on the instance |
-| `relations` | entry lists a relation field points to (`source` model, `items` path) |
+| `relations` | entry lists a relation field points to: `source` is the model class as written in the model, with dots and in any case (`OPNsense.quagga.ospf` for `OPNsense\Quagga\OSPF`; PHP class names are case-insensitive), `items` the list path |
 | `constraints` | other model settings (`Mask`, `MinimumValue`, `AddressFamily`, ...), as strings; `"(structured)"` marks nested settings that are not represented |
 | `gaps` | gap codes: where the derivation is uncertain (concepts, section 8) |
 
