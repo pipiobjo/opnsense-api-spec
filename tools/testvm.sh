@@ -199,22 +199,35 @@ api() { # api METHOD PATH [JSON]
   curl -sk -u "$k:$s" ${3:+-H "Content-Type: application/json"} -X "$1" ${3:+-d "$3"} "$URL$2"
 }
 
-# firmware_wait: wait until the firmware job just started has finished.
-# /api/core/firmware/running reports the firmware lock ("busy"/"ready");
-# upgradestatus is not used here because it reports the *last* job and its
-# log may be cut, so an earlier job could be taken for the new one.
-firmware_wait() {
-  local st
-  for _ in $(seq 1 "$(waits 10)"); do
-    st=$(api GET /api/core/firmware/running | jq -r '.status // ""' 2>/dev/null || true)
-    [ "$st" = busy ] && break
+# install_plugin PKG: install one plugin and wait for exactly that job.
+# /api/core/firmware/running and the status of upgradestatus describe the
+# *last* job, which before the new one starts is the previous one (a job
+# for an unknown package even finishes in under a second). What identifies
+# the new job is that the firmware log changed: remember it, start, wait
+# until it differs and the job is no longer running. Prints the firmware's
+# error lines when the plugin is missing afterwards; returns 1 then.
+fw_log() { api GET /api/core/firmware/upgradestatus | jq -r '.log // ""' 2>/dev/null | sha256sum | cut -c1-16; }
+fw_status() { api GET /api/core/firmware/upgradestatus | jq -r '.status // ""' 2>/dev/null || true; }
+install_plugin() {
+  local p="$1" before started=0
+  before=$(fw_log)
+  api POST "/api/core/firmware/install/$p" '{}' | grep -q '"ok"' || { echo "install of $p not started: firmware refused" >&2; return 1; }
+  for _ in $(seq 1 "$(waits 60)"); do
+    if [ "$(fw_log)" != "$before" ]; then started=1; break; fi
     sleep 1
   done
-  for _ in $(seq 1 "$(waits 600)"); do
-    st=$(api GET /api/core/firmware/running | jq -r '.status // ""' 2>/dev/null || true)
-    [ "$st" = ready ] && return 0
-    sleep 3
-  done
+  if [ "$started" = 0 ]; then
+    echo "install of $p: no firmware job started within $(waits 60) s" >&2
+  else
+    for _ in $(seq 1 "$(waits 600)"); do
+      [ "$(fw_status)" != running ] && break
+      sleep 3
+    done
+  fi
+  if installed_packages | grep -qx "$p"; then return 0; fi
+  echo "install of $p failed; firmware log:" >&2
+  api GET /api/core/firmware/upgradestatus | jq -r '.log // ""' \
+    | grep -iE "error|fail|no packages|not found|conflict|$p" | tail -n 5 | sed 's/^/  /' >&2
   return 1
 }
 
@@ -296,17 +309,14 @@ plugins() {
   fi
   install_each() {
     local p
-    for p in "$@"; do
-      api POST "/api/core/firmware/install/$p" '{}' | grep -q '"ok"' || { echo "install of $p not started" >&2; continue; }
-      firmware_wait || echo "firmware job for $p did not finish in time" >&2
-    done
+    for p in "$@"; do install_plugin "$p" || true; done
   }
   # shellcheck disable=SC2086 # list of package names
   install_each $list
-  # what is actually installed counts, not what the jobs said. The first
-  # install job after the update reboot is occasionally lost without an
-  # error (os-OPNProxy, first in the list, on 25.7.11 in CI 2026-11-16):
-  # the missing ones get one more attempt; twice failed stays failed.
+  # what is actually installed counts, not what the jobs said. Missing
+  # ones get one more attempt (os-OPNProxy, first in the list, was missing
+  # on 25.7.11 in CI on 2026-11-16 while the old wait could take the
+  # previous job's "ready" for its own); twice failed stays failed.
   local have missing=() p
   have=$(installed_packages)
   for p in $list; do grep -qx "$p" <<<"$have" || missing+=("$p"); done
