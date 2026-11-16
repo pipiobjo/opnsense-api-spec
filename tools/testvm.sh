@@ -294,12 +294,27 @@ plugins() {
     # every plugin that provides API endpoints (alternatives are not listed separately)
     list=$(jq -r '[.endpoints[].package | select(. != "opnsense")] | unique | .[]' "$irf")
   fi
-  for p in $list; do
-    api POST "/api/core/firmware/install/$p" '{}' | grep -q '"ok"' || { echo "install of $p not started" >&2; continue; }
-    firmware_wait || echo "firmware job for $p did not finish in time" >&2
-  done
-  # what is actually installed counts, not what the jobs said
-  local have; have=$(installed_packages)
+  install_each() {
+    local p
+    for p in "$@"; do
+      api POST "/api/core/firmware/install/$p" '{}' | grep -q '"ok"' || { echo "install of $p not started" >&2; continue; }
+      firmware_wait || echo "firmware job for $p did not finish in time" >&2
+    done
+  }
+  # shellcheck disable=SC2086 # list of package names
+  install_each $list
+  # what is actually installed counts, not what the jobs said. The first
+  # install job after the update reboot is occasionally lost without an
+  # error (os-OPNProxy, first in the list, on 25.7.11 in CI 2026-11-16):
+  # the missing ones get one more attempt; twice failed stays failed.
+  local have missing=() p
+  have=$(installed_packages)
+  for p in $list; do grep -qx "$p" <<<"$have" || missing+=("$p"); done
+  if [ "${#missing[@]}" -gt 0 ]; then
+    echo "second attempt for: ${missing[*]}"
+    install_each "${missing[@]}"
+  fi
+  have=$(installed_packages)
   for p in $list; do
     if grep -qx "$p" <<<"$have"; then
       ok=$((ok + 1)); installed+=("$p"); echo "installed $p"
