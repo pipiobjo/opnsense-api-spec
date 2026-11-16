@@ -550,26 +550,53 @@ func writeValue(v any) any {
 // running test instance is not changed beyond its stored configuration.
 func writeCycles(c *Client, rel *ir.Release, models map[string]*model.Model, packages map[string]bool) []*Result {
 	w := &writer{c: c, byList: map[string]*family{}}
-	fams := map[string]*family{}
+	fams, keys := cycleFamilies(rel, models, packages)
+	// prerequisites: the first family of a list (in key order) serves
+	for _, k := range keys {
+		f := fams[k]
+		if lk := listKey(f.add.Model, f.add.ModelPath); w.byList[lk] == nil {
+			w.byList[lk] = f
+		}
+	}
+	var out []*Result
+	for _, k := range keys {
+		out = append(out, w.cycle(fams[k]))
+	}
+	return out
+}
+
+// cycleFamilies returns the entry lists to write-test, keyed
+// "<module>/<controller> <model path>[@<family>]", and the keys in order.
+func cycleFamilies(rel *ir.Release, models map[string]*model.Model, packages map[string]bool) (map[string]*family, []string) {
+	// endpoints per entry list; several families of endpoints on one list
+	// (bind primary/secondary/forward domains) get one cycle each, split by
+	// the same rule as the capability data (ir.Families)
+	groups := map[string][]*ir.Endpoint{}
+	gets := map[string][]*ir.Endpoint{}
 	for _, e := range rel.Endpoints {
 		if e.ModelPath == "" || e.Source != ir.SourceBaseCall || !packages[e.Package] {
 			continue
 		}
 		k := e.Module + "/" + e.Controller + " " + e.ModelPath
-		f := fams[k]
-		if f == nil {
-			f = &family{}
-			fams[k] = f
-		}
 		switch e.Kind {
 		case ir.KindItemGet:
-			f.gets = append(f.gets, e)
-		case ir.KindItemAdd:
-			f.add = e
-		case ir.KindItemDel:
-			f.del = e
-		case ir.KindItemSet:
-			f.set = e
+			gets[k] = append(gets[k], e)
+			groups[k] = append(groups[k], e)
+		case ir.KindItemAdd, ir.KindItemDel, ir.KindItemSet:
+			groups[k] = append(groups[k], e)
+		}
+	}
+	fams := map[string]*family{}
+	opOf := func(e *ir.Endpoint) string { return strings.TrimPrefix(string(e.Kind), "item.") }
+	byPath := func(a, b *ir.Endpoint) bool { return a.Path < b.Path }
+	for k, eps := range groups {
+		for _, fm := range ir.Families(eps, opOf, byPath) {
+			f := &family{gets: gets[k], add: fm.Chosen["add"], del: fm.Chosen["del"], set: fm.Chosen["set"]}
+			key := k
+			if fm.Name != "" {
+				key += "@" + fm.Name
+			}
+			fams[key] = f
 		}
 	}
 	var keys []string
@@ -583,15 +610,10 @@ func writeCycles(c *Client, rel *ir.Release, models map[string]*model.Model, pac
 		if m := models[f.add.Model]; m != nil {
 			f.entry = m.Find(f.add.ModelPath)
 		}
-		w.byList[listKey(f.add.Model, f.add.ModelPath)] = f
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	var out []*Result
-	for _, k := range keys {
-		out = append(out, w.cycle(fams[k]))
-	}
-	return out
+	return fams, keys
 }
 
 type family struct {

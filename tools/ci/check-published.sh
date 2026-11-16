@@ -28,6 +28,18 @@ check_release() { # check_release TAG
   fetch "$tag" SHA256SUMS
   while read -r _ f; do fetch "$tag" "$f"; done < "$WORK/$tag/SHA256SUMS"
   (cd "$WORK/$tag" && sha256sum --quiet -c SHA256SUMS)
+  # the asset list must be exactly SHA256SUMS plus what it lists: an asset
+  # GitHub renamed, or one left over from an earlier upload, fails here
+  local listed published
+  listed=$( (awk '{print $2}' "$WORK/$tag/SHA256SUMS"; echo SHA256SUMS) | sort)
+  # (the listing through the API with the workflow token: anonymous API
+  # calls are limited to 60 per hour and runner)
+  published=$(gh api "repos/$REPO/releases/tags/$tag" --jq '.assets[].name' | sort)
+  if [ "$listed" != "$published" ]; then
+    echo "error: assets of $tag differ from SHA256SUMS:" >&2
+    diff <(echo "$listed") <(echo "$published") >&2 || true
+    return 1
+  fi
   gh attestation verify "$WORK/$tag/SHA256SUMS" -R "$REPO" >/dev/null
   echo "ok $tag: $(wc -l < "$WORK/$tag/SHA256SUMS") assets, checksums and attestation"
 }

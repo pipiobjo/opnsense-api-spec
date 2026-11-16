@@ -409,16 +409,16 @@ func (d *Doc) add(hash string, f *fragment.Fragment) {
 	}
 	for gid, all := range groups {
 		for _, fam := range families(all) {
-			id, cs, chosen := gid, all, fam.chosen
-			if fam.name != "" {
-				id = gid + "@" + fam.name
+			id, cs, chosen := gid, all, fam.Chosen
+			if fam.Name != "" {
+				id = gid + "@" + fam.Name
 			}
 			kinds[id] = kinds[gid]
 			var first *ir.Endpoint
 			ops := map[string]*Operation{}
 			for _, c := range cs {
 				if chosen[c.op] != c.e {
-					if !fam.member[c.e] {
+					if !fam.Member[c.e] {
 						loose = append(loose, c.e) // second endpoint of the same kind: an action
 					}
 					continue
@@ -430,7 +430,7 @@ func (d *Doc) add(hash string, f *fragment.Fragment) {
 			}
 			r := res[id]
 			if r == nil {
-				r = &rawResource{kind: kinds[id], family: fam.name, api: map[string]*API{}, fields: map[string]map[string]*Field{}}
+				r = &rawResource{kind: kinds[id], family: fam.Name, api: map[string]*API{}, fields: map[string]map[string]*Field{}}
 				res[id] = r
 			}
 			a := &API{Model: first.Model, ModelPath: first.ModelPath, Operations: ops}
@@ -483,158 +483,16 @@ type cand struct {
 	op string
 }
 
-// family is one resource cut out of an endpoint group: the endpoint chosen
-// per operation, and the endpoints that belong to some family of the group
-// (so they are not reported again as actions).
-type family struct {
-	name   string // "" when the group is one resource
-	chosen map[string]*ir.Endpoint
-	member map[*ir.Endpoint]bool
-}
-
-// families splits the endpoints of one model path. Usually there is one
-// endpoint per operation. When an operation has several:
-//
-//   - one of them carries the name the single endpoints share (getHost
-//     beside addHost/delHost, getClient beside getClientBuilder): that one
-//     belongs to the resource, the others are actions;
-//   - every such operation has the same set of names, at least two (bind:
-//     addPrimaryDomain/addSecondaryDomain/addForwardDomain and the same three
-//     search endpoints): one resource per name, "<id>@<family>", each with
-//     its own endpoints and the shared ones (getDomain, setDomain,
-//     delDomain); the family is the name without the shared part, in lower
-//     case ("primary");
-//   - otherwise better() picks one, the others are actions.
-func families(cs []cand) []family {
-	byOp := map[string][]*ir.Endpoint{}
-	for _, c := range cs {
-		byOp[c.op] = append(byOp[c.op], c.e)
+// families splits one endpoint group into resources (ir.Families), with
+// better() as the tie-break where neither a shared name nor families
+// decide.
+func families(cs []cand) []ir.Family {
+	eps := make([]*ir.Endpoint, len(cs))
+	ops := map[*ir.Endpoint]string{}
+	for i, c := range cs {
+		eps[i], ops[c.e] = c.e, c.op
 	}
-	shared := map[string]int{}
-	var multi []string
-	for op, es := range byOp {
-		if len(es) == 1 {
-			shared[stem(op, es[0])]++
-		} else {
-			multi = append(multi, op)
-		}
-	}
-	sort.Strings(multi)
-	base := ""
-	for st, n := range shared {
-		if n > shared[base] || (n == shared[base] && st < base) {
-			base = st
-		}
-	}
-	single := family{chosen: map[string]*ir.Endpoint{}, member: map[*ir.Endpoint]bool{}}
-	for op, es := range byOp {
-		if len(es) == 1 {
-			single.chosen[op] = es[0]
-		}
-	}
-	if len(multi) == 0 {
-		return []family{single}
-	}
-	// the shared name decides
-	byName := true
-	for _, op := range multi {
-		var hit *ir.Endpoint
-		for _, e := range byOp[op] {
-			if base != "" && stem(op, e) == base {
-				hit = e
-			}
-		}
-		if hit == nil {
-			byName = false
-			break
-		}
-		single.chosen[op] = hit
-	}
-	if byName {
-		return []family{single}
-	}
-	// the same names under every operation with several endpoints
-	names := stems(multi[0], byOp[multi[0]])
-	sameNames := len(names) >= 2
-	for _, op := range multi[1:] {
-		if !equalStrings(stems(op, byOp[op]), names) {
-			sameNames = false
-		}
-	}
-	if sameNames {
-		var out []family
-		member := map[*ir.Endpoint]bool{}
-		for _, op := range multi {
-			for _, e := range byOp[op] {
-				member[e] = true
-			}
-		}
-		for _, n := range names {
-			f := family{name: familyName(n, base), chosen: map[string]*ir.Endpoint{}, member: member}
-			for op, es := range byOp {
-				if len(es) == 1 {
-					f.chosen[op] = es[0]
-					continue
-				}
-				for _, e := range es {
-					if stem(op, e) == n {
-						f.chosen[op] = e
-					}
-				}
-			}
-			out = append(out, f)
-		}
-		return out
-	}
-	for _, op := range multi {
-		var pick *ir.Endpoint
-		for _, e := range byOp[op] {
-			if pick == nil || better(e, pick) {
-				pick = e
-			}
-		}
-		single.chosen[op] = pick
-	}
-	return []family{single}
-}
-
-// stem is the action name without the operation verb: addPrimaryDomain
-// -> PrimaryDomain, getwake -> wake, searchItem -> Item.
-func stem(op string, e *ir.Endpoint) string {
-	a := e.Action
-	if len(a) >= len(op) && strings.EqualFold(a[:len(op)], op) {
-		return a[len(op):]
-	}
-	return a
-}
-
-func stems(op string, es []*ir.Endpoint) []string {
-	var out []string
-	for _, e := range es {
-		out = append(out, stem(op, e))
-	}
-	sort.Strings(out)
-	return out
-}
-
-func equalStrings(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
-// familyName: PrimaryDomain with the shared name Domain -> primary.
-func familyName(name, base string) string {
-	if base != "" && len(name) > len(base) && strings.HasSuffix(name, base) {
-		name = name[:len(name)-len(base)]
-	}
-	return strings.ToLower(name)
+	return ir.Families(eps, func(e *ir.Endpoint) string { return ops[e] }, better)
 }
 
 // better: base-call endpoints over others, endpoints taking a uuid over

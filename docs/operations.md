@@ -49,8 +49,8 @@ scheduled run closes the issue.
 
 ## Changes and dependency updates
 
-- `main` changes only through `promote.yml` (a ruleset allows updates only
-  by GitHub Actions). A failed promotion notifies nobody; `main` stays
+- `main` changes only through `promote.yml`; a live run refuses a commit
+  that did not pass it. A failed promotion notifies nobody; `main` stays
   where it was.
 - Dependabot opens one grouped pull request per month for Go modules and
   for actions, against `dev`, for versions at least 7 days old.

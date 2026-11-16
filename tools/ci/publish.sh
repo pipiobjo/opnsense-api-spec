@@ -9,9 +9,15 @@
 # release view of dist/<release>/ as assets. A release is (re)published when
 # its index entry differs from the previous run (.cache/ci/index.prev.json:
 # new release, hotfix composition, new generator, new contract test result,
-# status change) or when its GitHub release is missing. Assets are replaced
+# status change), when its GitHub release is missing, or when its published
+# SHA256SUMS differs from the files in dist/. Assets are replaced
 # in place; the tag keeps pointing at the commit that first published it,
 # the body names the generator commit of the current assets.
+#
+# GitHub stores asset names in its own form: characters outside
+# [A-Za-z0-9._+-] become ".", runs of dots collapse ("26.7.8..26.7.9.json"
+# is stored as "26.7.8.26.7.9.json"). Assets are staged under that name
+# first, so SHA256SUMS lists what consumers actually download.
 #
 # Every published release gets SHA256SUMS over its assets (written to
 # .cache/ci/sums/<release>/ for the provenance attestation step); the list of
@@ -32,6 +38,9 @@ DRY=""
 [ "${1:-}" = "--dry-run" ] && DRY=1
 
 run() { if [ -n "$DRY" ]; then echo "dry-run: $*"; else "$@"; fi; }
+
+# asset_name NAME: the name GitHub stores an uploaded asset under
+asset_name() { sed -E 's/[^A-Za-z0-9._+-]/./g; s/\.{2,}/./g; s/^\.//' <<<"$1"; }
 
 [ -f "$DIST/index.json" ] || { echo "error: dist/index.json missing" >&2; exit 1; }
 [ -f "$PREV" ] || { echo "error: $PREV missing (run tools/ci/state.sh restore first)" >&2; exit 1; }
@@ -77,15 +86,28 @@ for rel in $(jq -r '.releases[].release' "$DIST/index.json"); do
   tag="opnsense-$rel"
   now=$(jq -S -c --arg r "$rel" '.releases[] | select(.release == $r)' "$DIST/index.json")
   before=$(jq -S -c --arg r "$rel" '.releases[] | select(.release == $r)' "$PREV")
+  mapfile -t assets < <(find "$DIST/$rel" -maxdepth 1 -type f | sort)
+  [ "${#assets[@]}" -gt 0 ] || { echo "error: no files in dist/$rel" >&2; exit 1; }
+  stage="$ROOT/.cache/ci/stage/$rel"
+  rm -rf "$stage"; mkdir -p "$stage" "$SUMS/$rel"
+  for a in "${assets[@]}"; do
+    n=$(asset_name "${a##*/}")
+    [ ! -e "$stage/$n" ] || { echo "error: two assets of $rel map to the name $n" >&2; exit 1; }
+    ln "$a" "$stage/$n" 2>/dev/null || cp "$a" "$stage/$n"
+  done
+  mapfile -t assets < <(find "$stage" -maxdepth 1 -type f | sort)
+  (cd "$stage" && sha256sum -- "${assets[@]##*/}") > "$SUMS/$rel/SHA256SUMS"
   if [ "$now" = "$before" ] && grep -qx "$tag" <<<"$existing"; then
-    continue
+    # unchanged entry: republish only when the published files differ from
+    # these (repairs a wrong or missing SHA256SUMS without a person)
+    if [ "$(gh release download "$tag" -p SHA256SUMS -O - 2>/dev/null)" = "$(cat "$SUMS/$rel/SHA256SUMS")" ]; then
+      rm -rf "$SUMS/$rel"
+      continue
+    fi
+    echo "$tag: published files differ from dist, republishing"
   fi
   pre=$(jq -r .needs_verification <<<"$now")
   latest=false; [ "$rel" = "$newest" ] && [ "$pre" = false ] && latest=true
-  mapfile -t assets < <(find "$DIST/$rel" -maxdepth 1 -type f | sort)
-  [ "${#assets[@]}" -gt 0 ] || { echo "error: no files in dist/$rel" >&2; exit 1; }
-  mkdir -p "$SUMS/$rel"
-  (cd "$DIST/$rel" && sha256sum -- "${assets[@]##*/}") > "$SUMS/$rel/SHA256SUMS"
   assets+=("$SUMS/$rel/SHA256SUMS")
   echo "$rel" >> "$ROOT/.cache/ci/published.txt"
   body=$(mktemp); notes "$rel" > "$body"

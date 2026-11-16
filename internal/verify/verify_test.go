@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/pipiobjo/opnsense-api-spec/internal/ir"
 	"github.com/pipiobjo/opnsense-api-spec/internal/model"
 )
 
@@ -80,5 +81,30 @@ func TestCompareNodeEmptyModel(t *testing.T) {
 	compareNode(&model.Node{Kind: model.KindContainer}, []any{}, "", &out)
 	if len(out) != 0 {
 		t.Errorf("empty model as [] must be fine: %v", out)
+	}
+}
+
+// Each family of endpoints on one entry list gets its own write cycle
+// (bind: primary, secondary and forward domains share get/set/del).
+func TestCycleFamilies(t *testing.T) {
+	var eps []*ir.Endpoint
+	ep := func(action string, kind ir.Kind) {
+		eps = append(eps, &ir.Endpoint{Module: "bind", Controller: "domain", Action: action, Path: "/api/bind/domain/" + action,
+			Kind: kind, Source: ir.SourceBaseCall, Package: "os-bind", Model: `OPNsense\Bind\Domain`, ModelPath: "domains.domain", Wrapper: "domain"})
+	}
+	for _, f := range []string{"Primary", "Secondary", "Forward"} {
+		ep("add"+f+"Domain", ir.KindItemAdd)
+		ep("search"+f+"Domain", ir.KindItemSearch)
+	}
+	ep("getDomain", ir.KindItemGet)
+	ep("setDomain", ir.KindItemSet)
+	ep("delDomain", ir.KindItemDel)
+	fams, keys := cycleFamilies(&ir.Release{Endpoints: eps}, nil, map[string]bool{"os-bind": true})
+	want := []string{"bind/domain domains.domain@forward", "bind/domain domains.domain@primary", "bind/domain domains.domain@secondary"}
+	if !reflect.DeepEqual(keys, want) {
+		t.Fatalf("keys %v, want %v", keys, want)
+	}
+	if a := fams[want[1]].add.Action; a != "addPrimaryDomain" || fams[want[1]].del.Action != "delDomain" || fams[want[1]].get.Action != "getDomain" {
+		t.Errorf("primary: add %s del %s get %s", a, fams[want[1]].del.Action, fams[want[1]].get.Action)
 	}
 }

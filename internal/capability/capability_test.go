@@ -324,14 +324,14 @@ func controllerParam(name string) controller.Param { return controller.Param{Nam
 
 func TestFamilies(t *testing.T) {
 	ep := func(action string) *ir.Endpoint { return &ir.Endpoint{Action: action, Path: "/api/m/c/" + action} }
-	pick := func(fs []family) map[string]map[string]string {
+	pick := func(fs []ir.Family) map[string]map[string]string {
 		out := map[string]map[string]string{}
 		for _, f := range fs {
 			m := map[string]string{}
-			for op, e := range f.chosen {
+			for op, e := range f.Chosen {
 				m[op] = e.Action
 			}
-			out[f.name] = m
+			out[f.Name] = m
 		}
 		return out
 	}
@@ -362,7 +362,7 @@ func TestFamilies(t *testing.T) {
 	}
 	// different names per operation: no families, better() picks
 	odd := []cand{{ep("addA"), "add"}, {ep("addB"), "add"}, {ep("searchC"), "search"}, {ep("searchD"), "search"}, {ep("getX"), "get"}}
-	if got := families(odd); len(got) != 1 || got[0].name != "" {
+	if got := families(odd); len(got) != 1 || got[0].Name != "" {
 		t.Errorf("unrelated names must not become families: %v", pick(got))
 	}
 	// one endpoint per operation: unchanged

@@ -110,6 +110,14 @@ jobs:
           path: .cache/pkg
           key: pkg-${{ github.run_id }}
           restore-keys: pkg-
+      # main moves only through promote.yml (ADR 0012). A live run on a
+      # commit that did not pass it publishes nothing; after 7 days the
+      # watchdog says so.
+      - name: Only promoted commits publish
+        if: env.LIVE == 'true'
+        run: |
+          n=$(gh run list -w promote.yml -c "$GITHUB_SHA" -s success -L 1 --json databaseId --jq length)
+          [ "$n" -gt 0 ] || { echo "::error::$GITHUB_SHA did not pass promote.yml; push to dev instead of main"; exit 1; }
       - name: Restore state
         run: tools/ci/state.sh restore
       - name: Gates (vet, tests, golden, determinism)

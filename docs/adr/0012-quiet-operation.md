@@ -38,10 +38,14 @@ every write). A stopped pipeline makes data older, not wrong.
 3. **`main` moves only through `promote.yml`.** Work lands on `dev`.
    `promote.yml` runs the code gates and the whole pipeline as a dry run
    twice on that exact commit (as planned, and with no contract tests, the
-   no-change path), then fast-forwards `main`. A ruleset allows updates to
-   `main` only by GitHub Actions. `pipeline.yml` is live only on its
-   schedule or a manual run with "publish" on; a call from `promote.yml`
-   can never publish.
+   no-change path), then fast-forwards `main`. A live run of
+   `pipeline.yml` first checks that its commit passed `promote.yml` and
+   publishes nothing otherwise. (A ruleset cannot do this for a personal
+   repository: GitHub Actions cannot be exempted from an update rule, and
+   a required-checks rule rejected the promotion's own push although all
+   three checks were green, 2026-11-15.) `pipeline.yml` is live only on
+   its schedule or a manual run with "publish" on; a call from
+   `promote.yml` can never publish.
 4. **Dependencies update themselves.** Dependabot opens one grouped pull
    request per ecosystem per month against `dev`, for versions at least 7
    days old. `automerge.yml` merges it when `ci.yml` passed and starts
@@ -63,8 +67,12 @@ issues, and the notification test workflow.
   notifies nobody and leaves `main` where it was.
 - A typing loss is reported only for new releases, and only for 14 days.
   Older losses stay recorded in each release's `*.quality.json`.
-- Changing `main` by hand needs the ruleset changed first; that is
-  intended.
+- A commit pushed to `main` by hand is not published until it passed
+  `promote.yml`.
+- Releases whose published `SHA256SUMS` differ from the files are
+  republished by the next run. The first live run (2026-11-16) found that
+  GitHub stores `26.7.8..26.7.9.json` as `26.7.8.26.7.9.json`; assets are
+  now staged under GitHub's name before checksumming.
 
 ## Evidence
 
