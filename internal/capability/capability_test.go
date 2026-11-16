@@ -371,3 +371,58 @@ func TestFamilies(t *testing.T) {
 		t.Errorf("plain: %v", got)
 	}
 }
+
+// Write-side marks reach the data: a model that saves through its own code
+// and an entry list stored through its own conversion mark the API variant
+// (only in the fragment that has them); a converting field type marks the
+// field variant. The result validates against the schema.
+func TestWriteSideGapsInData(t *testing.T) {
+	d := newDist(t)
+	v1, v2 := demoFragment("TextField", "old text"), demoFragment("OptionField", "new text.")
+	m := v2.Models[0]
+	m.Gaps = []gap.Gap{gap.New(gap.CustomSave, "overrides serializeToConfig")}
+	entry := m.Find("networks.network")
+	entry.Gaps = []gap.Gap{gap.New(gap.CustomSave, "toLegacy")}
+	entry.Children[0].Gaps = []gap.Gap{gap.New(gap.CustomWrite, "setValue")}
+	core := coreFragment()
+	d.compose("26.1.1", "26.1.1", fw1, map[string]*fragment.Fragment{"opnsense": core, "os-demo": v1}, map[string]string{"opnsense": "26.1.1", "os-demo": "1.0"})
+	d.compose("26.1.2", "26.1.2_1", fw2, map[string]*fragment.Fragment{"opnsense": core, "os-demo": v2}, map[string]string{"opnsense": "26.1.2_1", "os-demo": "1.1"})
+	cat, docs, err := Build(d.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Validate(cat, docs); err != nil {
+		t.Fatal(err)
+	}
+	h1, h2 := v1.Hash(), v2.Hash()
+	apiGaps := func(id, hash string) []string {
+		for _, a := range docs["os-demo"].Resources[id].API {
+			if a.In == All || contains(a.In.([]string), hash) {
+				return a.Gaps
+			}
+		}
+		t.Fatalf("%s: no API variant for %s", id, hash)
+		return nil
+	}
+	if g := apiGaps("demo/settings", h2); !reflect.DeepEqual(g, []string{"custom-save"}) {
+		t.Errorf("settings in v2: %v", g)
+	}
+	if g := apiGaps("demo/settings", h1); len(g) != 0 {
+		t.Errorf("settings in v1 must have no gaps: %v", g)
+	}
+	if g := apiGaps("demo/settings#networks.network", h2); !reflect.DeepEqual(g, []string{"custom-save"}) {
+		t.Errorf("entries in v2 (model and entry list, once): %v", g)
+	}
+	var marked bool
+	for _, f := range docs["os-demo"].Resources["demo/settings#networks.network"].Fields["area"] {
+		if contains(f.Gaps, "custom-write") {
+			marked = true
+			if f.In == All || contains(f.In.([]string), h1) {
+				t.Errorf("custom-write leaked into v1: %+v", f)
+			}
+		}
+	}
+	if !marked {
+		t.Error("field area not marked custom-write in v2")
+	}
+}

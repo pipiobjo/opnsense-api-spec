@@ -15,7 +15,9 @@ import (
 	"testing"
 
 	"github.com/pipiobjo/opnsense-api-spec/internal/fragment"
+	"github.com/pipiobjo/opnsense-api-spec/internal/gap"
 	"github.com/pipiobjo/opnsense-api-spec/internal/ir"
+	"github.com/pipiobjo/opnsense-api-spec/internal/model"
 	"github.com/pipiobjo/opnsense-api-spec/internal/openapi"
 )
 
@@ -177,5 +179,85 @@ func TestGolden(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Write-side conversion on real sources (golden releases): models that
+// save through their own code and field types that convert on write are
+// marked; plain models and fields are not. Expected marks per release are
+// facts of these final releases, checked against the PHP sources once.
+func TestWriteSideOnRealSources(t *testing.T) {
+	src := sources(t)
+	want := map[string]struct {
+		saveModels []string // model classes with custom-save
+		saveArrays []string // "<model class> <array name>" with custom-save
+	}{
+		// from grep "function serializeToConfig" in the sources, 2026-11-16
+		"25.7.10": {[]string{`OPNsense\Bind\Domain`}, nil},
+		"26.1.10": {[]string{`OPNsense\Bind\Domain`}, nil},
+		"26.7.7": {[]string{`OPNsense\Bind\Domain`, `OPNsense\Firewall\Filter`, `OPNsense\Interfaces\NetworkInterface`, `OPNsense\Quagga\General`},
+			[]string{`OPNsense\Interfaces\NetworkInterface interface`}},
+	}
+	tested := 0
+	for rel, w := range want {
+		dir, ok := src[rel]
+		if !ok {
+			continue
+		}
+		tested++
+		r := load(t, dir)
+		saved := map[string]bool{}
+		arrays := map[string]bool{}
+		writeTypes := map[string]bool{}
+		for _, m := range r.Models {
+			for _, g := range m.Gaps {
+				if g.Code == gap.CustomSave {
+					saved[m.Class] = true
+				}
+			}
+			var walk func(n *model.Node)
+			walk = func(n *model.Node) {
+				for _, g := range n.Gaps {
+					switch {
+					case g.Code == gap.CustomSave && n.Kind == model.KindArray:
+						arrays[m.Class+" "+n.Name] = true
+					case g.Code == gap.CustomWrite:
+						writeTypes[strings.TrimPrefix(n.Type, `.\`)] = true
+					}
+				}
+				for _, c := range n.Children {
+					walk(c)
+				}
+			}
+			walk(m.Root)
+		}
+		for _, c := range w.saveModels {
+			if !saved[c] {
+				t.Errorf("%s: %s not marked custom-save", rel, c)
+			}
+		}
+		for _, a := range w.saveArrays {
+			if !arrays[a] {
+				t.Errorf("%s: entry list %s not marked custom-save", rel, a)
+			}
+		}
+		if len(saved) != len(w.saveModels) {
+			t.Errorf("%s: models marked custom-save %v, want exactly %v", rel, saved, w.saveModels)
+		}
+		// converting field types: a plugin one and core normalizers; plain
+		// types never
+		for _, typ := range []string{"StoreB64Field", "MacAddressField", "NetworkField"} {
+			if !writeTypes[typ] {
+				t.Errorf("%s: field type %s not marked custom-write", rel, typ)
+			}
+		}
+		for _, typ := range []string{"TextField", "BooleanField", "IntegerField", "OptionField"} {
+			if writeTypes[typ] {
+				t.Errorf("%s: plain field type %s marked custom-write", rel, typ)
+			}
+		}
+	}
+	if tested == 0 {
+		missing(t, "no golden release sources in .cache/src")
 	}
 }

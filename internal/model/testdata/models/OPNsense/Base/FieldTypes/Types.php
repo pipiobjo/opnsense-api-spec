@@ -31,7 +31,7 @@
  */
 namespace OPNsense\Base\FieldTypes;
 
-abstract class BaseField {}
+abstract class BaseField { public function setValue($value) {} }  /* the framework itself: not a conversion */
 abstract class BaseListField extends BaseField {}
 class BaseSetField extends BaseField {}
 class BooleanField extends BaseField {}
@@ -42,3 +42,5 @@ class PortField extends BaseListField {}
 class InterfaceField extends BaseListField {}
 class HostnameField extends BaseSetField {}
 class TextField extends BaseField {}
+class ContainerField extends BaseField {}
+class MacAddressField extends BaseField { public function setValue($value) { /* lower case */ } }

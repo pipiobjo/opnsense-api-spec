@@ -169,7 +169,8 @@
           "type": "object",
           "propertyNames": {"enum": ["get", "set", "search", "add", "del", "toggle"]},
           "additionalProperties": {"$ref": "#/$defs/operation"}
-        }
+        },
+        "gaps": {"$ref": "#/$defs/gaps"}
       }
     },
     "operation": {

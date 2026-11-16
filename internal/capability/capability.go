@@ -132,6 +132,9 @@ type API struct {
 	Wrapper    string                `json:"wrapper,omitempty"`
 	Apply      string                `json:"apply,omitempty"`
 	Operations map[string]*Operation `json:"operations"`
+	// Gaps of the stored data as a whole: custom-save when the model saves
+	// through its own code, or the entries are converted on the way
+	Gaps []string `json:"gaps,omitempty"`
 }
 
 // Operation is one endpoint of a resource.
@@ -454,6 +457,12 @@ func (d *Doc) add(hash string, f *fragment.Fragment) {
 				root = m.Root
 			} else {
 				root = m.Find(first.ModelPath)
+			}
+			a.Gaps = gapCodes(m.Gaps)
+			if root != nil && r.kind == "entries" {
+				for _, g := range gapCodes(root.Gaps) {
+					a.Gaps = addUnique(a.Gaps, g)
+				}
 			}
 			if root == nil {
 				continue

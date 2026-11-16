@@ -79,6 +79,9 @@ type Model struct {
 	Version     string `json:"version,omitempty"`
 	Description string `json:"description,omitempty"`
 	Root        *Node  `json:"root"`
+	// Gaps of the whole model: custom-save when its class overrides
+	// serializeToConfig (bind domains, os-frr general settings, ...)
+	Gaps []gap.Gap `json:"gaps,omitempty"`
 }
 
 // Find returns the node at a dotted path below the root ("dnsbl.blocklist").
@@ -108,6 +111,12 @@ type TypeIndex struct {
 	// "string", "string-unless-multiple" or "custom"
 	readOverride map[string]string
 	asList       map[string]bool // class default of $internalAsList
+	// write-side overrides: class -> methods among setValue, toLegacy,
+	// fromLegacy declared in the class itself
+	writeOverride map[string]map[string]bool
+	// ArrayField subclasses that create their entries as another class
+	// (newContainerField): array class -> container class
+	container map[string]string
 }
 
 var (
@@ -115,6 +124,9 @@ var (
 	returnRe       = regexp.MustCompile(`\breturn\b`)
 	nodeFnRe       = regexp.MustCompile(`function\s+(getNodeData|getNodeOptions)\s*\([^)]*\)[^{]*\{`)
 	asListRe       = regexp.MustCompile(`\$internalAsList\s*=\s*(true|false)`)
+	writeFnRe      = regexp.MustCompile(`function\s+(setValue|toLegacy|fromLegacy)\s*\(`)
+	newContainerRe = regexp.MustCompile(`function\s+newContainerField\s*\([^)]*\)[^{]*\{[^}]*\bnew\s+([\\\w]+)\s*\(`)
+	saveFnRe       = regexp.MustCompile(`function\s+serializeToConfig\s*\(`)
 )
 
 // the core defaults; overrides below them change the read shape
@@ -170,7 +182,8 @@ var useRe = regexp.MustCompile(`(?m)^\s*use\s+([\\\w]+)(?:\s+as\s+(\w+))?\s*;`)
 // BuildTypeIndex scans all FieldTypes/*.php below modelsDir.
 func BuildTypeIndex(modelsDir string) (*TypeIndex, error) {
 	idx := &TypeIndex{parent: map[string]string{}, names: map[string]string{},
-		readOverride: map[string]string{}, asList: map[string]bool{}}
+		readOverride: map[string]string{}, asList: map[string]bool{},
+		writeOverride: map[string]map[string]bool{}, container: map[string]string{}}
 	err := filepath.WalkDir(modelsDir, func(p string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(p, ".php") || filepath.Base(filepath.Dir(p)) != "FieldTypes" {
 			return err
@@ -192,23 +205,43 @@ func BuildTypeIndex(modelsDir string) (*TypeIndex, error) {
 			}
 			uses[alias] = full
 		}
-		for _, m := range classRe.FindAllSubmatch(src, -1) {
+		qualify := func(name string) string {
+			switch {
+			case strings.HasPrefix(name, `\`):
+				return name[1:]
+			case uses[name] != "":
+				return uses[name]
+			case !strings.Contains(name, `\`):
+				return ns + `\` + name
+			}
+			return name
+		}
+		classes := classRe.FindAllSubmatchIndex(src, -1)
+		for ci, m := range classRe.FindAllSubmatch(src, -1) {
 			cls := ns + `\` + string(m[1])
 			key := strings.ToLower(cls)
 			idx.names[key] = cls
+			// a file can hold several classes (NetworkInterfaceField.php):
+			// write overrides are read per class body
+			end := len(src)
+			if ci+1 < len(classes) {
+				end = classes[ci+1][0]
+			}
+			body := string(src[classes[ci][0]:end])
+			for _, w := range writeFnRe.FindAllStringSubmatch(body, -1) {
+				if idx.writeOverride[key] == nil {
+					idx.writeOverride[key] = map[string]bool{}
+				}
+				idx.writeOverride[key][w[1]] = true
+			}
+			if c := newContainerRe.FindStringSubmatch(body); c != nil {
+				idx.container[key] = strings.ToLower(qualify(c[1]))
+			}
 			par := string(m[2])
 			if par == "" {
 				continue // root class (BaseField)
 			}
-			switch {
-			case strings.HasPrefix(par, `\`):
-				par = par[1:]
-			case uses[par] != "":
-				par = uses[par]
-			case !strings.Contains(par, `\`):
-				par = ns + `\` + par
-			}
-			idx.parent[key] = strings.ToLower(par)
+			idx.parent[key] = strings.ToLower(qualify(par))
 			// FieldTypes files hold one class each
 			if ov := readOverrideOf(string(src)); ov != "" && !defaultShapeClasses[key] {
 				idx.readOverride[key] = ov
@@ -249,6 +282,40 @@ func (t *TypeIndex) Resolve(typeAttr, modelNS string) []string {
 		key = p
 	}
 	return chain
+}
+
+// writeGap: the field's class chain converts values on write (setValue
+// below BaseField). Field types the client already treats specially are
+// included; the gap only says that the stored value may differ.
+func (t *TypeIndex) writeGap(chain []string) *gap.Gap {
+	for _, c := range chain {
+		if c == baseNS+"basefield" {
+			break
+		}
+		if t.writeOverride[c]["setValue"] {
+			g := gap.New(gap.CustomWrite, "setValue in %s converts or normalizes the value; the stored value may differ from the request", t.baseName(c))
+			return &g
+		}
+	}
+	return nil
+}
+
+// saveGap: an ArrayField whose entries are stored through their own
+// conversion (toLegacy/fromLegacy in the array class or the container class
+// it creates), as the interface assignments are.
+func (t *TypeIndex) saveGap(chain []string) *gap.Gap {
+	for _, c := range chain {
+		if c == baseNS+"arrayfield" {
+			break
+		}
+		for _, cls := range []string{c, t.container[c]} {
+			if ov := t.writeOverride[cls]; ov["toLegacy"] || ov["fromLegacy"] {
+				g := gap.New(gap.CustomSave, "entries are stored through toLegacy/fromLegacy in %s; values may be changed or dropped depending on other fields", t.baseName(cls))
+				return &g
+			}
+		}
+	}
+	return nil
 }
 
 func (t *TypeIndex) baseName(key string) string {
@@ -441,6 +508,9 @@ func convert(x *xnode, ns string, types *TypeIndex) *Node {
 	n.BaseType = base
 	if isArray {
 		n.Kind = KindArray
+		if g := types.saveGap(chain); g != nil {
+			n.Gaps = append(n.Gaps, *g)
+		}
 		convertChildren(n, x, ns, types)
 		return n
 	}
@@ -491,6 +561,11 @@ func convert(x *xnode, ns string, types *TypeIndex) *Node {
 		var g *gap.Gap
 		n.Shape, g = types.readShape(chain, base, n.Shape, n.Multiple, n.Props["AsList"])
 		if g != nil {
+			n.Gaps = append(n.Gaps, *g)
+		}
+	}
+	if known {
+		if g := types.writeGap(chain); g != nil {
 			n.Gaps = append(n.Gaps, *g)
 		}
 	}
@@ -555,6 +630,10 @@ func LoadAll(appDir string) ([]*Model, *TypeIndex, error) {
 			return err
 		}
 		if m != nil {
+			// the model class lives next to its XML (Domain.xml, Domain.php)
+			if src, err := os.ReadFile(strings.TrimSuffix(p, ".xml") + ".php"); err == nil && saveFnRe.Match(src) {
+				m.Gaps = append(m.Gaps, gap.New(gap.CustomSave, "%s overrides serializeToConfig; saving runs own code (values may be changed, computed or written elsewhere)", m.Class))
+			}
 			out = append(out, m)
 		}
 		return nil

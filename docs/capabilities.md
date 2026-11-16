@@ -155,6 +155,16 @@ for example `result-not-returned` (the endpoint returns nothing) or
 the endpoint that activates saved changes; writes alone change only the
 stored configuration.
 
+`gaps` on an API variant concerns the stored data as a whole: `custom-save`
+when the model saves through its own code (`serializeToConfig`: bind
+domains, the firewall filter, os-frr's general settings) or the entries are
+stored through `toLegacy`/`fromLegacy` (interface assignments, which drop
+the DHCPv6 options unless the IPv6 type is DHCPv6). A field's `gaps` has
+`custom-write` when its type converts or normalizes values on write. Both
+are read from the PHP classes; they say that a value may be stored
+differently from the request, not how. A consumer that reads back after
+writing should expect differences there and report them as such.
+
 Endpoints that are not resource operations (service actions such as
 `reconfigure`, custom actions, a second endpoint of the same kind) are in
 `actions`, keyed by path, with variants by fragment.

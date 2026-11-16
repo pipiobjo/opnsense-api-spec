@@ -43,7 +43,19 @@
                 <Multiple>Y</Multiple>
             </iface>
             <port type="PortField"/>
+            <stored type=".\StoredField"/>
+            <mac type="MacAddressField"/>
         </general>
+        <legacy>
+            <entry type=".\LegacyEntryField">
+                <name type="TextField"/>
+            </entry>
+        </legacy>
+        <plain>
+            <entry type=".\PlainEntryField">
+                <name type="TextField"/>
+            </entry>
+        </plain>
         <hosts>
             <host type="ArrayField">
                 <hostname type="HostnameField">

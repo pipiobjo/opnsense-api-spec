@@ -44,6 +44,8 @@ const (
 	OptionsDynamic      Code = "options-dynamic"       // OptionField without static options
 	InvalidDefault      Code = "invalid-default"       // default outside the allowed values (upstream model error)
 	UnknownSetting      Code = "unknown-setting"       // untyped leaf element that is not a known setting
+	CustomWrite         Code = "custom-write"          // the field type converts or normalizes values on write (setValue)
+	CustomSave          Code = "custom-save"           // own code between request and stored data (toLegacy/fromLegacy, serializeToConfig)
 )
 
 // Gap is one finding of the generator.
