@@ -49,6 +49,11 @@ func TestVerifyPackage(t *testing.T) {
 	if err := VerifyPackage(data, hex.EncodeToString(s[:])); err != nil {
 		t.Error("hex sha256:", err)
 	}
+	// tampered data against a SHA-256 checksum (older catalogs) must fail
+	// just as with BLAKE2b
+	if err := VerifyPackage([]byte("tampered"), hex.EncodeToString(s[:])); err == nil {
+		t.Error("tampered data must fail against a sha256 checksum")
+	}
 	if err := VerifyPackage(data, "1$abc"); err == nil {
 		t.Error("unknown format must fail")
 	}

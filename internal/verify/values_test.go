@@ -420,3 +420,44 @@ func TestSettingsWriteBack(t *testing.T) {
 		})
 	}
 }
+
+// checkModelGet compares a settings answer with the model: a field
+// missing, a field in another shape (a list returned as a plain string)
+// and a key the model does not have are findings; a matching answer is ok.
+func TestCheckModelGetShape(t *testing.T) {
+	m := &model.Model{Class: `OPNsense\X\X`, Root: &model.Node{Kind: model.KindContainer, Children: []*model.Node{
+		{Name: "general", Kind: model.KindContainer, Children: []*model.Node{
+			{Name: "enabled", Kind: model.KindField, Type: "BooleanField", BaseType: "BooleanField", Shape: model.ShapeString},
+			{Name: "iface", Kind: model.KindField, Type: "InterfaceField", BaseType: "BaseListField", Shape: model.ShapeSelect},
+		}},
+	}}}
+	get := &ir.Endpoint{Path: "/api/x/settings/get", Kind: ir.KindModelGet, Wrapper: "x"}
+	good := map[string]any{"enabled": "1", "iface": map[string]any{"lan": map[string]any{"value": "LAN", "selected": 1}}}
+	for _, c := range []struct {
+		name    string
+		general map[string]any
+		status  string
+		finding string
+	}{
+		{"matches", good, "ok", ""},
+		{"field missing", map[string]any{"iface": good["iface"]}, "mismatch", "general.enabled: missing"},
+		{"list as plain string", map[string]any{"enabled": "1", "iface": "lan"}, "mismatch", "general.iface"},
+		{"unknown key", map[string]any{"enabled": "1", "iface": good["iface"], "extra": "x"}, "mismatch", "general.extra"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewEncoder(w).Encode(map[string]any{"x": map[string]any{"general": c.general}})
+			}))
+			defer srv.Close()
+			cl, err := NewClient(srv.URL, "k", "s", []string{"127.0.0.1"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			cl.HTTP = srv.Client()
+			r := checkModelGet(cl, get, m)
+			if r.Status != c.status || (c.finding != "" && !strings.Contains(strings.Join(r.Findings, " "), c.finding)) {
+				t.Errorf("status %s, findings %v", r.Status, r.Findings)
+			}
+		})
+	}
+}
