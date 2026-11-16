@@ -359,3 +359,64 @@ func TestWriteCycleUnlocksBeforeDelete(t *testing.T) {
 		t.Errorf("the unlock must be visible: %v", r.Findings)
 	}
 }
+
+// The four outcomes of writing a settings field back unchanged.
+func TestSettingsWriteBack(t *testing.T) {
+	m := &model.Model{Class: `OPNsense\X\X`, Root: &model.Node{Kind: model.KindContainer, Children: []*model.Node{
+		{Name: "general", Kind: model.KindContainer, Children: []*model.Node{
+			{Name: "name", Kind: model.KindField, Type: "TextField", BaseType: "TextField"},
+			{Name: "enabled", Kind: model.KindField, Type: "BooleanField", BaseType: "BooleanField"},
+		}},
+	}}}
+	get := &ir.Endpoint{Path: "/api/x/settings/get", Kind: ir.KindModelGet, Wrapper: "x"}
+	set := &ir.Endpoint{Path: "/api/x/settings/set", Kind: ir.KindModelSet, Wrapper: "x"}
+	for _, c := range []struct {
+		name    string
+		answer  map[string]any
+		stores  bool
+		status  string
+		finding string
+	}{
+		{"saved and unchanged", map[string]any{"result": "saved"}, true, "ok", ""},
+		{"saved but not stored", map[string]any{"result": "saved"}, false, "mismatch", "read-back after set: general.enabled"},
+		{"own value rejected", map[string]any{"result": "failed", "validations": map[string]any{"x.general.enabled": "no"}}, true, "mismatch", "its own current value"},
+		{"model invalid by default", map[string]any{"result": "failed", "validations": map[string]any{"x.general.name": "A value is required."}}, true, "skipped", "not valid in its default state, set rejected for: general.name"},
+		{"not a configuration save", map[string]any{"status": "ok"}, true, "skipped", "does not save configuration"},
+		{"answers a file", nil, true, "skipped", "does not save configuration"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			enabled := "1"
+			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case get.Path:
+					_ = json.NewEncoder(w).Encode(map[string]any{"x": map[string]any{"general": map[string]any{"name": "", "enabled": enabled}}})
+				case set.Path:
+					if !c.stores {
+						enabled = "0"
+					}
+					if c.answer == nil {
+						w.Header().Set("Content-Type", "application/octet-stream")
+						_, _ = w.Write([]byte("PK\x03\x04"))
+						return
+					}
+					_ = json.NewEncoder(w).Encode(c.answer)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer srv.Close()
+			cl, err := NewClient(srv.URL, "k", "s", []string{"127.0.0.1"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			cl.HTTP = srv.Client()
+			r := settingsWriteBack(cl, get, set, m)
+			if r.Status != c.status || (c.finding != "" && !strings.Contains(strings.Join(r.Findings, " "), c.finding)) {
+				t.Errorf("status %s, findings %v", r.Status, r.Findings)
+			}
+			if r.Check != "write-cycle" || r.Path != set.Path {
+				t.Errorf("result recorded as %s on %s", r.Check, r.Path)
+			}
+		})
+	}
+}

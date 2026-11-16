@@ -207,17 +207,23 @@ os-frr on 26.7.9:
 ```
 
 - `read`: the worst result of the read checks of `get` and `search`.
-- `write`: the write cycle (entry lists only). `ok` with `set` in `steps`
+- `write`: for entry lists the write cycle: `ok` with `set` in `steps`
   means add, update and delete were each read back; without `set`, the
-  update was not tested. `skipped` means not written, and is not a pass.
+  update was not tested. For settings one field written back with its
+  current value and read back (`steps`: set, read-back); nothing changes
+  on the instance. `skipped` means not written, and is not a pass; the
+  finding says why: for settings "model not valid in its default state"
+  (a plugin needs required settings first), "set does not save
+  configuration" (a job or action under the name `set`, such as
+  `core/firmware`), "not a configuration resource", or "no plain field".
 - `runtime_required`: fields the instance required although the model does
   not mark them as required; `findings` say why a test did not pass.
 - `sample`: an entry the instance accepted. Option values in it may only
   exist on the test instance.
 - No entry for a fragment: not tested. Only the newest release per series
   is tested on each run; older fragments keep their last result, or none.
-- Settings resources are read-tested only; writing settings is not tested
-  yet.
+- Entry lists with several families (bind domains) get one write cycle
+  per family.
 
 Consumers should show this to users ("written and read back on 26.7.9",
 "not tested") rather than treat everything as equally reliable.
