@@ -39,6 +39,10 @@ on:
         description: Plan no contract tests (the path of a day without changes)
         type: boolean
         default: false
+      roundtrip:
+        description: Upload the newest release to a draft, check it as published, delete it
+        type: boolean
+        default: false
   workflow_dispatch:
     inputs:
       publish:
@@ -327,6 +331,11 @@ jobs:
             .cache/ci/catalog/SHA256SUMS
       - name: Publish capability data
         run: tools/ci/catalog.sh publish ${{ env.CATALOG_LIVE != 'true' && '--dry-run' || '' }}
+      # dry runs from promote.yml: the real publishing round trip through a
+      # draft release that is deleted again (tools/ci/roundtrip.sh)
+      - name: Publishing round trip (draft)
+        if: env.LIVE != 'true' && inputs.roundtrip == true
+        run: tools/ci/roundtrip.sh dist
       # last: what consumers get, fetched without credentials
       - name: Check what was published
         if: env.LIVE == 'true'

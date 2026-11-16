@@ -69,6 +69,11 @@ issues, and the notification test workflow.
   Older losses stay recorded in each release's `*.quality.json`.
 - A commit pushed to `main` by hand is not published until it passed
   `promote.yml`.
+- Before `main` moves, `promote.yml` uploads the newest release to a draft
+  release with the publishing code, checks names and checksums as GitHub
+  stored them, and deletes the draft. A fake of GitHub could not have
+  caught the renaming below; the real round trip does (reintroducing the
+  bug makes it fail with the six renamed files, 2026-11-16).
 - Releases whose published `SHA256SUMS` differ from the files are
   republished by the next run. The first live run (2026-11-16) found that
   GitHub stores `26.7.8..26.7.9.json` as `26.7.8.26.7.9.json`; assets are

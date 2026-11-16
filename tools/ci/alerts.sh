@@ -8,9 +8,10 @@
 # Opens at most one issue labelled "needs-you", edits it while a condition
 # lasts and closes it when none is left. Conditions:
 #
-#   stale     the last successful scheduled run of pipeline.yml is older
+#   stale     the last successful scheduled run of the workflow (pipeline.yml,
+#             or WD_WORKFLOW) is older
 #             than 7 days (WD_STALE_HOURS); a single failed run is not one
-#   disabled  pipeline.yml is disabled and cannot be re-enabled here (a
+#   disabled  the workflow is disabled and cannot be re-enabled here (a
 #             workflow GitHub disabled for inactivity is re-enabled silently)
 #   coverage  a release created in the last 14 days lost typing against the
 #             release before it (its *.quality.json lists regressions);
@@ -27,6 +28,11 @@
 set -euo pipefail
 
 REPO="${GITHUB_REPOSITORY:-pipiobjo/opnsense-api-spec}"
+# Also used by other repositories of the project (opnsense-api-go checks out
+# this script): the scheduled workflow to watch, and whether the typing-loss
+# condition applies (it reads this repository's releases).
+WORKFLOW="${WD_WORKFLOW:-pipeline.yml}"
+COVERAGE="${WD_COVERAGE_CHECK:-1}"
 NOW="${ALERTS_NOW:-$(date -u +%s)}"
 STALE_HOURS="${WD_STALE_HOURS:-168}"
 SERVER="${GITHUB_SERVER_URL:-https://github.com}"
@@ -61,12 +67,12 @@ epoch() { date -u -d "$1" +%s; }
 
 workflow_state() {
   if [ -n "${WD_STATE+x}" ]; then echo "$WD_STATE"; return; fi
-  gh api "repos/$REPO/actions/workflows/pipeline.yml" --jq .state
+  gh api "repos/$REPO/actions/workflows/$WORKFLOW" --jq .state
 }
 
 last_success() {
   if [ -n "${WD_LAST_SUCCESS+x}" ]; then echo "$WD_LAST_SUCCESS"; return; fi
-  gh run list -R "$REPO" -w pipeline.yml -e schedule -s success -L 1 --json updatedAt -q '.[0].updatedAt // ""'
+  gh run list -R "$REPO" -w "$WORKFLOW" -e schedule -s success -L 1 --json updatedAt -q '.[0].updatedAt // ""'
 }
 
 # failed_run: the newest failed scheduled run with its failed jobs and steps,
@@ -74,7 +80,7 @@ last_success() {
 failed_run() {
   if [ -n "${WD_FAILED_RUN+x}" ]; then echo "$WD_FAILED_RUN"; return; fi
   local id
-  id=$(gh run list -R "$REPO" -w pipeline.yml -e schedule -s failure -L 1 --json databaseId -q '.[0].databaseId // empty')
+  id=$(gh run list -R "$REPO" -w "$WORKFLOW" -e schedule -s failure -L 1 --json databaseId -q '.[0].databaseId // empty')
   [ -n "$id" ] || { echo null; return; }
   gh run view "$id" -R "$REPO" --json url,createdAt,jobs --jq '{url, created: .createdAt,
     jobs: [.jobs[] | select(.conclusion == "failure")
@@ -116,21 +122,22 @@ check() {
   local state last failed cov open body stale="" problems=0
   state=$(workflow_state)
   last=$(last_success)
-  cov=$(coverage)
+  cov="[]"
+  [ "$COVERAGE" = 1 ] && cov=$(coverage)
   open=$(open_issue)
   body=$(mktemp)
 
   case "$state" in
     active) state_msg="" ;;
     disabled_inactivity)
-      ghw api -X PUT "repos/$REPO/actions/workflows/pipeline.yml/enable"
-      echo "check: pipeline.yml was disabled for inactivity, re-enabled"
+      ghw api -X PUT "repos/$REPO/actions/workflows/$WORKFLOW/enable"
+      echo "check: $WORKFLOW was disabled for inactivity, re-enabled"
       state_msg="" ;;
-    *) state_msg="The workflow \`pipeline.yml\` is \`$state\`; it is only re-enabled automatically after GitHub disabled it for inactivity." ;;
+    *) state_msg="The workflow \`$WORKFLOW\` is \`$state\`; it is only re-enabled automatically after GitHub disabled it for inactivity." ;;
   esac
 
   if [ -z "$last" ]; then
-    stale="No successful scheduled run of \`pipeline.yml\` was found."
+    stale="No successful scheduled run of \`$WORKFLOW\` was found."
   else
     local age=$(( (NOW - $(epoch "$last")) / 3600 ))
     if [ "$age" -ge "$STALE_HOURS" ]; then
@@ -195,7 +202,7 @@ check() {
       # editing sends no new e-mail; the opening did
       ghw issue edit "$open" -R "$REPO" --body-file "$body"
     else
-      ghw issue create -R "$REPO" --title "Needs you: opnsense-api-spec" --label "$LABEL" --body-file "$body"
+      ghw issue create -R "$REPO" --title "Needs you: ${REPO#*/}" --label "$LABEL" --body-file "$body"
     fi
     echo "check: $problems condition(s)"
   else

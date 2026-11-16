@@ -39,7 +39,7 @@ out=$(run WD_LAST_SUCCESS="$(hours_ago 167)" WD_FAILED_RUN="$failed")
 check "just under 7 days: no message" "$out" "gh " absent
 
 out=$(run WD_LAST_SUCCESS="$(hours_ago 170)" WD_FAILED_RUN="$failed")
-check "stale: opens one issue" "$out" "gh issue create -R example/spec --title Needs you: opnsense-api-spec --label needs-you"
+check "stale: opens one issue" "$out" "gh issue create -R example/spec --title Needs you: spec --label needs-you"
 check "stale: says since when" "$out" "7 days ago"
 check "stale: names the failed job and step" "$out" '- job `contract (26.7.9)`, step `Contract test 26.7.9`'
 check "stale: links the run" "$out" "https://example/run/9"
@@ -75,6 +75,15 @@ out=$(run WD_COVERAGE="$cov" WD_LAST_SUCCESS="$(hours_ago 200)")
 check "both conditions: one issue, two sections" "$out" "check: 2 condition(s)"
 out=$(run WD_COVERAGE='[]' ALERTS_ISSUES="$open_issue")
 check "coverage gone: closes the issue" "$out" "gh issue close 3"
+
+# used by the client repository: another workflow, no typing-loss check
+out=$(run WD_WORKFLOW=spec-update.yml WD_STATE=disabled_inactivity GITHUB_REPOSITORY=example/client)
+check "other workflow: re-enables that one" "$out" "gh api -X PUT repos/example/client/actions/workflows/spec-update.yml/enable"
+out=$(run WD_WORKFLOW=spec-update.yml WD_LAST_SUCCESS="" GITHUB_REPOSITORY=example/client)
+check "other workflow: named in the issue" "$out" 'No successful scheduled run of `spec-update.yml`'
+check "other workflow: title names the repository" "$out" "--title Needs you: client"
+out=$(env WD_STATE=active WD_LAST_SUCCESS="$(hours_ago 10)" WD_FAILED_RUN=null ALERTS_ISSUES='[]' WD_COVERAGE_CHECK=0 GITHUB_REPOSITORY=example/client "$A" check)
+check "no coverage check: healthy without reading releases" "$out" "nothing needs a person"
 
 echo
 if [ "$fails" -gt 0 ]; then echo "$fails failed"; exit 1; fi

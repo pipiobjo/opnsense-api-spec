@@ -39,8 +39,8 @@ DRY=""
 
 run() { if [ -n "$DRY" ]; then echo "dry-run: $*"; else "$@"; fi; }
 
-# asset_name NAME: the name GitHub stores an uploaded asset under
-asset_name() { sed -E 's/[^A-Za-z0-9._+-]/./g; s/\.{2,}/./g; s/^\.//' <<<"$1"; }
+# shellcheck source=tools/ci/assets.sh
+. "$(dirname "${BASH_SOURCE[0]}")/assets.sh"
 
 [ -f "$DIST/index.json" ] || { echo "error: dist/index.json missing" >&2; exit 1; }
 [ -f "$PREV" ] || { echo "error: $PREV missing (run tools/ci/state.sh restore first)" >&2; exit 1; }
@@ -86,17 +86,9 @@ for rel in $(jq -r '.releases[].release' "$DIST/index.json"); do
   tag="opnsense-$rel"
   now=$(jq -S -c --arg r "$rel" '.releases[] | select(.release == $r)' "$DIST/index.json")
   before=$(jq -S -c --arg r "$rel" '.releases[] | select(.release == $r)' "$PREV")
-  mapfile -t assets < <(find "$DIST/$rel" -maxdepth 1 -type f | sort)
-  [ "${#assets[@]}" -gt 0 ] || { echo "error: no files in dist/$rel" >&2; exit 1; }
   stage="$ROOT/.cache/ci/stage/$rel"
-  rm -rf "$stage"; mkdir -p "$stage" "$SUMS/$rel"
-  for a in "${assets[@]}"; do
-    n=$(asset_name "${a##*/}")
-    [ ! -e "$stage/$n" ] || { echo "error: two assets of $rel map to the name $n" >&2; exit 1; }
-    ln "$a" "$stage/$n" 2>/dev/null || cp "$a" "$stage/$n"
-  done
+  stage_release "$DIST/$rel" "$stage" "$SUMS/$rel/SHA256SUMS"
   mapfile -t assets < <(find "$stage" -maxdepth 1 -type f | sort)
-  (cd "$stage" && sha256sum -- "${assets[@]##*/}") > "$SUMS/$rel/SHA256SUMS"
   if [ "$now" = "$before" ] && grep -qx "$tag" <<<"$existing"; then
     # unchanged entry: republish only when the published files differ from
     # these (repairs a wrong or missing SHA256SUMS without a person)
