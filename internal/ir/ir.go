@@ -351,13 +351,12 @@ func classify(e *Endpoint, c *controller.Controller, a *controller.Action, mdl *
 		}
 		if a.Lines > thinLines {
 			e.Gaps = append(e.Gaps, gap.New(gap.CustomLogic, "action adds custom logic around %s; request/response may differ", bc.Func))
-		} else if !bc.Direct && (e.Kind == KindItemGet || e.Kind == KindItemSearch) {
-			e.Gaps = append(e.Gaps, gap.New(gap.PostProcessed, "action post-processes the result of %s; response may differ", bc.Func))
-		} else if bc.NoReturn {
+		} else if bc.NoReturn && e.Kind != KindItemGet && e.Kind != KindItemSearch {
 			// e.g. os-wol delHostAction: "$this->delBase(...);" and no return
 			e.Gaps = append(e.Gaps, gap.New(gap.ResultNotReturned, "action calls %s without returning its result; the response is empty", bc.Func))
 		} else if !bc.Direct {
-			// e.g. return $this->handleFormValidations($this->addBase(...))
+			// the result is changed or wrapped before it is returned, e.g.
+			// return $this->handleFormValidations($this->addBase(...))
 			e.Gaps = append(e.Gaps, gap.New(gap.PostProcessed, "action post-processes the result of %s; response may differ", bc.Func))
 		}
 		return

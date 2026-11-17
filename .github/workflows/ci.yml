@@ -32,14 +32,5 @@ jobs:
         with:
           path: .cache/pkg
           key: pkg-golden-${{ hashFiles('internal/assemble/testdata/golden/*.json') }}
-      - name: Fetch golden releases
-        run: tools/ci/golden-fetch.sh
-      - name: Vet and test
-        env:
-          GOLDEN_REQUIRED: "1"
-        run: |
-          test -z "$(gofmt -l .)" || { gofmt -l .; echo "::error::gofmt"; exit 1; }
-          go vet ./...
-          go test -count=1 ./...
-      - name: Script tests
-        run: tools/ci/alerts_test.sh
+      - name: Gates (format, vet, tests with golden releases, script tests)
+        run: tools/ci/gates.sh

@@ -124,14 +124,8 @@ jobs:
           [ "$n" -gt 0 ] || { echo "::error::$GITHUB_SHA did not pass promote.yml; push to dev instead of main"; exit 1; }
       - name: Restore state
         run: tools/ci/state.sh restore
-      - name: Gates (vet, tests, golden, determinism)
-        env:
-          GOLDEN_REQUIRED: "1"
-        run: |
-          tools/ci/golden-fetch.sh
-          test -z "$(gofmt -l .)" || { gofmt -l .; echo "::error::gofmt"; exit 1; }
-          go vet ./...
-          go test -count=1 ./...
+      - name: Gates (format, vet, tests with golden releases, script tests)
+        run: tools/ci/gates.sh
       - name: Matrix (all series)
         run: |
           rc=0

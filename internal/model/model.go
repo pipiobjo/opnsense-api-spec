@@ -406,7 +406,7 @@ func init() {
 		"ConfigdPopulateTTL", "SourceField", "SourceFile", "SelectAll", "AllowDynamic",
 		"AddParentInterfaces", "Sorted", "AllowNonAscii", "LocalOnly", "Protocols",
 		"Initial", "ValidationMessages", "AllowRange", "Separator", "EnableRanges",
-		"PrefixLengthMin", "PrefixLengthMax", "Strict"} {
+		"PrefixLengthMin", "PrefixLengthMax"} {
 		fieldSettings[s] = true
 	}
 }
@@ -538,8 +538,6 @@ func convert(x *xnode, ns string, types *TypeIndex) *Node {
 		if g != nil {
 			n.Gaps = append(n.Gaps, *g)
 		}
-	}
-	if known {
 		if g := types.writeGap(chain); g != nil {
 			n.Gaps = append(n.Gaps, *g)
 		}
