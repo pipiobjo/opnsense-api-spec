@@ -419,11 +419,13 @@ contract() {
   local pk="opnsense" more
   more=$(listfile "$VM/plugins-installed.txt")
   [ -n "$more" ] && pk="opnsense,$more"
-  # built with coverage: tools/ci/coverage.sh contract $VM/contract.out
-  # reports which code of the contract test ran against the instance
+  # built with coverage of the contract test's own code (the command and
+  # internal/verify; the main package must be instrumented, or no data is
+  # written):
+  # contract-coverage reports which of it ran against the instance
   rm -rf "$VM/cover"; mkdir -p "$VM/cover"
   local rc=0
-  (cd "$ROOT" && GOCOVERDIR="$VM/cover" go run -cover -coverpkg=./... ./cmd/opnsense-api-spec verify -write -packages "$pk" \
+  (cd "$ROOT" && GOCOVERDIR="$VM/cover" go run -cover -coverpkg=./cmd/opnsense-api-spec,./internal/verify ./cmd/opnsense-api-spec verify -write -packages "$pk" \
     -ir "$1" -url "$URL" -keyfile "$VM/apikey.json") || rc=$?
   go tool covdata textfmt -i="$VM/cover" -o "$VM/contract.out" || true
   return "$rc"

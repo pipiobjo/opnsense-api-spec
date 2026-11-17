@@ -64,11 +64,16 @@ summary, HTML artifact) and fails below the floor in
 | Profile | Covered | Floor | Where |
 |---|---:|---:|---|
 | unit (all Go tests, golden releases included) | 80.4% | 80% | `gates.sh`, artifact `coverage-unit` |
-| contract (the CLI and `internal/verify` against a VM) | see below | see below | pipeline contract job, artifact `coverage-contract-<release>` |
+| contract (the command and `internal/verify` against a VM with every plugin; `internal/verify` alone 84.4% to 84.9%) | 72.4% | 72% | pipeline contract job, artifact `coverage-contract-<release>` |
 
-The command line (`cmd/`, 14% in unit tests) and the contract test's
-main loop (`internal/verify`, 66%) are exercised by the pipeline and the
-VM runs; the contract profile measures that part. Coverage says which
+The contract test's main loop (`internal/verify`, 66% in unit tests)
+runs against the VM; together the two profiles reach 87% of the
+repository. The command line (`cmd/`, 14% in unit tests, 45% with the VM
+run) is glue that the pipeline runs end to end. The pipeline's shell
+scripts (publishing, state, assets) have no coverage measurement; they
+are checked by effect: two dry runs and a draft-release round trip
+before `main` moves, and a check of what was published after each live
+run. Coverage says which
 code ran, not whether its result was checked; the claims and the
 deliberate breaks above are what make the tests count.
 
