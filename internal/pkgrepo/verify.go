@@ -174,6 +174,50 @@ func encodePkgBase32(in []byte) string {
 	return sb.String()
 }
 
+// decodePkgBase32 is the inverse of encodePkgBase32 for n output bytes.
+func decodePkgBase32(s string, n int) ([]byte, error) {
+	out := make([]byte, 0, n)
+	var acc uint32
+	bits := 0
+	for i := 0; i < len(s); i++ {
+		v := strings.IndexByte(pkgBase32, s[i])
+		if v < 0 {
+			return nil, fmt.Errorf("invalid character %q in pkg checksum", s[i])
+		}
+		acc |= uint32(v) << bits
+		bits += 5
+		if bits >= 8 && len(out) < n {
+			out = append(out, byte(acc))
+			acc >>= 8
+			bits -= 8
+		}
+	}
+	if len(out) != n || encodePkgBase32(out) != s {
+		return nil, fmt.Errorf("pkg checksum %q is not %d bytes", s, n)
+	}
+	return out, nil
+}
+
+// SumHash converts a catalog checksum into a standard algorithm name
+// (CycloneDX spelling) and hex digest: "2$<base32>" is BLAKE2b-512, 64 hex
+// characters are SHA-256.
+func SumHash(sum string) (alg, hexDigest string, err error) {
+	switch {
+	case strings.HasPrefix(sum, "2$"):
+		b, err := decodePkgBase32(sum[2:], blake2b.Size)
+		if err != nil {
+			return "", "", err
+		}
+		return "BLAKE2b-512", hex.EncodeToString(b), nil
+	case len(sum) == 64:
+		if _, err := hex.DecodeString(sum); err != nil {
+			return "", "", fmt.Errorf("checksum %q: %w", sum, err)
+		}
+		return "SHA-256", strings.ToLower(sum), nil
+	}
+	return "", "", fmt.Errorf("unsupported checksum format %q", sum)
+}
+
 // VerifyPackage checks a package file against its catalog checksum.
 // Supported: "2$<base32>" (BLAKE2b-512, pkg checksum type 2) and plain
 // 64-character hex SHA-256 (older catalogs).

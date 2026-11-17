@@ -24,7 +24,12 @@
 # published releases goes to .cache/ci/published.txt for
 # tools/ci/check-published.sh.
 #
-# Also creates the tag v<generator version> if it does not exist yet.
+# Also creates the tag v<generator version> if it does not exist yet. With
+# SBOM=1 (repository variable SBOM_PUBLISH) the new tag also gets a GitHub
+# release with the generator's SBOM (tools/ci/sbom.sh) and SHA256SUMS,
+# written to .cache/ci/generator/ for the provenance attestation step; the
+# per-release SBOMs (opnsense-<release>.sbom.cdx.json, from the command
+# sbom) are ordinary release files.
 #
 # Marked as pre-release while the current composition is not contract-tested
 # (needs_verification). Only runs after all gates passed; it never decides
@@ -70,7 +75,7 @@ Assets: \`opnsense-$rel.openapi.json\` (the spec), \`.ir.json\` (intermediate
 representation), \`.coverage.md\` (what is typed and what is not),
 \`.verified.json\` (contract test results, if any), \`composition.json\`
 (packages and fragments of this catalog state), diff and quality report
-against the previous release. Limitations are marked in the spec itself
+against the previous release.$( [ -f "$DIST/$rel/opnsense-$rel.sbom.cdx.json" ] && printf '%s' " \`.sbom.cdx.json\`: software bill of materials (CycloneDX 1.6) of the OPNsense packages this description was derived from, with their checksums from the signed catalog." ) Limitations are marked in the spec itself
 (\`x-opnsense-derivation\`, \`x-opnsense-verified\`).
 
 Licence: BSD-2-Clause, see LICENSE and NOTICE in the repository. OPNsense is
@@ -120,9 +125,38 @@ echo "published $published release(s)"
 # The generator version named in the outputs must exist as a tag: create
 # v<version> on the first commit that publishes it. Never move it.
 vtag="v$generator"
+new_tag=""
 if gh api "repos/{owner}/{repo}/git/ref/tags/$vtag" >/dev/null 2>&1; then
   echo "tag $vtag exists"
 elif [ "$published" -gt 0 ]; then
   echo "create tag $vtag at ${commit:0:12}"
   run gh api "repos/{owner}/{repo}/git/refs" -f ref="refs/tags/$vtag" -f sha="$commit" >/dev/null
+  new_tag=1
+fi
+
+# The generator's SBOM, made at the tag (a local tag on this commit, so the
+# SBOM names exactly the generator version); built and checked in every
+# run with SBOM=1, published as the release of a new tag.
+if [ "${SBOM:-}" = 1 ]; then
+  GEN="$ROOT/.cache/ci/generator"
+  rm -rf "$GEN"; mkdir -p "$GEN"
+  have=$(git -C "$ROOT" rev-parse -q --verify "refs/tags/$vtag^{commit}" || true)
+  if [ -z "$have" ]; then
+    git -C "$ROOT" tag "$vtag" "$commit"
+  elif [ "$have" != "$(git -C "$ROOT" rev-parse "$commit^{commit}")" ]; then
+    echo "error: the local tag $vtag points to ${have:0:12}, not ${commit:0:12}; run in a fresh checkout" >&2
+    exit 1
+  fi
+  "$ROOT/tools/ci/sbom.sh" "$GEN/opnsense-api-spec-$vtag.cdx.json"
+  v=$(jq -r '.metadata.component.version' "$GEN/opnsense-api-spec-$vtag.cdx.json")
+  [ "$v" = "$vtag" ] || { echo "error: generator SBOM names $v, not $vtag" >&2; exit 1; }
+  (cd "$GEN" && sha256sum -- *.cdx.json > SHA256SUMS)
+  if [ -n "$new_tag" ]; then
+    echo "create release $vtag (generator SBOM)"
+    run gh release create "$vtag" --verify-tag --prerelease --latest=false --title "Generator $vtag" \
+      --notes "Generator version $vtag of opnsense-api-spec (commit [\`${commit:0:12}\`]($repo_url/commit/$commit)). Attached: its software bill of materials (CycloneDX 1.6) and SHA256SUMS, with a provenance attestation. The API descriptions are the releases opnsense-<OPNsense release>." \
+      "$GEN/opnsense-api-spec-$vtag.cdx.json" "$GEN/SHA256SUMS"
+  else
+    rm -rf "$GEN" # nothing to publish; keep the attestation step idle
+  fi
 fi

@@ -35,3 +35,12 @@ internal/schemacheck/oas-3.1-schema-2022-10-07.json is the JSON Schema for
 OpenAPI 3.1 published at https://spec.openapis.org/oas/3.1/schema/2022-10-07,
 unchanged. Copyright The Linux Foundation / OpenAPI Initiative, licensed under
 the Apache License, Version 2.0 (LICENSES/Apache-2.0.txt).
+
+3. CycloneDX (vendored test files)
+
+internal/sbom/testdata/bom-1.6.schema.json, spdx.schema.json and
+jsf-0.82.schema.json are the JSON Schemas of CycloneDX 1.6 from
+https://github.com/CycloneDX/specification (tag 1.6), unchanged, used only
+to validate the generated SBOMs in tests. Copyright OWASP Foundation and
+the CycloneDX contributors, licensed under the Apache License, Version 2.0
+(LICENSES/Apache-2.0.txt).

@@ -20,6 +20,7 @@ import (
 	"github.com/pipiobjo/opnsense-api-spec/internal/openapi"
 	"github.com/pipiobjo/opnsense-api-spec/internal/pipeline"
 	"github.com/pipiobjo/opnsense-api-spec/internal/pkgrepo"
+	"github.com/pipiobjo/opnsense-api-spec/internal/sbom"
 	"github.com/pipiobjo/opnsense-api-spec/internal/schemacheck"
 	"github.com/pipiobjo/opnsense-api-spec/internal/verify"
 )
@@ -51,6 +52,9 @@ commands:
   plan                     print the releases to contract-test as a JSON list
                            (newest release per series, current composition
                            not verified with this generator)
+  sbom                     write the SBOM (CycloneDX 1.6) of every release in
+                           -dist: the packages its description was derived
+                           from (dist/<release>/opnsense-<release>.sbom.cdx.json)
   failures FILE...         print the failing checks of *.verified.json files
                            as Markdown lines (what the run summary and the
                            failure report show; the rule is verify.Status)
@@ -186,6 +190,8 @@ func main() {
 		err = cmdCapabilities(pl.Dist, dir)
 	case "failures":
 		err = cmdFailures(fs.Args())
+	case "sbom":
+		err = cmdSBOM(pl.Dist)
 	case "plan":
 		var idx *pipeline.Index
 		if idx, err = pipeline.ReadIndex(filepath.Join(pl.Dist, "index.json")); err == nil {
@@ -244,6 +250,30 @@ func cmdInstalled(o opts) error {
 	for _, p := range slices.Sorted(maps.Keys(pk)) {
 		fmt.Println(p)
 	}
+	return nil
+}
+
+// cmdSBOM writes the SBOM of every release in dist from its IR. The file
+// is deterministic, so an unchanged release keeps an unchanged file.
+func cmdSBOM(dist string) error {
+	idx, err := pipeline.ReadIndex(filepath.Join(dist, "index.json"))
+	if err != nil {
+		return err
+	}
+	for _, r := range idx.Releases {
+		rel, err := pipeline.ReadIR(filepath.Join(dist, r.Release, "opnsense-"+r.Release+".ir.json"))
+		if err != nil {
+			return err
+		}
+		out, err := sbom.ForRelease(rel)
+		if err != nil {
+			return fmt.Errorf("%s: %w", r.Release, err)
+		}
+		if err := os.WriteFile(filepath.Join(dist, r.Release, sbom.FileName(r.Release)), out, 0o644); err != nil {
+			return err
+		}
+	}
+	fmt.Fprintf(os.Stderr, "sbom: %d releases\n", len(idx.Releases))
 	return nil
 }
 

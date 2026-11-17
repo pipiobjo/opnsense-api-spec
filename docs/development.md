@@ -169,6 +169,10 @@ token.
 6. The capability data is published only when the repository variable
    `CATALOG_PUBLISH` is `true`. Without it the data is built and kept as a
    workflow artifact.
+7. Software bills of materials ([ADR 0013](adr/0013-sbom.md)) are
+   published only when the repository variable `SBOM_PUBLISH` is `true`;
+   dry runs always build and check them. The runner needs Podman (GitHub's
+   Ubuntu runners have it).
 
 `internal/pkgrepo/keys.json` holds OPNsense's signing keys; it is the
 trust anchor for every downloaded package and is followed through the

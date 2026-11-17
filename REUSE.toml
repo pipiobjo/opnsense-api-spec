@@ -18,3 +18,9 @@ path = ["internal/schemacheck/oas-3.1-schema-2022-10-07.json"]
 precedence = "override"
 SPDX-FileCopyrightText = "The Linux Foundation / OpenAPI Initiative"
 SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = ["internal/sbom/testdata/*.schema.json"]
+precedence = "override"
+SPDX-FileCopyrightText = "OWASP Foundation and the CycloneDX contributors"
+SPDX-License-Identifier = "Apache-2.0"

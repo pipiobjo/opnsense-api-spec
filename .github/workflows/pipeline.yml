@@ -265,6 +265,10 @@ jobs:
       # repository variable CATALOG_PUBLISH is "true" and the run publishes;
       # otherwise it is built, checked and kept as a workflow artifact.
       CATALOG_LIVE: ${{ vars.CATALOG_PUBLISH == 'true' && github.event_name == 'schedule' || (vars.CATALOG_PUBLISH == 'true' && github.event_name == 'workflow_dispatch' && inputs.publish == true) }}
+      # SBOMs: always in dry runs (built, checked, round trip); in a live run
+      # only when the repository variable SBOM_PUBLISH is "true"
+      # (job env cannot read the workflow's LIVE, so it is spelled out)
+      SBOM: ${{ ((github.event_name != 'schedule' && !(github.event_name == 'workflow_dispatch' && inputs.publish == true)) || vars.SBOM_PUBLISH == 'true') && '1' || '0' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
@@ -294,6 +298,12 @@ jobs:
             done < <(find .ci/in/verified -name release -type f)
           fi
           go run ./cmd/opnsense-api-spec index
+      # SBOMs (ADR 0013) are built and checked in every dry run; a live run
+      # publishes them only when the repository variable SBOM_PUBLISH is
+      # "true"
+      - name: SBOM per release
+        if: env.SBOM == '1'
+        run: go run ./cmd/opnsense-api-spec sbom
       - name: Gate (every planned release is verified now)
         env:
           PLAN: ${{ needs.build.outputs.plan }}
@@ -311,6 +321,10 @@ jobs:
         if: env.LIVE == 'true' && hashFiles('.cache/ci/sums/*/SHA256SUMS') != ''
         with:
           subject-path: .cache/ci/sums/*/SHA256SUMS
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        if: env.LIVE == 'true' && hashFiles('.cache/ci/generator/SHA256SUMS') != ''
+        with:
+          subject-path: .cache/ci/generator/*
       - name: Save state
         if: env.LIVE == 'true'
         run: tools/ci/state.sh save

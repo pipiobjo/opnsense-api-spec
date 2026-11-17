@@ -7,10 +7,14 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/pem"
 	"strings"
 	"testing"
+
+	"golang.org/x/crypto/blake2b"
 )
 
 // Claim (concepts, section 3): a catalog is used only when it is signed by
@@ -47,6 +51,28 @@ func TestVerifyCatalogRefusesBadKeyMaterial(t *testing.T) {
 		_, err := VerifyCatalog(c.cat, c.keys, true)
 		if err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s: %v, want an error with %q", c.name, err, c.want)
+		}
+	}
+}
+
+// SumHash turns pkg's checksum into a standard hex digest; checked against
+// the real BLAKE2b-512 of data, so a wrong decoder cannot pass.
+func TestSumHash(t *testing.T) {
+	for _, data := range [][]byte{nil, []byte("x"), []byte(strings.Repeat("opnsense package ", 100))} {
+		h := blake2b.Sum512(data)
+		sum := "2$" + encodePkgBase32(h[:])
+		alg, got, err := SumHash(sum)
+		if err != nil || alg != "BLAKE2b-512" || got != hex.EncodeToString(h[:]) {
+			t.Errorf("SumHash(%s) = %s %s %v", sum, alg, got, err)
+		}
+	}
+	s := sha256.Sum256([]byte("x"))
+	if alg, got, err := SumHash(hex.EncodeToString(s[:])); err != nil || alg != "SHA-256" || got != hex.EncodeToString(s[:]) {
+		t.Errorf("sha256: %s %s %v", alg, got, err)
+	}
+	for _, bad := range []string{"2$", "2$ab!", "2$" + strings.Repeat("y", 102), "3$abc", strings.Repeat("z", 64)} {
+		if _, _, err := SumHash(bad); err == nil {
+			t.Errorf("%q accepted", bad)
 		}
 	}
 }
