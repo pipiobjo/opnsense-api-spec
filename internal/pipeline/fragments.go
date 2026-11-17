@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/pipiobjo/opnsense-api-spec/internal/fragment"
 	"github.com/pipiobjo/opnsense-api-spec/internal/ir"
@@ -100,7 +101,9 @@ func writeFragments(rel *ir.Release, dist, releaseDir string, status fragment.St
 	if err := os.MkdirAll(filepath.Join(releaseDir, "compositions"), 0o755); err != nil {
 		return nil, err
 	}
-	if err := jsonfile.Write(filepath.Join(releaseDir, "compositions", comp.ID()+".json"), comp); err != nil {
+	compPath := filepath.Join(releaseDir, "compositions", comp.ID()+".json")
+	comp.FirstSeen = firstSeen(compPath, time.Now().UTC().Format(time.DateOnly))
+	if err := jsonfile.Write(compPath, comp); err != nil {
 		return nil, err
 	}
 	return comp, jsonfile.Write(filepath.Join(releaseDir, "composition.json"), comp)
@@ -149,9 +152,11 @@ type UnavailableRelease struct {
 
 // IndexRelease is one release with all catalog states seen.
 type IndexRelease struct {
-	Release      string            `json:"release"`
-	Series       string            `json:"series"`
-	Current      string            `json:"current"` // composition id
+	Release string `json:"release"`
+	Series  string `json:"series"`
+	Current string `json:"current"` // composition id
+	// FirstSeen of the current composition (see fragment.Composition)
+	FirstSeen    string            `json:"first_seen,omitempty"`
 	Status       fragment.Status   `json:"status"`
 	Compositions []string          `json:"compositions"`
 	Files        map[string]string `json:"files"` // release view file -> sha256
@@ -210,7 +215,7 @@ func BuildIndex(dist string) error {
 			}
 			continue // not a release directory
 		}
-		ent := IndexRelease{Release: cur.Release, Series: cur.Series, Current: cur.ID(), Status: cur.Status, Files: map[string]string{},
+		ent := IndexRelease{Release: cur.Release, Series: cur.Series, Current: cur.ID(), FirstSeen: cur.FirstSeen, Status: cur.Status, Files: map[string]string{},
 			SourceUnavailable: ReadUnavailable(filepath.Join(dist, d.Name()))}
 		comps, _ := filepath.Glob(filepath.Join(dist, d.Name(), "compositions", "*.json"))
 		sort.Strings(comps)
@@ -368,4 +373,20 @@ func (idx *Index) VerifyPlan() []string {
 	}
 	sort.Slice(out, func(i, j int) bool { return pkgrepo.CompareVersions(out[i], out[j]) < 0 })
 	return out
+}
+
+// firstSeen: the date a composition was first built. A rebuild keeps the
+// recorded date; a composition file without one (built before the field
+// existed) stays without, so it never counts as new.
+func firstSeen(path, today string) string {
+	var old struct {
+		FirstSeen *string `json:"first_seen"`
+	}
+	if err := jsonfile.Read(path, &old); err != nil {
+		return today // not built before
+	}
+	if old.FirstSeen == nil {
+		return ""
+	}
+	return *old.FirstSeen
 }

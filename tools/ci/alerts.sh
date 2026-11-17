@@ -13,9 +13,10 @@
 #             than 7 days (WD_STALE_HOURS); a single failed run is not one
 #   disabled  the workflow is disabled and cannot be re-enabled here (a
 #             workflow GitHub disabled for inactivity is re-enabled silently)
-#   coverage  a release created in the last 14 days lost typing against the
-#             release before it (its *.quality.json lists regressions);
-#             clears by itself 14 days after that release appeared
+#   coverage  a release whose catalog state was first built in the last 14
+#             days lost typing against the release before it (its
+#             *.quality.json lists regressions); clears by itself 14 days
+#             later
 #
 # A person never closes the issue; the next check after the cause is gone
 # does. Nothing here is urgent: consumers keep working with the last
@@ -37,7 +38,6 @@ NOW="${ALERTS_NOW:-$(date -u +%s)}"
 STALE_HOURS="${WD_STALE_HOURS:-168}"
 SERVER="${GITHUB_SERVER_URL:-https://github.com}"
 LABEL=needs-you
-HISTORY_END="${HISTORY_END:-2026-11-16T00:00:00Z}"
 
 # ghw: a write call to GitHub, or its printout in a dry run (with the body)
 ghw() {
@@ -94,14 +94,8 @@ failed_run() {
 # ever.
 coverage() {
   if [ -n "${WD_COVERAGE+x}" ]; then echo "$WD_COVERAGE"; return; fi
-  local since tags tag dir out="[]" f
-  since=$(date -u -d "@$((NOW - ${COVERAGE_DAYS:-14} * 86400))" +%FT%TZ)
-  # all releases up to 26.7.9 were created at once on 2026-11-12 and 26.7.8
-  # again on 2026-11-15; their creation date says nothing about when
-  # OPNsense released them
-  [[ "$since" > "$HISTORY_END" ]] || since="$HISTORY_END"
-  tags=$(gh release list -R "$REPO" --limit 1000 --json tagName,createdAt \
-    --jq ".[] | select(.createdAt >= \"$since\") | .tagName" | sed -n 's/^opnsense-//p')
+  local tags tag dir out="[]" f
+  tags=$(recent_releases)
   dir=$(mktemp -d)
   for tag in $tags; do
     rm -f "$dir"/*.quality.json
@@ -114,6 +108,21 @@ coverage() {
   done
   rm -rf "$dir"
   echo "$out"
+}
+
+# recent_releases: releases whose current catalog state the pipeline first
+# built in the last COVERAGE_DAYS days (first_seen in the published
+# index.json of the release "state"; WD_INDEX replaces it in tests).
+# States built before first_seen existed have none and never count.
+recent_releases() {
+  local since index
+  since=$(date -u -d "@$((NOW - ${COVERAGE_DAYS:-14} * 86400))" +%F)
+  if [ -n "${WD_INDEX:-}" ]; then
+    index=$(cat "$WD_INDEX")
+  else
+    index=$(gh release download state -R "$REPO" -p index.json -O - 2>/dev/null || echo '{"releases":[]}')
+  fi
+  jq -r --arg since "$since" '.releases[] | select((.first_seen // "") >= $since and .first_seen != null) | .release' <<<"$index"
 }
 
 # ------------------------------------------------------------ check
@@ -221,5 +230,6 @@ gh_label() {
 
 case "${1:-}" in
   check) check ;;
+  recent-releases) recent_releases ;;
   *) echo "usage: $0 check" >&2; exit 2 ;;
 esac

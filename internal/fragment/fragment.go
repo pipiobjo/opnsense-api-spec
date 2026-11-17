@@ -119,6 +119,9 @@ type Composition struct {
 	Status        Status `json:"status"`
 	Generator     string `json:"generator"`
 	Fragments     []Ref  `json:"fragments"`
+	// FirstSeen: the day (UTC) the pipeline built this catalog state for
+	// the first time; empty for states built before the field existed.
+	FirstSeen string `json:"first_seen,omitempty"`
 }
 
 // ID is the stable identifier of a composition: core version plus the

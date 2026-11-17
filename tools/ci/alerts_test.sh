@@ -85,6 +85,22 @@ check "other workflow: title names the repository" "$out" "--title Needs you: cl
 out=$(env WD_STATE=active WD_LAST_SUCCESS="$(hours_ago 10)" WD_FAILED_RUN=null ALERTS_ISSUES='[]' WD_COVERAGE_CHECK=0 GITHUB_REPOSITORY=example/client "$A" check)
 check "no coverage check: healthy without reading releases" "$out" "nothing needs a person"
 
+# which releases count as new for the typing-loss condition: first_seen of
+# the current catalog state within 14 days; no first_seen never counts
+cat > "${TMPDIR:-/tmp}/alerts-index.json" <<'JSON'
+{"releases":[
+ {"release":"26.7.10","first_seen":"2026-11-19"},
+ {"release":"26.7.9","first_seen":"2026-11-02"},
+ {"release":"26.1.11"},
+ {"release":"26.7.8","first_seen":"2026-11-06"}]}
+JSON
+out=$(WD_INDEX="${TMPDIR:-/tmp}/alerts-index.json" "$A" recent-releases)
+check "recent: first seen yesterday" "$out" "26.7.10"
+check "recent: 14 days ago counts" "$out" "26.7.8"
+check "recent: older does not" "$out" "26.7.9" absent
+check "recent: no date never counts" "$out" "26.1.11" absent
+rm -f "${TMPDIR:-/tmp}/alerts-index.json"
+
 echo
 if [ "$fails" -gt 0 ]; then echo "$fails failed"; exit 1; fi
 echo "all passed"

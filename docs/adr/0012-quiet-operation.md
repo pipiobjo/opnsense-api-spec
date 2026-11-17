@@ -28,8 +28,9 @@ every write). A stopped pipeline makes data older, not wrong.
 1. **One signal.** At most one open issue labelled `needs-you`, written by
    `watchdog.yml` (daily), for three conditions: no successful scheduled
    run for 7 days; `pipeline.yml` disabled (other than for inactivity,
-   which is re-enabled silently); a release created in the last 14 days
-   lost typing against the release before it. The issue says what is
+   which is re-enabled silently); a release whose catalog state the
+   pipeline first built in the last 14 days (`first_seen`) lost typing
+   against the release before it. The issue says what is
    stale, why (the newest failed run, its failed jobs and steps), what
    happens if nobody acts, and how to start the fix. It is edited while
    the condition lasts and **closed by the watchdog when it is over**.
@@ -86,6 +87,8 @@ issues, and the notification test workflow.
   issue"; three deliberate breaks of the script were caught.
 - A dry run of `alerts.sh check` against this repository on 2026-11-15
   found typing losses in six historic releases; this led to the 14-day
-  window and to ignoring releases created by the first bulk publication.
+  window. The release creation date proved useless as "new" (34 releases
+  were created at once), so each catalog state records when the pipeline
+  first built it (`first_seen`), and states from before have none.
 - `tools/ci/check-published.sh` against a local server: passes on intact
   files, fails on a changed one.

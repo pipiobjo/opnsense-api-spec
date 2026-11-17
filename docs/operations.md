@@ -22,7 +22,7 @@ message; the next day's run is the retry.
 |---|---|
 | No successful scheduled run of `pipeline.yml` for 7 days | a scheduled run succeeds |
 | `pipeline.yml` is disabled by hand (a workflow GitHub disabled for inactivity is re-enabled without a message) | it is enabled again |
-| A release created in the last 14 days lost typing against the release before it | 14 days after that release appeared |
+| A release whose catalog state the pipeline first built in the last 14 days lost typing against the release before it (`first_seen` in the index) | 14 days later |
 
 The issue is edited while the condition lasts and closed by the watchdog
 when it is over. Nobody closes it by hand. Its text has four parts: what

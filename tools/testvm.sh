@@ -307,23 +307,10 @@ plugins() {
     # every plugin that provides API endpoints (alternatives are not listed separately)
     list=$(jq -r '[.endpoints[].package | select(. != "opnsense")] | unique | .[]' "$irf")
   fi
-  install_each() {
-    local p
-    for p in "$@"; do install_plugin "$p" || true; done
-  }
-  # shellcheck disable=SC2086 # list of package names
-  install_each $list
-  # what is actually installed counts, not what the jobs said. Missing
-  # ones get one more attempt (os-OPNProxy, first in the list, was missing
-  # on 25.7.11 in CI on 2026-11-16 while the old wait could take the
-  # previous job's "ready" for its own); twice failed stays failed.
-  local have missing=() p
-  have=$(installed_packages)
-  for p in $list; do grep -qx "$p" <<<"$have" || missing+=("$p"); done
-  if [ "${#missing[@]}" -gt 0 ]; then
-    echo "second attempt for: ${missing[*]}"
-    install_each "${missing[@]}"
-  fi
+  local p have
+  for p in $list; do install_plugin "$p" || true; done
+  # what is actually installed counts, not what the jobs said; a missing
+  # plugin's firmware log is printed by install_plugin
   have=$(installed_packages)
   for p in $list; do
     if grep -qx "$p" <<<"$have"; then
