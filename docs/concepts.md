@@ -264,11 +264,11 @@ fields. See section 9.
 - A GET with `Content-Type: application/json` and no body is rejected with
   HTTP 400 "Invalid JSON syntax".
 - Large responses (e.g. `firmware/info` with many plugins, firewall logs)
-  arrived with broken chunked encoding over HTTP/1.1 on 26.7 test VMs in
-  November 2026 (cut after 64 KiB). On 25.7.11_9, 26.1.11_10 and 26.7.9_3
-  they are complete over both protocols (an 860 KB firewall log,
-  2026-11-17). The contract test uses HTTP/1.1, so a recurrence fails it;
-  HTTP/2 remains the safer choice for clients.
+  sometimes arrive with broken chunked encoding over HTTP/1.1; over HTTP/2
+  they are complete. It is intermittent: an 860 KB firewall log came
+  through intact on 2026-11-17, `firmware/info` on 26.7.9_3 was cut the
+  same day. Clients should use HTTP/2 (the Go client does). The contract
+  test uses HTTP/1.1 on purpose, so an affected check fails visibly.
 - Some required fields are enforced only in PHP validation, not marked
   `Required` in the model (`x-opnsense-runtime-required`).
 

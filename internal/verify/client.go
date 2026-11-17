@@ -25,6 +25,11 @@ type Client struct {
 	Key, Secret  string
 	HTTP         *http.Client
 	AllowedHosts []string // safety net: refuse anything else
+	// pkgHTTP speaks HTTP/2, for the package list only: the contract
+	// checks stay on HTTP/1.1 (see NewClient), but the package detection
+	// must not fail when the web server cuts the large firmware/info answer
+	// over HTTP/1.1 (seen again 2026-11-17 on 26.7.9_3).
+	pkgHTTP *http.Client
 
 	// Schema, when set, validates every decoded response against the
 	// rendered OpenAPI document (what generated clients will decode).
@@ -68,16 +73,26 @@ func NewClient(base, key, secret string, allowed []string) (*Client, error) {
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // #nosec G402 -- throwaway local VM only
 		// HTTP/1.1 on purpose: Go clients use HTTP/2, so the contract test
-		// covers the other protocol. Large HTTP/1.1 answers were once cut
-		// (broken chunked encoding, 26.7 test VMs, 2026-11-11); a recurrence
-		// shows as a failure here (concepts.md, section 7.2).
+		// covers the other protocol. The OPNsense web server sometimes cuts
+		// large HTTP/1.1 answers (broken chunked encoding; firmware/info on
+		// 26.7.9_3, 2026-11-17); the contract test keeps that visible
+		// (concepts.md, section 7.2).
 		TLSNextProto: map[string]func(string, *tls.Conn) http.RoundTripper{},
 	}
+	tr2 := &http.Transport{
+		TLSClientConfig:   &tls.Config{InsecureSkipVerify: true}, // #nosec G402 -- throwaway local VM only
+		ForceAttemptHTTP2: true,
+	}
 	return &Client{BaseURL: strings.TrimRight(base, "/"), Key: key, Secret: secret, AllowedHosts: allowed,
-		HTTP: &http.Client{Timeout: 60 * time.Second, Transport: tr}}, nil
+		HTTP:    &http.Client{Timeout: 60 * time.Second, Transport: tr},
+		pkgHTTP: &http.Client{Timeout: 60 * time.Second, Transport: tr2}}, nil
 }
 
 func (c *Client) do(method, path string, body any) (int, any, []byte, error) {
+	return c.doWith(c.HTTP, method, path, body)
+}
+
+func (c *Client) doWith(hc *http.Client, method, path string, body any) (int, any, []byte, error) {
 	var rd io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -94,7 +109,7 @@ func (c *Client) do(method, path string, body any) (int, any, []byte, error) {
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	resp, err := c.HTTP.Do(req)
+	resp, err := hc.Do(req)
 	if err != nil {
 		return 0, nil, nil, err
 	}
@@ -139,7 +154,11 @@ func (c *Client) InstalledPackages() (map[string]bool, error) {
 }
 
 func (c *Client) installedOnce() (map[string]bool, error) {
-	code, v, raw, err := c.do("GET", "/api/core/firmware/info", nil)
+	hc := c.pkgHTTP
+	if hc == nil { // a Client built without NewClient (tests)
+		hc = c.HTTP
+	}
+	code, v, raw, err := c.doWith(hc, "GET", "/api/core/firmware/info", nil)
 	if err != nil {
 		return nil, err
 	}

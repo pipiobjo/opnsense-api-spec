@@ -5,7 +5,10 @@ package verify
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
+	"sync"
 	"testing"
 
 	"github.com/pipiobjo/opnsense-api-spec/internal/ir"
@@ -106,5 +109,44 @@ func TestCycleFamilies(t *testing.T) {
 	}
 	if a := fams[want[1]].add.Action; a != "addPrimaryDomain" || fams[want[1]].del.Action != "delDomain" || fams[want[1]].get.Action != "getDomain" {
 		t.Errorf("primary: add %s del %s get %s", a, fams[want[1]].del.Action, fams[want[1]].get.Action)
+	}
+}
+
+// The package list is read over HTTP/2, because the OPNsense web server
+// sometimes cuts the large firmware/info answer over HTTP/1.1; every
+// contract check stays on HTTP/1.1, so that problem stays visible there.
+func TestPackageListUsesHTTP2ChecksUseHTTP1(t *testing.T) {
+	var mu sync.Mutex
+	proto := map[string]int{}
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		proto[r.URL.Path] = r.ProtoMajor
+		mu.Unlock()
+		if r.URL.Path == "/api/core/firmware/info" {
+			_, _ = w.Write([]byte(`{"package":[{"name":"opnsense","installed":"1"}],"plugin":[]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"product":{"product_version":"26.7.9"}}`))
+	}))
+	srv.EnableHTTP2 = true
+	srv.StartTLS()
+	defer srv.Close()
+	c, err := NewClient(srv.URL, "k", "s", []string{"127.0.0.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pk, err := c.InstalledPackages(); err != nil || !pk["opnsense"] {
+		t.Fatalf("InstalledPackages: %v %v", pk, err)
+	}
+	if _, err := c.InstanceVersion(); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if proto["/api/core/firmware/info"] != 2 {
+		t.Errorf("firmware/info over HTTP/%d, want 2", proto["/api/core/firmware/info"])
+	}
+	if proto["/api/core/firmware/status"] != 1 {
+		t.Errorf("a contract-test request over HTTP/%d, want 1", proto["/api/core/firmware/status"])
 	}
 }

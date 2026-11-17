@@ -187,9 +187,9 @@ The document also contains `x-opnsense-coverage` and the release gets a
   pass; the others are listed with the reason, mostly relations the test
   cannot satisfy). The accepted entry is the request example of each add
   operation.
-- The test client uses HTTP/1.1 on purpose (clients usually use HTTP/2),
-  so transfer problems of that protocol show up; large responses were once
-  cut over HTTP/1.1 and no longer are on the tested releases.
+- Large responses can arrive with broken chunked encoding over HTTP/1.1
+  (OPNsense web server, intermittent); the test client uses HTTP/1.1 on
+  purpose so this stays visible. Clients should use HTTP/2.
 
 ## Using the spec
 

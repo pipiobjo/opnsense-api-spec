@@ -41,7 +41,7 @@ How to run everything locally: [development.md](development.md).
 | S5 | `TestCompareVersions` (same table as the Go client), `TestSplitCoversEverythingOnce`, `TestHash`, `TestComposeAndStatus`, `TestBuildVariantsAndSelect`, `TestSelectConflict`, `TestFamilies`, `TestWriteSideGapsInData`, `TestServerSetWriteOnlyInData`, `TestFirstSeen`, `TestFetchAttribution`, `TestUnavailablePackages` |
 | S6 | `TestForRelease` (SBOM valid against the official CycloneDX 1.6 schema, real hashes, deterministic), `TestForReleaseRefusesBadInput`, `TestMatrixLifecycle`, `TestDecide`, `TestVerifyPlan`, `TestNeedsVerification`, `TestUntested`, `TestVerification`; `tools/ci/roundtrip.sh`, `tools/ci/check-published.sh`; the "only promoted commits publish" step of `pipeline.yml` |
 | S7 | `tools/ci/alerts_test.sh` (34 cases: one failed day sends nothing, 7 days open one issue, recovery closes it, ...) |
-| S8 | `TestNewClientRefusesOtherHosts`, `TestApplyAccepted`, `TestWriteCycleWithoutPrerequisiteIsSkipped`, `TestWriteCycleUpdateRejectedIsNotVerified`; the failure rule `Status.Failed` used by the CLI, the run summary and the report |
+| S8 | `TestNewClientRefusesOtherHosts`, `TestPackageListUsesHTTP2ChecksUseHTTP1` (checks over HTTP/1.1 so a cut answer shows; the package list over HTTP/2 so detection does not depend on it), `TestApplyAccepted`, `TestWriteCycleWithoutPrerequisiteIsSkipped`, `TestWriteCycleUpdateRejectedIsNotVerified`; the failure rule `Status.Failed` used by the CLI, the run summary and the report |
 
 `TestEveryTestIsDocumented` fails when a Go test exists that this page
 does not name, or the page names one that does not exist.

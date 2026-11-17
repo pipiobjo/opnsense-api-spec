@@ -216,8 +216,26 @@ api() { # api METHOD PATH [JSON]
 # error lines when the plugin is missing afterwards; returns 1 then.
 fw_log() { api GET /api/core/firmware/upgradestatus | jq -r '.log // ""' 2>/dev/null | sha256sum | cut -c1-16; }
 fw_status() { api GET /api/core/firmware/upgradestatus | jq -r '.status // ""' 2>/dev/null || true; }
+# fw_wait_idle SECONDS: wait until no firmware job runs. Asked through
+# firmware/running, which answers "ready" only when configd answers and is
+# idle ("busy" during a job, nothing while configd restarts, as installs
+# do). firmware/upgradestatus cannot tell: it answers "error" both for "no
+# job yet" (fresh VM) and for "configd restarting" in the middle of a job;
+# on 2026-11-17 taking "error" as the end sent the next install while the
+# previous one ran, and the firmware dropped it. Measured on 26.7.9_3:
+# "busy" for the whole install, "ready" together with "done".
+fw_wait_idle() {
+  for _ in $(seq 1 "$(( $1 / 3 ))"); do
+    [ "$(api GET /api/core/firmware/running | jq -r '.status // ""' 2>/dev/null)" = ready ] && return 0
+    sleep 3
+  done
+  return 1
+}
+
 install_plugin() {
   local p="$1" before started=0
+  # never start while another firmware job runs: the request would be lost
+  fw_wait_idle "$(waits 600)" || echo "install of $p: the previous firmware job did not finish" >&2
   before=$(fw_log)
   api POST "/api/core/firmware/install/$p" '{}' | grep -q '"ok"' || { echo "install of $p not started: firmware refused" >&2; return 1; }
   for _ in $(seq 1 "$(waits 60)"); do
@@ -227,12 +245,13 @@ install_plugin() {
   if [ "$started" = 0 ]; then
     echo "install of $p: no firmware job started within $(waits 60) s" >&2
   else
-    for _ in $(seq 1 "$(waits 600)"); do
-      [ "$(fw_status)" != running ] && break
-      sleep 3
-    done
+    fw_wait_idle "$(waits 1800)" || echo "install of $p: firmware job still running after $(waits 1800) s" >&2
   fi
-  if installed_packages | grep -qx "$p"; then return 0; fi
+  # the package list can lag behind the end of the job
+  for _ in $(seq 1 12); do
+    if installed_packages | grep -qx "$p"; then return 0; fi
+    sleep 5
+  done
   # evidence for later: the complete firmware log and what the firmware
   # says about the package (CI keeps $VM/*.log when a plugin is missing)
   {
