@@ -36,10 +36,17 @@ gh release create "$TAG" -R "$REPO" --draft --title "Round trip (deleted automat
   --notes "Temporary draft of promote.yml; deleted at the end of the job." "${files[@]}" >/dev/null
 echo "draft $TAG: uploaded ${#files[@]} files of $REL"
 
-# what GitHub stored, by name
-published=$(gh api "repos/$REPO/releases?per_page=100" \
-  --jq ".[] | select(.draft and .tag_name == \"$TAG\") | .assets[].name" | sort)
+# what GitHub stored, by name. The release list can lag behind an upload
+# for a few seconds (an empty asset list right after the upload, seen
+# 2026-11-17), so it is asked again for up to a minute; names that still
+# differ then are a real difference.
 listed=$( (awk '{print $2}' "$WORK/SHA256SUMS"; echo SHA256SUMS) | sort)
+for _ in $(seq 1 12); do
+  published=$(gh api "repos/$REPO/releases?per_page=100" \
+    --jq ".[] | select(.draft and .tag_name == \"$TAG\") | .assets[].name" | sort)
+  [ "$listed" = "$published" ] && break
+  sleep 5
+done
 if [ "$listed" != "$published" ]; then
   echo "error: GitHub stored other asset names than SHA256SUMS lists:" >&2
   diff <(echo "$listed") <(echo "$published") >&2 || true
