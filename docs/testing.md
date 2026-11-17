@@ -25,6 +25,7 @@ How to run everything locally: [development.md](development.md).
 | Unit tests with fixtures | `internal/*/*_test.go`, fixtures in `testdata/` copied from real packages | `tools/ci/gates.sh`: every push, every promotion, every pipeline run | each derivation rule, check and helper |
 | Golden releases | `internal/assemble/golden_test.go` on the real sources of 25.7.10, 26.1.10, 26.7.7 | same; `GOLDEN_REQUIRED=1` makes missing inputs fail | determinism and the hash of the derived API; a change to the output must be intended |
 | Script tests | `tools/ci/alerts_test.sh` | same | the issue logic of unattended operation |
+| Vulnerability check | `tools/ci/vulncheck.sh` (govulncheck) | every push and promotion, not the daily pipeline | no known vulnerability with a fix in code the generator calls | |
 | Consumer gate | `tools/client-smoke.sh`: oapi-codegen generates a Go client from the newest release of each series, `go vet` compiles it with a provider-style scenario | every pipeline run, blocking | the documents work for a third-party generator |
 | Contract test | `opnsense-api-spec verify` on a throwaway VM with every plugin (`tools/testvm.sh`) | every pipeline run for each release whose current state is not yet verified | the description against a real firewall |
 | Publishing round trip | `tools/ci/roundtrip.sh` on a draft release, `tools/ci/check-published.sh` after a live run | every promotion; every live run | names, checksums and provenance as GitHub stores and serves them |

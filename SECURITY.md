@@ -51,7 +51,7 @@ OPNsense project), and the behaviour of third-party code generators.
 | Tools in CI, isolated in rootless Podman: `oapi-codegen` (consumer gate), `cyclonedx-gomod` (SBOM), the official `golang` image pinned by digest | | |
 | GitHub Actions: GitHub's own and `jdx/mise-action`, pinned by commit hash | | |
 
-How they are watched: Dependabot alerts are on; Dependabot proposes
+How they are watched: `tools/ci/vulncheck.sh` (govulncheck, in CI and every promotion) fails on a vulnerability that the generator's code reaches and that has a fix, and warns about one without a fix yet; Dependabot alerts are on; Dependabot proposes
 updates monthly (grouped, versions at least 7 days old) against `dev`,
 and they reach `main` only through promotion. The Go toolchain is the
 newest patch release of the minor version in `mise.toml`. The container

@@ -34,6 +34,11 @@ jobs:
           key: pkg-golden-${{ hashFiles('internal/assemble/testdata/golden/*.json') }}
       - name: Gates (format, vet, tests with golden releases, script tests, coverage)
         run: tools/ci/gates.sh
+      # reachable vulnerabilities with a fix fail; without a fix: warning.
+      # Not in the daily pipeline: a new vulnerability in a dependency does
+      # not make published data wrong, so it must not stop publishing.
+      - name: Vulnerabilities (govulncheck)
+        run: tools/ci/vulncheck.sh
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-unit
