@@ -27,6 +27,7 @@ GO_IMAGE="docker.io/library/golang:1.27.3-bookworm@sha256:025eefc1e8dbe63201734a
 
 ROOT="$(git rev-parse --show-toplevel)"
 MODULE=$(cd "$ROOT" && go list -m)
+mkdir -p "$(dirname "$OUT")"
 outdir=$(cd "$(dirname "$OUT")" && pwd)
 name=$(basename "$OUT")
 
