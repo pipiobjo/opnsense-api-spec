@@ -7,7 +7,8 @@
 // availability by fragment and the verification results. Clients and
 // providers read this instead of the per-release OpenAPI documents.
 // The format is described in docs/capabilities.md and
-// schema/capability.schema.json.
+// internal/capability/capability.schema.json (published in the archive as
+// capability.schema.json).
 package capability
 
 import (

@@ -61,10 +61,13 @@ gh release download opnsense-26.7.9 -R pipiobjo/opnsense-api-spec -p '*.openapi.
 For clients that talk to many firewalls there is also the **capability
 data**: every resource, field and action over all versions, with the
 package versions they exist in and the contract test results, as plain
-JSON ([docs/capabilities.md](docs/capabilities.md)). It is published
-as the release `catalog` (from the scheduled run of 2026-11-16 on) and
-rebuilt and checked on every pipeline run
-(`go run ./cmd/opnsense-api-spec capabilities`).
+JSON ([docs/capabilities.md](docs/capabilities.md)). It is built and
+checked on every pipeline run (`go run ./cmd/opnsense-api-spec
+capabilities`) and kept as a workflow artifact. Publication as the
+release `catalog` is switched off (repository variable
+`CATALOG_PUBLISH`) until the planned OpenTofu provider has used the
+format; until then consumers build it from the published pipeline state
+(see opnsense-api-go's `tools/ci/catalog.sh`).
 
 ## Usage
 
@@ -197,9 +200,10 @@ such as `~*` (see [ADR 0007](docs/adr/0007-openapi-3-1.md)).
 ## Layout
 
 ```
-cmd/opnsense-api-spec/   CLI (releases, build, matrix, diff, verify, proxy, index, plan)
+cmd/opnsense-api-spec/   CLI (releases, fetch, build, matrix, diff, verify, failures, proxy, index, plan, capabilities)
 internal/capability/     capability data per package, catalog, JSON Schema
 internal/pkgrepo/        mirror, catalog, signature, key chain, checksums, archives
+internal/php/            the one PHP scanner: comments, brackets, namespaces, classes
 internal/model/          model XML and field type resolution
 internal/controller/     PHP controller patterns, inheritance
 internal/ir/             endpoint classification, apply endpoints
@@ -212,15 +216,19 @@ internal/diff/           release-to-release changes (models, fields, endpoints, 
 internal/quality/        invariants, regression report, framework fingerprint
 internal/schemacheck/    OpenAPI 3.1 / JSON Schema 2020-12 validation
 internal/verify/         contract tests against a running test instance
+internal/jsonfile/       reading and writing the JSON files in one format
 verify/accepted.json     reviewed upstream findings that do not count as failures
 tools/testvm.sh          throwaway OPNsense VM (QEMU/KVM, software emulation fallback)
 .github/actions/testvm/  the VM as a GitHub Action for other repositories
-tools/ci/                pipeline helpers (state, publish, published-file check, failure report, needs-you check)
+tools/ci/                pipeline helpers (gates, state, publish, round trip, published-file check, failure report, needs-you check)
 test/consumer-go/        consumer scenario for the generated Go client
 ```
 
 Dependencies: `github.com/klauspost/compress` (zstd),
-`github.com/ulikunitz/xz` (older catalogs), `golang.org/x/crypto` (BLAKE2b). Everything else is the Go standard library.
+`github.com/ulikunitz/xz` (older catalogs), `golang.org/x/crypto`
+(BLAKE2b), `github.com/santhosh-tekuri/jsonschema/v6` (OpenAPI and
+capability schema validation) and `golang.org/x/text` (its messages).
+Everything else is the Go standard library.
 
 ## Stability
 

@@ -206,7 +206,12 @@ typed, whatever their kind.
 | `magic-call` | the controller answers other action names through PHP's `__call` (unbound's `*Dot` endpoints, aliases of `*Forward` with `type` dot); those endpoints are not in the spec |
 | `overlay-unknown` | `addBase`/`setBase` force fields through an overlay whose fields cannot be derived (a helper method, an overlay assembled after reading the request, an expression); which fields is unknown |
 | `no-apply-endpoint` | no apply/reconfigure endpoint found |
-| `model-class-missing`, `model-missing`, `model-path-missing`, `model-path-not-array`, `parent-missing` | the controller refers to something that was not found |
+| `parent-missing` | a parent class of the controller was not found in the sources |
+| `model-class-missing` | the controller names no model (`$internalModelClass`) |
+| `model-missing` | the model the controller names was not found |
+| `model-path-missing` | a helper call names a path the model does not have |
+| `model-path-not-array` | a helper call for entries names a path that is not an entry list |
+| `unknown-setting` | (field) an untyped XML element that is not a known field setting; reported instead of guessed |
 | `field-type-unresolved` | field type not resolved to a core base class (field level) |
 | `custom-read-shape` | custom `getNodeData`/`getNodeOptions`; read shape untyped (field level) |
 | `options-dynamic` | option list depends on the running system (field level) |
@@ -323,7 +328,7 @@ listed in `verify/accepted.json` with reason and evidence; matching
 results become `accepted` and do not count as failures. Adding an entry is
 a reviewed decision.
 
-## 9. Consumers: clients and providers (data implemented, consumers planned)
+## 9. Consumers: clients and providers (data implemented; Go client in opnsense-api-go, provider planned)
 
 ### 9.1 Views
 
@@ -387,8 +392,6 @@ the same data:
   components (e.g. `UnboundUnboundGeneralWrite`, `AsSelectOptions()`,
   `AsEmptyList()`); only the response wrappers stay anonymous
   (`JSON200.Unbound`).
-- Not built yet: the superset view with availability per version and the
-  capability layer for consumers (section 9).
 - Packages of a release can disappear from the mirror (seen for 26.7.8 in
   November 2026). An earlier build is then kept and marked
   `source_unavailable`; a release that was never built cannot be built.

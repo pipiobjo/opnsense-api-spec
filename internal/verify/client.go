@@ -67,8 +67,11 @@ func NewClient(base, key, secret string, allowed []string) (*Client, error) {
 	}
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // #nosec G402 -- throwaway local VM only
-		// HTTP/1.1 only: over HTTP/2 large responses from the OPNsense web
-		// server arrived truncated at 64 KiB (firmware/info, 26.7)
+		// HTTP/1.1 on purpose: the OPNsense web server cuts large HTTP/1.1
+		// answers (broken chunked encoding after 64 KiB; complete over
+		// HTTP/2). The contract test keeps that visible (accepted for
+		// diagnostics/firewall/log in verify/accepted.json); clients should
+		// use HTTP/2.
 		TLSNextProto: map[string]func(string, *tls.Conn) http.RoundTripper{},
 	}
 	return &Client{BaseURL: strings.TrimRight(base, "/"), Key: key, Secret: secret, AllowedHosts: allowed,
