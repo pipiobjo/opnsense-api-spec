@@ -15,10 +15,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/pipiobjo/opnsense-api-spec/internal/controller"
 	"github.com/pipiobjo/opnsense-api-spec/internal/gap"
 	"github.com/pipiobjo/opnsense-api-spec/internal/ir"
 	"github.com/pipiobjo/opnsense-api-spec/internal/model"
+	"github.com/pipiobjo/opnsense-api-spec/internal/php"
 )
 
 // FrameworkFiles are the core files (relative to the MVC app dir) whose
@@ -54,7 +54,7 @@ func Fingerprint(appDir string) (map[string]string, string, error) {
 		case err != nil:
 			return nil, "", err
 		default:
-			norm := spaceRe.ReplaceAllString(controller.StripComments(string(src)), " ")
+			norm := spaceRe.ReplaceAllString(php.StripComments(string(src)), " ")
 			sum := sha256.Sum256([]byte(norm))
 			files[f] = fmt.Sprintf("%x", sum)[:16]
 		}

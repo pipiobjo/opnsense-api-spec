@@ -7,6 +7,7 @@ package model
 
 import (
 	"encoding/xml"
+	"github.com/pipiobjo/opnsense-api-spec/internal/php"
 
 	"fmt"
 	"github.com/pipiobjo/opnsense-api-spec/internal/gap"
@@ -135,27 +136,15 @@ var defaultShapeClasses = map[string]bool{
 	baseNS + "basefield": true, baseNS + "baselistfield": true, baseNS + "basesetfield": true,
 }
 
-func braceEnd(src string, open int) int {
-	depth := 0
-	for i := open; i < len(src); i++ {
-		switch src[i] {
-		case '{':
-			depth++
-		case '}':
-			depth--
-			if depth == 0 {
-				return i
-			}
-		}
-	}
-	return len(src) - 1
-}
-
 // readOverrideOf classifies the getNodeData/getNodeOptions bodies of a class.
 func readOverrideOf(src string) string {
 	kind := ""
 	for _, loc := range nodeFnRe.FindAllStringIndex(src, -1) {
-		body := src[loc[1]-1 : braceEnd(src, loc[1]-1)+1]
+		end := php.Match(src, loc[1]-1, '{', '}')
+		if end < 0 {
+			end = len(src) - 1
+		}
+		body := src[loc[1]-1 : end+1]
 		// only a literal `return (string)$this;` proves a string; using
 		// (string)$this elsewhere (e.g. inside explode) proves nothing
 		strReturns := len(returnStringRe.FindAllStringIndex(body, -1))
@@ -176,10 +165,6 @@ func readOverrideOf(src string) string {
 	return kind
 }
 
-var classRe = regexp.MustCompile(`(?m)^\s*(?:abstract\s+|final\s+)?class\s+(\w+)(?:\s+extends\s+([\\\w]+))?`)
-var nsRe = regexp.MustCompile(`(?m)^\s*namespace\s+([\\\w]+)\s*;`)
-var useRe = regexp.MustCompile(`(?m)^\s*use\s+([\\\w]+)(?:\s+as\s+(\w+))?\s*;`)
-
 // BuildTypeIndex scans all FieldTypes/*.php below modelsDir.
 func BuildTypeIndex(modelsDir string) (*TypeIndex, error) {
 	idx := &TypeIndex{parent: map[string]string{}, names: map[string]string{},
@@ -193,62 +178,31 @@ func BuildTypeIndex(modelsDir string) (*TypeIndex, error) {
 		if err != nil {
 			return err
 		}
-		ns := ""
-		if m := nsRe.FindSubmatch(src); m != nil {
-			ns = string(m[1])
-		}
-		uses := map[string]string{}
-		for _, m := range useRe.FindAllSubmatch(src, -1) {
-			full := string(m[1])
-			alias := string(m[2])
-			if alias == "" {
-				alias = full[strings.LastIndex(full, `\`)+1:]
-			}
-			uses[alias] = full
-		}
-		qualify := func(name string) string {
-			switch {
-			case strings.HasPrefix(name, `\`):
-				return name[1:]
-			case uses[name] != "":
-				return uses[name]
-			case !strings.Contains(name, `\`):
-				return ns + `\` + name
-			}
-			return name
-		}
-		classes := classRe.FindAllSubmatchIndex(src, -1)
-		for ci, m := range classRe.FindAllSubmatch(src, -1) {
-			cls := ns + `\` + string(m[1])
-			key := strings.ToLower(cls)
-			idx.names[key] = cls
-			// a file can hold several classes (NetworkInterfaceField.php):
-			// write overrides are read per class body
-			end := len(src)
-			if ci+1 < len(classes) {
-				end = classes[ci+1][0]
-			}
-			body := string(src[classes[ci][0]:end])
-			for _, w := range writeFnRe.FindAllStringSubmatch(body, -1) {
+		// comments never count, and every rule reads the body of its own
+		// class (a file can hold several, e.g. NetworkInterfaceField.php)
+		code := php.StripComments(string(src))
+		h := php.ParseHeader(code)
+		for _, c := range php.Classes(code, h) {
+			key := strings.ToLower(c.Name)
+			idx.names[key] = c.Name
+			for _, w := range writeFnRe.FindAllStringSubmatch(c.Body, -1) {
 				if idx.writeOverride[key] == nil {
 					idx.writeOverride[key] = map[string]bool{}
 				}
 				idx.writeOverride[key][w[1]] = true
 			}
-			if c := newContainerRe.FindStringSubmatch(body); c != nil {
-				idx.container[key] = strings.ToLower(qualify(c[1]))
+			if m := newContainerRe.FindStringSubmatch(c.Body); m != nil {
+				idx.container[key] = strings.ToLower(h.Qualify(m[1]))
 			}
-			par := string(m[2])
-			if par == "" {
+			if c.Extends == "" {
 				continue // root class (BaseField)
 			}
-			idx.parent[key] = strings.ToLower(qualify(par))
-			// FieldTypes files hold one class each
-			if ov := readOverrideOf(string(src)); ov != "" && !defaultShapeClasses[key] {
+			idx.parent[key] = strings.ToLower(c.Extends)
+			if ov := readOverrideOf(c.Body); ov != "" && !defaultShapeClasses[key] {
 				idx.readOverride[key] = ov
 			}
-			if m := asListRe.FindSubmatch(src); m != nil {
-				idx.asList[key] = string(m[1]) == "true"
+			if m := asListRe.FindStringSubmatch(c.Body); m != nil {
+				idx.asList[key] = m[1] == "true"
 			}
 		}
 		return nil
@@ -632,11 +586,12 @@ func LoadAll(appDir string) ([]*Model, *TypeIndex, error) {
 		}
 		if m != nil {
 			// the model class lives next to its XML (Domain.xml, Domain.php)
-			if src, err := os.ReadFile(strings.TrimSuffix(p, ".xml") + ".php"); err == nil {
-				if saveFnRe.Match(src) {
+			if raw, err := os.ReadFile(strings.TrimSuffix(p, ".xml") + ".php"); err == nil {
+				src := php.StripComments(string(raw))
+				if saveFnRe.MatchString(src) {
 					m.Gaps = append(m.Gaps, gap.New(gap.CustomSave, "%s overrides serializeToConfig; saving runs own code (values may be changed, computed or written elsewhere)", m.Class))
 				}
-				if initFnRe.Match(src) {
+				if initFnRe.MatchString(src) {
 					// e.g. OPNsense\Core\InitialSetup loads every value from
 					// the rest of the configuration on each read
 					m.Gaps = append(m.Gaps, gap.New(gap.CustomSave, "%s overrides init; values read may be set by its own code (loaded from elsewhere or derived), not the ones stored", m.Class))

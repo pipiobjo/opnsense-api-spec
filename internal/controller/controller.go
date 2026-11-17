@@ -7,6 +7,7 @@
 package controller
 
 import (
+	"github.com/pipiobjo/opnsense-api-spec/internal/php"
 	"os"
 
 	"github.com/pipiobjo/opnsense-api-spec/internal/gap"
@@ -100,9 +101,6 @@ type Controller struct {
 }
 
 var (
-	nsRe     = regexp.MustCompile(`(?m)^\s*namespace\s+([\\\w]+)\s*;`)
-	useRe    = regexp.MustCompile(`(?m)^\s*use\s+([\\\w]+)(?:\s+as\s+(\w+))?\s*;`)
-	classRe  = regexp.MustCompile(`(?m)^\s*(abstract\s+|final\s+)?class\s+(\w+)(?:\s+extends\s+([\\\w]+))?`)
 	propRe   = regexp.MustCompile(`static\s+\$(internalModelName|internalModelClass)\s*=\s*['"]([^'"]*)['"]`)
 	funcRe   = regexp.MustCompile(`public\s+function\s+(\w+)Action\s*\(`)
 	callRe   = regexp.MustCompile(`\$this->(searchBase|getBase|addBase|setBase|delBase|toggleBase)\s*\(`)
@@ -114,155 +112,15 @@ var (
 	litRe    = regexp.MustCompile(`^\s*(['"])([^'"]*)['"]\s*$`)
 )
 
-// StripComments removes PHP comments while keeping string literals intact.
-func StripComments(src string) string {
-	var b strings.Builder
-	n := len(src)
-	for i := 0; i < n; i++ {
-		c := src[i]
-		switch {
-		case c == '\'' || c == '"':
-			j := i + 1
-			for j < n && src[j] != c {
-				if src[j] == '\\' {
-					j++
-				}
-				j++
-			}
-			if j >= n {
-				j = n - 1
-			}
-			b.WriteString(src[i : j+1])
-			i = j
-		case c == '/' && i+1 < n && src[i+1] == '*':
-			end := strings.Index(src[i+2:], "*/")
-			if end < 0 {
-				return b.String()
-			}
-			// keep newlines for line counting
-			b.WriteString(strings.Repeat("\n", strings.Count(src[i:i+2+end+2], "\n")))
-			i = i + 2 + end + 1
-		case (c == '/' && i+1 < n && src[i+1] == '/') || c == '#':
-			for i < n && src[i] != '\n' {
-				i++
-			}
-			if i < n {
-				b.WriteByte('\n')
-			}
-		default:
-			b.WriteByte(c)
-		}
-	}
-	return b.String()
-}
-
-// matching returns the index of the bracket closing the one at open.
-func matching(src string, open int, o, c byte) int {
-	depth := 0
-	for i := open; i < len(src); i++ {
-		switch src[i] {
-		case '\'', '"':
-			q := src[i]
-			for i++; i < len(src) && src[i] != q; i++ {
-				if src[i] == '\\' {
-					i++
-				}
-			}
-		case o:
-			depth++
-		case c:
-			depth--
-			if depth == 0 {
-				return i
-			}
-		}
-	}
-	return -1
-}
-
-// splitArgs splits a parameter/argument list at top-level commas.
-func splitArgs(s string) []string {
-	var out []string
-	depth, start := 0, 0
-	for i := 0; i < len(s); i++ {
-		switch s[i] {
-		case '(', '[', '{':
-			depth++
-		case ')', ']', '}':
-			depth--
-		case '\'', '"':
-			q := s[i]
-			for i++; i < len(s) && s[i] != q; i++ {
-				if s[i] == '\\' {
-					i++
-				}
-			}
-		case ',':
-			if depth == 0 {
-				out = append(out, strings.TrimSpace(s[start:i]))
-				start = i + 1
-			}
-		}
-	}
-	if t := strings.TrimSpace(s[start:]); t != "" {
-		out = append(out, t)
-	}
-	return out
-}
-
 var paramNameRe = regexp.MustCompile(`\$(\w+)`)
 
 // ParseFile parses one PHP file into classes.
 func ParseFile(src, relFile string) []*Class {
-	code := StripComments(src)
-	ns := ""
-	if m := nsRe.FindStringSubmatch(code); m != nil {
-		ns = m[1]
-	}
-	uses := map[string]string{}
-	for _, m := range useRe.FindAllStringSubmatch(code, -1) {
-		alias := m[2]
-		if alias == "" {
-			alias = m[1][strings.LastIndex(m[1], `\`)+1:]
-		}
-		uses[alias] = m[1]
-	}
-	qualify := func(name string) string {
-		switch {
-		case name == "":
-			return ""
-		case strings.HasPrefix(name, `\`):
-			return name[1:]
-		case uses[name] != "":
-			return uses[name]
-		case strings.Contains(name, `\`):
-			return ns + `\` + name
-		default:
-			return ns + `\` + name
-		}
-	}
+	code := php.StripComments(src)
 	var out []*Class
-	locs := classRe.FindAllStringSubmatchIndex(code, -1)
-	for _, loc := range locs {
-		cl := &Class{
-			Name:     qualify(code[loc[4]:loc[5]]),
-			File:     relFile,
-			Abstract: loc[2] >= 0 && strings.HasPrefix(code[loc[2]:loc[3]], "abstract"),
-			Actions:  map[string]*Action{},
-		}
-		if loc[6] >= 0 {
-			cl.Extends = qualify(code[loc[6]:loc[7]])
-		}
-		bodyStart := strings.IndexByte(code[loc[1]:], '{')
-		if bodyStart < 0 {
-			continue
-		}
-		bodyStart += loc[1]
-		bodyEnd := matching(code, bodyStart, '{', '}')
-		if bodyEnd < 0 {
-			bodyEnd = len(code) - 1
-		}
-		body := code[bodyStart : bodyEnd+1]
+	for _, pc := range php.Classes(code, php.ParseHeader(code)) {
+		cl := &Class{Name: pc.Name, Extends: pc.Extends, File: relFile, Abstract: pc.Abstract, Actions: map[string]*Action{}}
+		body := pc.Body
 		for _, m := range hookRe.FindAllStringSubmatch(body, -1) {
 			cl.Hooks = append(cl.Hooks, m[1])
 		}
@@ -277,12 +135,12 @@ func ParseFile(src, relFile string) []*Class {
 		for _, fm := range funcRe.FindAllStringSubmatchIndex(body, -1) {
 			name := body[fm[2]:fm[3]]
 			pOpen := fm[1] - 1
-			pClose := matching(body, pOpen, '(', ')')
+			pClose := php.Match(body, pOpen, '(', ')')
 			if pClose < 0 {
 				continue
 			}
 			a := &Action{Name: name, DeclaredIn: cl.Name}
-			for _, p := range splitArgs(body[pOpen+1 : pClose]) {
+			for _, p := range php.SplitArgs(body[pOpen+1 : pClose]) {
 				pm := paramNameRe.FindStringSubmatch(p)
 				if pm == nil {
 					continue
@@ -295,7 +153,7 @@ func ParseFile(src, relFile string) []*Class {
 				continue
 			}
 			fOpen += pClose
-			fClose := matching(body, fOpen, '{', '}')
+			fClose := php.Match(body, fOpen, '{', '}')
 			if fClose < 0 {
 				continue
 			}
@@ -306,11 +164,11 @@ func ParseFile(src, relFile string) []*Class {
 			a.ChecksGet = strings.Contains(fbody, "->isGet()")
 			for _, cm := range callRe.FindAllStringSubmatchIndex(fbody, -1) {
 				aOpen := cm[1] - 1
-				aClose := matching(fbody, aOpen, '(', ')')
+				aClose := php.Match(fbody, aOpen, '(', ')')
 				if aClose < 0 {
 					continue
 				}
-				bc := baseCall(fbody[cm[2]:cm[3]], splitArgs(fbody[aOpen+1:aClose]), fbody[:cm[0]])
+				bc := baseCall(fbody[cm[2]:cm[3]], php.SplitArgs(fbody[aOpen+1:aClose]), fbody[:cm[0]])
 				if om := outerRe.FindStringSubmatch(fbody[:cm[0]]); om != nil {
 					bc.Outer, bc.Direct = om[1], true
 				} else if returnRe.MatchString(fbody[:cm[0]]) {
@@ -467,7 +325,7 @@ func overlayValue(field, v string) Overlay {
 // overlayPairs reads the inside of an array literal of field => value.
 func overlayPairs(inner string) []Overlay {
 	var out []Overlay
-	for _, pair := range splitArgs(inner) {
+	for _, pair := range php.SplitArgs(inner) {
 		k, v, ok := strings.Cut(pair, "=>")
 		if !ok {
 			continue

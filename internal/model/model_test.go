@@ -84,12 +84,13 @@ func TestWriteSideGaps(t *testing.T) {
 		return out
 	}
 	want := map[string][]string{
-		"general.stored":  {"custom-write"}, // plugin field type with setValue
-		"general.mac":     {"custom-write"}, // core field type with setValue
-		"general.enabled": nil,              // BooleanField: only BaseField's own setValue
-		"general.port":    nil,
-		"legacy.entry":    {"custom-save"}, // container class with toLegacy/fromLegacy
-		"plain.entry":     nil,             // ArrayField subclass without storage code
+		"general.stored":    {"custom-write"}, // plugin field type with setValue
+		"general.mac":       {"custom-write"}, // core field type with setValue
+		"general.commented": nil,              // setValue only in comments
+		"general.enabled":   nil,              // BooleanField: only BaseField's own setValue
+		"general.port":      nil,
+		"legacy.entry":      {"custom-save"}, // container class with toLegacy/fromLegacy
+		"plain.entry":       nil,             // ArrayField subclass without storage code
 	}
 	for path, w := range want {
 		n := m.Find(path)

@@ -105,17 +105,6 @@ func TestSnake(t *testing.T) {
 	}
 }
 
-func TestStripCommentsKeepsStrings(t *testing.T) {
-	in := "a = 'http://x'; // c\nb = \"# no\"; /* x\ny */ c"
-	got := StripComments(in)
-	if !strings.Contains(got, "'http://x'") || !strings.Contains(got, `"# no"`) || strings.Contains(got, "// c") || strings.Contains(got, "x\ny") {
-		t.Errorf("StripComments = %q", got)
-	}
-	if strings.Count(got, "\n") != strings.Count(in, "\n") {
-		t.Error("line count must be preserved")
-	}
-}
-
 func TestOverlay(t *testing.T) {
 	lagg := `
         $overlay = [];

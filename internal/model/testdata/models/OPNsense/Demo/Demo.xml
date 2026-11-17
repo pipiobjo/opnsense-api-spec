@@ -45,6 +45,7 @@
             <port type="PortField"/>
             <stored type=".\StoredField"/>
             <mac type="MacAddressField"/>
+            <commented type=".\CommentedField"/>
         </general>
         <legacy>
             <entry type=".\LegacyEntryField">
