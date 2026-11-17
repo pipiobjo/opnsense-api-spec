@@ -20,7 +20,7 @@ WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
 
 fetch() { # fetch TAG FILE: anonymous download into $WORK/TAG/
   mkdir -p "$WORK/$1"
-  env -u GH_TOKEN -u GITHUB_TOKEN curl -fsSL --retry 3 -o "$WORK/$1/$2" "$BASE/$1/$2"
+  env -u GH_TOKEN -u GITHUB_TOKEN curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "$WORK/$1/$2" "$BASE/$1/$2"
 }
 
 check_release() { # check_release TAG
