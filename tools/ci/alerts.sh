@@ -10,7 +10,9 @@
 #
 #   stale     the last successful scheduled run of the workflow (pipeline.yml,
 #             or WD_WORKFLOW) is older
-#             than 7 days (WD_STALE_HOURS); a single failed run is not one
+#             than 7 days (WD_STALE_HOURS); a single failed run is not one;
+#             a workflow that never succeeded counts only once it exists
+#             for 7 days (a new repository has not had its first run yet)
 #   disabled  the workflow is disabled and cannot be re-enabled here (a
 #             workflow GitHub disabled for inactivity is re-enabled silently)
 #   coverage  a release whose catalog state was first built in the last 14
@@ -23,8 +25,8 @@
 # published data.
 #
 # Tests: tools/ci/alerts_test.sh. Every read from GitHub can be replaced by
-# a variable (ALERTS_ISSUES, WD_STATE, WD_LAST_SUCCESS, WD_FAILED_RUN,
-# WD_COVERAGE) and ALERTS_DRY_RUN=1 prints the write calls instead of making
+# a variable (ALERTS_ISSUES, WD_STATE, WD_LAST_SUCCESS, WD_CREATED,
+# WD_FAILED_RUN, WD_COVERAGE) and ALERTS_DRY_RUN=1 prints the write calls instead of making
 # them.
 set -euo pipefail
 
@@ -68,6 +70,13 @@ epoch() { date -u -d "$1" +%s; }
 workflow_state() {
   if [ -n "${WD_STATE+x}" ]; then echo "$WD_STATE"; return; fi
   gh api "repos/$REPO/actions/workflows/$WORKFLOW" --jq .state
+}
+
+# workflow_created: when the workflow file was first registered; a workflow
+# younger than STALE_HOURS that never succeeded is new, not stale
+workflow_created() {
+  if [ -n "${WD_CREATED+x}" ]; then echo "$WD_CREATED"; return; fi
+  gh api "repos/$REPO/actions/workflows/$WORKFLOW" --jq .created_at
 }
 
 last_success() {
@@ -146,7 +155,10 @@ check() {
   esac
 
   if [ -z "$last" ]; then
-    stale="No successful scheduled run of \`$WORKFLOW\` was found."
+    local created; created=$(workflow_created)
+    if [ -z "$created" ] || [ $(( (NOW - $(epoch "$created")) / 3600 )) -ge "$STALE_HOURS" ]; then
+      stale="No successful scheduled run of \`$WORKFLOW\` was found."
+    fi
   else
     local age=$(( (NOW - $(epoch "$last")) / 3600 ))
     if [ "$age" -ge "$STALE_HOURS" ]; then

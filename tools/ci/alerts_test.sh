@@ -26,7 +26,7 @@ failed='{"url":"https://example/run/9","created":"2026-11-19T05:17:00Z","jobs":[
 cov='[{"release":"26.7.10","from":"26.7.9","regressions":["/api/firewall/source_nat/get: typed (base) -> untyped"]}]'
 
 run() { # run [VAR=value ...]: alerts.sh check with healthy defaults
-  env WD_STATE=active WD_LAST_SUCCESS="$(hours_ago 10)" WD_FAILED_RUN=null WD_COVERAGE='[]' ALERTS_ISSUES='[]' "$@" "$A" check
+  env WD_STATE=active WD_LAST_SUCCESS="$(hours_ago 10)" WD_FAILED_RUN=null WD_COVERAGE='[]' ALERTS_ISSUES='[]' WD_CREATED="$(hours_ago 2000)" "$@" "$A" check
 }
 
 out=$(run)
@@ -65,6 +65,10 @@ check "disabled by hand: not re-enabled" "$out" "/enable" absent
 check "disabled by hand: reported" "$out" "disabled_manually"
 out=$(run WD_LAST_SUCCESS="")
 check "no success at all: reported" "$out" "No successful scheduled run"
+out=$(run WD_LAST_SUCCESS="" WD_CREATED="$(hours_ago 7)")
+check "new workflow, not run yet: no message" "$out" "gh " absent
+out=$(run WD_LAST_SUCCESS="" WD_CREATED="$(hours_ago 170)")
+check "never succeeded in 7 days: opens the issue" "$out" "gh issue create"
 
 out=$(run WD_COVERAGE="$cov")
 check "coverage: opens the issue" "$out" "--label needs-you"
