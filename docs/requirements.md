@@ -21,9 +21,9 @@ to the firewall it talks to.
 | F1 | The provider works with the OPNsense core and with plugins. |
 | F2 | It works with different OPNsense versions and different plugin versions, including plugin versions that differ on the same OPNsense version and change their API. |
 | F3 | Spec, client and provider are separate and reusable on their own (a client in another language, an MCP server, a fork). |
-| F4 | The spec is upgrade safe: a new OPNsense or plugin release produces and publishes a new spec automatically. |
+| F4 | The spec is upgrade safe: a new OPNsense or plugin release produces and publishes a new spec automatically, with the next daily run after the mirror serves its packages. When that is not possible (a new series the derivation does not handle, packages not served), a person is told within 7 days (watchdog conditions `stale` and `missing`). |
 | F5 | The client is released on its own. |
-| F6 | Nothing is sent that the firewall's version does not have; a write that did not take effect is an error, never silent (OPNsense ignores unknown keys and answers "saved"). |
+| F6 | Nothing is sent that the firewall's version does not have; a write that did not take effect is an error, never silent (OPNsense ignores unknown keys and answers "saved"). Limits, each documented where it applies: `write_only` fields (passwords, keys) cannot be read back, so their effect is not confirmed; `transformed` fields are compared after OPNsense's normalisation; the raw `Call` method bypasses these checks. |
 | F7 | The client has a read-only mode: it reads everything but sends nothing that changes the firewall, for analysis and for assistants that help configure (2026-11-17). OPNsense privileges cannot express this, because each grants reading and writing together. |
 
 ## Quality requirements
@@ -37,6 +37,18 @@ to the firewall it talks to.
 | Q5 | A stable implementation with a clear architecture before anything is released. |
 | Q6 | Design consistency: the same problem is solved the same way; code is reused, not copied. |
 | Q7 | Quality evidence is visible: coverage reports with a floor, software bills of materials, and a document per repository that says what is tested, how, and what is not. |
+
+## OpenTofu/Terraform provider (planned)
+
+| ID | Requirement |
+|---|---|
+| P1 | Secrets never reach the state in clear text where the protocol allows it: `write_only` fields are write-only attributes (not stored in state or plan); fields that look like secrets by name (password, secret, key, psk, token) are at least `Sensitive`. Diagnostics never contain field values (the client's errors name fields only). |
+| P2 | Drift: every readable field is compared on refresh. `write_only` fields cannot drift-detect; this is stated in the resource documentation. |
+| P3 | Data: the provider embeds one immutable capability data state (`catalog-v1-<data_id>`), verified at build time (checksums and attestation), and reports its `data_id`. Optionally it loads a newer attested state at run time (the user's choice), so a new OPNsense release does not need a provider release. |
+| P4 | Verification is visible: a resource or field not verified on the firewall's version gives a warning in plan, not silence. |
+| P5 | A firewall on a series newer than the data can be read (refresh, import, data sources) with the newest data, marked unverified; changes are refused with a message that names the data to update. |
+| P6 | Apply semantics survive the process: a change saved but not applied (failure, lost answer) is applied on the next run; plan shows it. |
+| P7 | Tested like the client (Q1, Q7): acceptance tests on the throwaway VM for every supported series, coverage with a floor, a `docs/testing.md`. |
 
 ## MCP server (planned)
 
@@ -69,4 +81,7 @@ to the firewall it talks to.
 | 2026-11-15 | The capability format is published once the provider has used it. |
 | 2026-11-16 | The client is re-tested when this repository publishes new data: daily before the first stable release, weekly or monthly after it. |
 | 2026-11-17 | A firewall on a series newer than the data is refused with a typed error; a package older than all data is read-only. |
+| 2026-11-18 | After the architecture review: the capability data is published before the provider uses it, as GitHub pre-releases without a stability promise: one immutable release per data state (`catalog-v1-<data_id>`) and a rolling `catalog` for the newest (capabilities.md, "Identity and releases"). Replaces the 2026-11-15 decision to wait for the provider. |
+| 2026-11-18 | The provider embeds a fixed data state and can load a newer attested one at run time (P3). |
+| 2026-11-18 | A firewall on a newer series can be read with the newest data, marked unverified; writes stay refused (P5; refines 2026-11-17). |
 | 2026-11-17 | The provider and the MCP server build on the Go client. Code generators for other languages are not run as long as every consumer is Go ([ADR 0007](adr/0007-openapi-3-1.md)). |
