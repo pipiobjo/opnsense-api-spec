@@ -19,6 +19,11 @@
 #             days lost typing against the release before it (its
 #             *.quality.json lists regressions); clears by itself 14 days
 #             later
+#   missing   a release on the mirror has had no current data for 7 days:
+#             never built because its packages are not served (a new series
+#             is the important case), or kept on an old build because a
+#             rebuild could not get its packages (index.json "unavailable"
+#             and "source_unavailable")
 #
 # A person never closes the issue; the next check after the cause is gone
 # does. Nothing here is urgent: consumers keep working with the last
@@ -26,7 +31,7 @@
 #
 # Tests: tools/ci/alerts_test.sh. Every read from GitHub can be replaced by
 # a variable (ALERTS_ISSUES, WD_STATE, WD_LAST_SUCCESS, WD_CREATED,
-# WD_FAILED_RUN, WD_COVERAGE) and ALERTS_DRY_RUN=1 prints the write calls instead of making
+# WD_FAILED_RUN, WD_COVERAGE, WD_INDEX) and ALERTS_DRY_RUN=1 prints the write calls instead of making
 # them.
 set -euo pipefail
 
@@ -123,25 +128,40 @@ coverage() {
 # built in the last COVERAGE_DAYS days (first_seen in the published
 # index.json of the release "state"; WD_INDEX replaces it in tests).
 # States built before first_seen existed have none and never count.
+index_json() {
+  if [ -n "${WD_INDEX:-}" ]; then
+    cat "$WD_INDEX"
+  else
+    gh release download state -R "$REPO" -p index.json -O - 2>/dev/null || echo '{"releases":[]}'
+  fi
+}
+
+# missing: releases without current data for STALE_HOURS, as
+# [{release, kind, reason, since}]
+missing() {
+  local cutoff
+  cutoff=$(date -u -d "@$((NOW - STALE_HOURS * 3600))" +%FT%TZ)
+  index_json | jq -c --arg cut "$cutoff" '
+    [(.unavailable // [])[] | {release, kind: "never built", reason, since}]
+    + [.releases[] | select(.source_unavailable) | {release, kind: "kept on an old build", reason: .source_unavailable.reason, since: .source_unavailable.since}]
+    | map(select(.since != null and .since <= $cut))'
+}
+
 recent_releases() {
   local since index
   since=$(date -u -d "@$((NOW - ${COVERAGE_DAYS:-14} * 86400))" +%F)
-  if [ -n "${WD_INDEX:-}" ]; then
-    index=$(cat "$WD_INDEX")
-  else
-    index=$(gh release download state -R "$REPO" -p index.json -O - 2>/dev/null || echo '{"releases":[]}')
-  fi
+  index=$(index_json)
   jq -r --arg since "$since" '.releases[] | select((.first_seen // "") >= $since and .first_seen != null) | .release' <<<"$index"
 }
 
 # ------------------------------------------------------------ check
 
 check() {
-  local state last failed cov open body stale="" problems=0
+  local state last failed cov miss open body stale="" problems=0
   state=$(workflow_state)
   last=$(last_success)
-  cov="[]"
-  [ "$COVERAGE" = 1 ] && cov=$(coverage)
+  cov="[]" miss="[]"
+  [ "$COVERAGE" = 1 ] && cov=$(coverage) && miss=$(missing)
   open=$(open_issue)
   body=$(mktemp)
 
@@ -211,6 +231,19 @@ check() {
       echo "\`*.quality.json\`."
       echo
     fi
+    if [ "$(jq length <<<"$miss")" -gt 0 ]; then
+      problems=$((problems + 1))
+      echo "## Releases without current data"
+      echo
+      jq -r '.[] | "- OPNsense \(.release): \(.kind) since \(.since): \(.reason)"' <<<"$miss"
+      echo
+      echo "**Why.** The mirror lists these releases but does not serve all of their"
+      echo "packages (still being uploaded, withdrawn, or a mirror problem)."
+      echo
+      echo "**If you do nothing.** Consumers on these releases use older data. For a"
+      echo "new series they refuse to write until data for it exists."
+      echo
+    fi
     echo "## To fix"
     echo
     echo "Start a Claude Code session in this repository with the link to this issue"
@@ -228,7 +261,7 @@ check() {
     echo "check: $problems condition(s)"
   else
     if [ -n "$open" ]; then
-      ghw issue close "$open" -R "$REPO" --comment "Resolved: last successful scheduled run $last, no typing loss in the newest releases."
+      ghw issue close "$open" -R "$REPO" --comment "Resolved: last successful scheduled run $last, no typing loss in the newest releases, every release has current data."
     fi
     echo "check: nothing needs a person (last success $last)"
   fi

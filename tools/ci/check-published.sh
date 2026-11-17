@@ -40,7 +40,10 @@ check_release() { # check_release TAG
     diff <(echo "$listed") <(echo "$published") >&2 || true
     return 1
   fi
-  gh attestation verify "$WORK/$tag/SHA256SUMS" -R "$REPO" >/dev/null
+  # only attestations from the publishing pipeline on main count (not a
+  # dry run from another branch or workflow)
+  gh attestation verify "$WORK/$tag/SHA256SUMS" -R "$REPO" \
+    --signer-workflow "$REPO/.github/workflows/pipeline.yml" --source-ref refs/heads/main >/dev/null
   echo "ok $tag: $(wc -l < "$WORK/$tag/SHA256SUMS") assets, checksums and attestation"
 }
 

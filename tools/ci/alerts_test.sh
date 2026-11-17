@@ -19,6 +19,9 @@ check() { # check NAME OUTPUT PATTERN [absent]
   fi
 }
 
+empty_index="${TMPDIR:-/tmp}/alerts-empty-index.json"
+echo '{"releases":[]}' > "$empty_index"
+trap 'rm -f "$empty_index"' EXIT
 hours_ago() { date -u -d "@$((ALERTS_NOW - $1 * 3600))" +%FT%TZ; }
 open_issue='[{"number":3,"state":"OPEN","labels":["needs-you"]}]'
 closed_issue='[{"number":2,"state":"CLOSED","labels":["needs-you"]}]'
@@ -26,7 +29,7 @@ failed='{"url":"https://example/run/9","created":"2026-11-19T05:17:00Z","jobs":[
 cov='[{"release":"26.7.10","from":"26.7.9","regressions":["/api/firewall/source_nat/get: typed (base) -> untyped"]}]'
 
 run() { # run [VAR=value ...]: alerts.sh check with healthy defaults
-  env WD_STATE=active WD_LAST_SUCCESS="$(hours_ago 10)" WD_FAILED_RUN=null WD_COVERAGE='[]' ALERTS_ISSUES='[]' WD_CREATED="$(hours_ago 2000)" "$@" "$A" check
+  env WD_STATE=active WD_LAST_SUCCESS="$(hours_ago 10)" WD_FAILED_RUN=null WD_COVERAGE='[]' ALERTS_ISSUES='[]' WD_CREATED="$(hours_ago 2000)" WD_INDEX="$empty_index" "$@" "$A" check
 }
 
 out=$(run)
@@ -88,6 +91,21 @@ check "other workflow: named in the issue" "$out" 'No successful scheduled run o
 check "other workflow: title names the repository" "$out" "--title Needs you: client"
 out=$(env WD_STATE=active WD_LAST_SUCCESS="$(hours_ago 10)" WD_FAILED_RUN=null ALERTS_ISSUES='[]' WD_COVERAGE_CHECK=0 GITHUB_REPOSITORY=example/client "$A" check)
 check "no coverage check: healthy without reading releases" "$out" "nothing needs a person"
+
+# missing data: unavailable for 7 days opens the issue, younger does not
+cat > "${TMPDIR:-/tmp}/alerts-missing.json" <<JSON
+{"releases":[{"release":"26.7.9","source_unavailable":{"reason":"os-foo 1.2 not served","since":"$(hours_ago 200)"}}],
+ "unavailable":[{"release":"27.1","reason":"core package not served","since":"$(hours_ago 170)"},
+                {"release":"27.1.1","reason":"core package not served","since":"$(hours_ago 5)"}]}
+JSON
+out=$(run WD_INDEX="${TMPDIR:-/tmp}/alerts-missing.json")
+check "missing: opens the issue" "$out" "gh issue create"
+check "missing: names a new series" "$out" "OPNsense 27.1: never built since"
+check "missing: names a kept build" "$out" "OPNsense 26.7.9: kept on an old build"
+check "missing: younger than 7 days not named" "$out" "27.1.1" absent
+out=$(run WD_INDEX="${TMPDIR:-/tmp}/alerts-missing.json" WD_COVERAGE_CHECK=0)
+check "missing: not checked without the coverage check" "$out" "gh " absent
+rm -f "${TMPDIR:-/tmp}/alerts-missing.json"
 
 # which releases count as new for the typing-loss condition: first_seen of
 # the current catalog state within 14 days; no first_seen never counts

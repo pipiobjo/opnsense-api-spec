@@ -5,13 +5,20 @@ The pipeline runs unattended, and nobody is expected to watch it
 issues (Watch -> Custom -> Issues) is enough to be told when a person is
 needed.
 
-## Why a stopped pipeline is not urgent
+## When a stopped pipeline is urgent
 
 Published releases never become wrong. When the pipeline stops, new
-OPNsense releases and plugin updates are simply not described yet.
-Consumers built on the capability data use the newest data they have for a
-newer firewall and read back every write. So a single failed run sends no
-message; the next day's run is the retry.
+OPNsense releases and plugin updates are simply not described yet. For a
+new hotfix or plugin update of a known series, consumers use the nearest
+older data and read back every write: not urgent, and a single failed run
+sends no message; the next day's run is the retry.
+
+A **new series** (for example 27.1, twice a year) is different: consumers
+refuse to write to it until data for it exists (capabilities.md,
+"Selecting the fragments"). From its release, the chain must deliver data
+within the time set in requirements.md (F4). The watchdog reports a
+release the mirror lists but the data does not cover after 7 days (table
+below).
 
 ## The one issue: `needs-you`
 
@@ -23,6 +30,7 @@ message; the next day's run is the retry.
 | No successful scheduled run of `pipeline.yml` for 7 days | a scheduled run succeeds |
 | `pipeline.yml` is disabled by hand (a workflow GitHub disabled for inactivity is re-enabled without a message) | it is enabled again |
 | A release whose catalog state the pipeline first built in the last 14 days lost typing against the release before it (`first_seen` in the index) | 14 days later |
+| A release on the mirror has had no current data for 7 days: never built (packages not served; the important case is a new series) or kept on an old build (a rebuild could not get its packages) | data for it is built |
 
 The issue is edited while the condition lasts and closed by the watchdog
 when it is over. Nobody closes it by hand. Its text has four parts: what
