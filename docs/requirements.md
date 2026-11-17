@@ -24,6 +24,7 @@ to the firewall it talks to.
 | F4 | The spec is upgrade safe: a new OPNsense or plugin release produces and publishes a new spec automatically. |
 | F5 | The client is released on its own. |
 | F6 | Nothing is sent that the firewall's version does not have; a write that did not take effect is an error, never silent (OPNsense ignores unknown keys and answers "saved"). |
+| F7 | The client has a read-only mode: it reads everything but sends nothing that changes the firewall, for analysis and for assistants that help configure (2026-11-17). OPNsense privileges cannot express this, because each grants reading and writing together. |
 
 ## Quality requirements
 
@@ -44,7 +45,7 @@ to the firewall it talks to.
 | M1 | An MCP server gives AI agents access to OPNsense. It lives in its own repository, is released on its own, and is built on opnsense-api-go: no HTTP code and no API knowledge of its own. |
 | M2 | A small, fixed set of generic tools, not one tool per resource and operation (about 390 resources): `list_resources`, `describe_resource` (fields, types, options and flags from the capability data), `get`, `list`, `add`, `set`, `delete`, `apply`, each taking the resource ID as a parameter. The tool set is the same for every OPNsense version; what exists comes from the connected firewall's data at run time. The provider's generic engine follows the same pattern. |
 | M3 | The client's guarantees reach the agent (F2, F6): nothing is sent that the firewall's version does not have, every write is read back, and errors come back as tool errors whose message says what failed and what to do. |
-| M4 | Read-only by default. Writing tools exist only when the operator enables them in the configuration; `delete` and `apply` can be enabled separately; an optional allowlist limits the resources or packages a session may touch. |
+| M4 | Read-only by default, through the client's read-only mode (F7). Writing tools exist only when the operator enables them in the configuration; `delete` and `apply` can be enabled separately; an optional allowlist limits the resources or packages a session may touch. |
 | M5 | Credentials come only from the operator's environment or a file, never from tool input, and never appear in tool output or logs. TLS is verified as in the client. No generic raw-call tool: it would bypass every check. Local transport (stdio) first; a network transport only with authentication. |
 | M6 | Values read from the firewall (descriptions, names, log lines) are returned as data; the tool descriptions say they are untrusted, because they can contain text that looks like instructions. |
 | M7 | Secrets stay hidden: `write_only` fields are never returned, and fields that look like secrets (password, secret, key, by name) are masked in tool output unless the operator allows them. |
