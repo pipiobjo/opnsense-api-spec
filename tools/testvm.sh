@@ -140,7 +140,7 @@ up() {
   else
     [ -r /dev/kvm ] && [ -w /dev/kvm ] || die "/dev/kvm not accessible (TESTVM_ACCEL=tcg allows software emulation)"
   fi
-  rm -f "$VM/run.qcow2" "$VM/console.log" "$VM/apikey.json" "$VM/cookies.txt"
+  rm -f "$VM/run.qcow2" "$VM/console.log" "$VM/apikey.json" "$VM/cookies.txt" "$VM"/install-*.log
   # 24G: room for plugins; the nano image grows to the disk size on first boot
   qemu-img create -q -f qcow2 -F qcow2 -b "base-$series.qcow2" "$VM/run.qcow2" 24G
   # vtnet0 = LAN (192.168.1.1), vtnet1 = WAN, vtnet2/3 = spare NICs for
@@ -233,9 +233,16 @@ install_plugin() {
     done
   fi
   if installed_packages | grep -qx "$p"; then return 0; fi
-  echo "install of $p failed; firmware log:" >&2
-  api GET /api/core/firmware/upgradestatus | jq -r '.log // ""' \
-    | grep -iE "error|fail|no packages|not found|conflict|$p" | tail -n 5 | sed 's/^/  /' >&2
+  # evidence for later: the complete firmware log and what the firmware
+  # says about the package (CI keeps $VM/*.log when a plugin is missing)
+  {
+    echo "# status: $(fw_status), started: $started, $(date -u +%FT%TZ)"
+    api GET /api/core/firmware/upgradestatus | jq -r '.log // ""'
+    echo "# firmware/info entry:"
+    api GET /api/core/firmware/info | jq -c --arg p "$p" '[.package[]?, .plugin[]? | select(.name == $p)]'
+  } > "$VM/install-$p.log" 2>&1
+  echo "install of $p failed (complete firmware log: $VM/install-$p.log):" >&2
+  grep -iE "error|fail|no packages|not found|conflict|$p" "$VM/install-$p.log" | tail -n 5 | sed 's/^/  /' >&2
   return 1
 }
 

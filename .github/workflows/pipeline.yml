@@ -241,7 +241,7 @@ jobs:
           mkdir -p out
           echo "${{ matrix.release }}" > out/release
           cp "$f" "dist/${{ matrix.release }}/opnsense-${{ matrix.release }}.openapi.json" out/ 2>/dev/null || true
-          cp .cache/vm/verify.log .cache/vm/console.log .cache/vm/proxy.log .cache/vm/failures.md out/ 2>/dev/null || true
+          cp .cache/vm/verify.log .cache/vm/console.log .cache/vm/proxy.log .cache/vm/failures.md .cache/vm/install-*.log out/ 2>/dev/null || true
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
