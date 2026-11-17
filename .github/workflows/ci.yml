@@ -32,5 +32,10 @@ jobs:
         with:
           path: .cache/pkg
           key: pkg-golden-${{ hashFiles('internal/assemble/testdata/golden/*.json') }}
-      - name: Gates (format, vet, tests with golden releases, script tests)
+      - name: Gates (format, vet, tests with golden releases, script tests, coverage)
         run: tools/ci/gates.sh
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-unit
+          path: coverage/
+          retention-days: 30

@@ -24,6 +24,9 @@ is derived from where and why. This page explains how.
 | `tools/ci/` | scripts the workflows run; each also runs locally |
 | `verify/accepted.json` | upstream behaviour declared as expected, with evidence |
 
+What each test shows: [testing.md](testing.md). A new test is named there
+under its claim (`TestEveryTestIsDocumented` checks).
+
 ## The local loop
 
 Everything CI does runs on a workstation. Use the pipeline only to move
@@ -31,7 +34,7 @@ Everything CI does runs on a workstation. Use the pipeline only to move
 
 ```sh
 mise install
-tools/ci/gates.sh                      # gofmt, vet, all tests incl. golden, script tests
+tools/ci/gates.sh                      # gofmt, vet, all tests incl. golden, script tests, coverage
 ```
 
 `gates.sh` is exactly what `ci.yml` and the pipeline run. It downloads
@@ -42,6 +45,7 @@ A generator change is checked against real releases and a real firewall:
 ```sh
 go run ./cmd/opnsense-api-spec matrix -series all            # every release with plugins, into dist/
 tools/testvm.sh verify 26.7 --release latest --plugins       # fresh VM, all plugins, contract test, VM gone
+tools/testvm.sh contract-coverage                            # coverage of that contract test, with its floor
 go run ./cmd/opnsense-api-spec failures dist/*/opnsense-*.verified.json
 go run ./cmd/opnsense-api-spec index
 go run ./cmd/opnsense-api-spec capabilities

@@ -12,7 +12,9 @@ Background, versioning model, verification and limitations:
 [docs/concepts.md](docs/concepts.md). Decisions: [docs/adr/](docs/adr/).
 What is missing for full automation: [docs/roadmap.md](docs/roadmap.md).
 Changing the generator or running your own copy:
-[docs/development.md](docs/development.md).
+[docs/development.md](docs/development.md). Requirements:
+[docs/requirements.md](docs/requirements.md); what is tested and how:
+[docs/testing.md](docs/testing.md).
 
 ## What it does
 

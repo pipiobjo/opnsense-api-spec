@@ -23,6 +23,9 @@
 #                                  contract tests against the running VM
 #   tools/testvm.sh verify 26.7 [--release 26.7.5] [--plugins]
 #                                  start + contract tests + down
+#   tools/testvm.sh contract-coverage
+#                                  coverage report of the last contract test,
+#                                  with the floor (tools/ci/coverage.sh)
 #
 # Isolation: user-mode networking with restrict=on (no route to the LAN or the
 # internet). The only way in is a port forward on 127.0.0.1:${PORT:-18443} to
@@ -416,8 +419,19 @@ contract() {
   local pk="opnsense" more
   more=$(listfile "$VM/plugins-installed.txt")
   [ -n "$more" ] && pk="opnsense,$more"
-  (cd "$ROOT" && go run ./cmd/opnsense-api-spec verify -write -packages "$pk" \
-    -ir "$1" -url "$URL" -keyfile "$VM/apikey.json")
+  # built with coverage: tools/ci/coverage.sh contract $VM/contract.out
+  # reports which code of the contract test ran against the instance
+  rm -rf "$VM/cover"; mkdir -p "$VM/cover"
+  local rc=0
+  (cd "$ROOT" && GOCOVERDIR="$VM/cover" go run -cover -coverpkg=./... ./cmd/opnsense-api-spec verify -write -packages "$pk" \
+    -ir "$1" -url "$URL" -keyfile "$VM/apikey.json") || rc=$?
+  go tool covdata textfmt -i="$VM/cover" -o "$VM/contract.out" || true
+  return "$rc"
+}
+
+# contract_coverage: report and floor for the last contract test
+contract_coverage() {
+  "$ROOT/tools/ci/coverage.sh" contract "$VM/contract.out" "$ROOT/coverage"
 }
 
 case "${1:-}" in
@@ -431,5 +445,6 @@ case "${1:-}" in
   start)   s="${2:?series}"; shift 2; start "$s" "$@" ;;
   contract) running || die "no VM running; run: $0 start <series>"; contract "${2:?IR file}" ;;
   verify)  s="${2:?series}"; shift 2; verify "$s" "$@" ;;
+  contract-coverage) contract_coverage ;;
   *) sed -n '4,27p' "$0"; exit 2 ;;
 esac

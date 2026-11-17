@@ -207,6 +207,15 @@ jobs:
       - name: Contract test ${{ matrix.release }}
         run: |
           tools/testvm.sh contract "dist/${{ matrix.release }}/opnsense-${{ matrix.release }}.ir.json" 2>&1 | tee .cache/vm/verify.log
+      # which code of the contract test ran against the instance; floor in
+      # tools/ci/coverage-floor.txt
+      - name: Contract test coverage
+        run: tools/testvm.sh contract-coverage
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-contract-${{ matrix.release }}
+          path: coverage/
+          retention-days: 30
       - name: Stop test VM
         if: always()
         uses: ./.github/actions/testvm
