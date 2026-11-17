@@ -4,14 +4,15 @@
 # The only way to main (ADR 0012). Work lands on the branch "dev"; this
 # workflow runs the code gates and the whole pipeline as a dry run twice on
 # that exact commit (once as it plans itself, once as a day without
-# changes, the path that failed on 2026-11-14 and -15), then fast-forwards
+# changes, where no contract job runs), then fast-forwards
 # main. The first dry run also uploads the newest release to a draft
 # release, checks names and checksums as GitHub stored them, and deletes
 # the draft (tools/ci/roundtrip.sh). The nightly run therefore only ever
 # runs code that passed all of this.
 #
-# A ruleset on main allows updates only by GitHub Actions. A failure here
-# notifies nobody: main simply stays where it was.
+# Anyone with write access could still push to main; a live pipeline run
+# then refuses to publish that commit (pipeline.yml, "Only promoted commits
+# publish"). A failure here notifies nobody: main simply stays where it was.
 name: promote
 
 on:

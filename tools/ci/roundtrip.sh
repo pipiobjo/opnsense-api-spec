@@ -11,8 +11,8 @@
 #   tools/ci/roundtrip.sh DIST [RELEASE]     (default: newest release in DIST)
 #
 # This tests GitHub's real behaviour (asset names, uploads), which a fake
-# cannot: on 2026-11-16 GitHub renamed "a..b.json" to "a.b.json" and the
-# published checksums did not match.
+# cannot: GitHub renames some asset names ("a..b.json" becomes "a.b.json"),
+# and the checksums must name what was actually stored (ADR 0012).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

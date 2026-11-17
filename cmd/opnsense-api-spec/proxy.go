@@ -39,8 +39,8 @@ func proxy(c *pkgrepo.Client, arch, release, listen string) error {
 // meta.conf, signatures of the catalog) changes when OPNsense publishes a
 // hotfix revision into the same snapshot, so it is fetched again once per
 // handler, i.e. once per proxy start; a stale catalog would install an
-// older core than the one the pipeline derived (seen 2026-11-15: 26.7.9
-// instead of 26.7.9_1).
+// older core than the one the pipeline derived (26.7.9 instead of
+// 26.7.9_1).
 func proxyHandler(c *pkgrepo.Client, abi, series, version, cacheDir string) http.Handler {
 	re := regexp.MustCompile(`^/` + regexp.QuoteMeta(abi) + `/` + regexp.QuoteMeta(series) +
 		`/(latest|aux)/([A-Za-z0-9._+,/-]+)$`)

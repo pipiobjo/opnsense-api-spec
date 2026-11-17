@@ -90,5 +90,13 @@ issues, and the notification test workflow.
   window. The release creation date proved useless as "new" (34 releases
   were created at once), so each catalog state records when the pipeline
   first built it (`first_seen`), and states from before have none.
+- Incidents that shaped the checks: on 2026-11-14 and -15 the run of a
+  day without contract jobs failed in the publish job because
+  `download-artifact` unpacks one match differently from several (hence
+  explicit paths and the skip-contract dry run in `promote.yml`); on
+  2026-11-15 a cached package catalog installed 26.7.9 instead of
+  26.7.9_1 (hence the per-start refetch in the package proxy); on
+  2026-11-16 GitHub stored "a..b.json" as "a.b.json" and the published
+  checksums did not match (hence staged names and `roundtrip.sh`).
 - `tools/ci/check-published.sh` against a local server: passes on intact
   files, fails on a changed one.

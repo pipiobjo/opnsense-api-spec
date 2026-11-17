@@ -11,6 +11,8 @@ published. Not an official OPNsense project.
 Background, versioning model, verification and limitations:
 [docs/concepts.md](docs/concepts.md). Decisions: [docs/adr/](docs/adr/).
 What is missing for full automation: [docs/roadmap.md](docs/roadmap.md).
+Changing the generator or running your own copy:
+[docs/development.md](docs/development.md).
 
 ## What it does
 
@@ -253,7 +255,8 @@ notes name the composition and the generator commit.
 
 ## Contributing and security
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Report security problems privately
+See [CONTRIBUTING.md](CONTRIBUTING.md) and
+[docs/development.md](docs/development.md). Report security problems privately
 as described in [SECURITY.md](SECURITY.md), not in a public issue.
 
 This project is maintained on a best-effort basis; there is no support

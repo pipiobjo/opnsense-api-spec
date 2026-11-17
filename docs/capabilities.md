@@ -121,6 +121,8 @@ documents keep them.
 | `base` | the core base class it resolves to; decides validation and shape |
 | `read_shape` | `string`, or `select` (a read returns `{key: {value, selected}}`, a write takes the keys comma-separated); `unknown` when the class could not be resolved |
 | `multiple`, `required`, `volatile` | as in the model; `volatile` fields are not stored |
+| `server_set` | the firewall fills the field itself (base `UniqueIdField`, `AutoNumberField`, `JsonAuditField`) and ignores a value sent |
+| `write_only` | stored but never returned on read (`UpdateOnlyTextField`, for example passwords); a reader always sees it empty |
 | `default` | the model default; absent means empty |
 | `options` | static options from the model; dynamic options (interfaces, certificates) only exist on the instance |
 | `relations` | entry lists a relation field points to: `source` is the model class as written in the model, with dots and in any case (`OPNsense.quagga.ospf` for `OPNsense\Quagga\OSPF`; PHP class names are case-insensitive), `items` the list path |
@@ -237,16 +239,15 @@ provider needs cannot be derived from it, and the format says nothing
 rather than guess:
 
 - **Secrets.** OPNsense models do not mark a field as secret. Only
-  `UpdateOnlyTextField` is recognisable (written, never returned on read,
-  so a reader always sees it empty). Fields such as a `password` or
+  `write_only` fields are recognisable. Fields such as a `password` or
   `secret` of type `TextField` (more than 200 over all packages) look like
   any other text. A provider has to decide which fields to treat as
   sensitive, for example by name, and should err towards hiding.
 - **Value types.** Every value is a string on the wire. `base` and
   `multiple` decide how to present it: `BooleanField` is `"0"`/`"1"`,
   `IntegerField` and `NumericField` are numbers as strings, `multiple`
-  fields are comma-separated lists, `UniqueIdField` and `AutoNumberField`
-  are set by the firewall. `base` is the nearest class of the core, not
+  fields are comma-separated lists, `server_set` fields are set by the
+  firewall. `base` is the nearest class of the core, not
   the root of the hierarchy (`StrictTextField` and `TextField` are both
   bases), so a consumer keeps a small table from base to its own type. A
   change of `base` between variants is often a refactoring in OPNsense
@@ -262,6 +263,13 @@ rather than guess:
 - Fragment hashes are content addresses and do not change. A new generator
   version can produce new fragments for the same package version; the
   older ones stay in the data as long as a catalog state refers to them.
+- Versions (`26.7.9_1`, `2.3_10`) are ordered by their dot-separated
+  parts and then the revision after `_`, each compared as a number and then
+  by any letter suffix (`2.3_10` is newer than `2.3_9`, `1.2a` newer than
+  `1.2`). Any reader that picks "the newest" or "the nearest older" version
+  must use this order; plain string order is wrong. The generator
+  (`pkgrepo.CompareVersions`) and the Go client
+  (`capability.CompareVersions`) implement it with the same test table.
 - Resource identifiers and field paths are OPNsense's own names. When
   OPNsense renames something, the old name stays with its fragments and the
   new one appears with the new fragments.
@@ -270,5 +278,4 @@ rather than guess:
 
 - `moved_from`: which field a field replaced (a rename or a move within
   the model). Planned as an additional key, generated from the diffs.
-- Write tests of settings resources.
 - Per-field verification (today: per resource).

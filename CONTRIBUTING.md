@@ -12,25 +12,12 @@ questions are answered there.
 
 ```sh
 mise install          # Go toolchain from mise.toml
-gofmt -l .            # must print nothing
-go vet ./...
-go test ./...
+tools/ci/gates.sh     # exactly what CI runs: gofmt, vet, all tests incl. golden releases
 ```
 
-The golden tests need the extracted sources of three final releases; they
-are skipped locally without them and required in CI:
-
-```sh
-tools/ci/golden-fetch.sh
-GOLDEN_REQUIRED=1 go test ./internal/assemble/
-```
-
-Building releases and running contract tests (needs QEMU, ideally KVM):
-
-```sh
-go run ./cmd/opnsense-api-spec build -release 26.7.9 -plugins
-tools/testvm.sh verify 26.7 --release 26.7.9 --plugins
-```
+[docs/development.md](docs/development.md) describes the full local loop
+(all releases, contract tests on the throwaway VM), how to add a
+derivation rule, a gap code or a check, and how to run your own copy.
 
 ## Rules for changes
 
