@@ -264,8 +264,11 @@ fields. See section 9.
 - A GET with `Content-Type: application/json` and no body is rejected with
   HTTP 400 "Invalid JSON syntax".
 - Large responses (e.g. `firmware/info` with many plugins, firewall logs)
-  arrive with broken chunked encoding over HTTP/1.1 (cut after 64 KiB);
-  over HTTP/2 they are complete.
+  arrived with broken chunked encoding over HTTP/1.1 on 26.7 test VMs in
+  November 2026 (cut after 64 KiB). On 25.7.11_9, 26.1.11_10 and 26.7.9_3
+  they are complete over both protocols (an 860 KB firewall log,
+  2026-11-17). The contract test uses HTTP/1.1, so a recurrence fails it;
+  HTTP/2 remains the safer choice for clients.
 - Some required fields are enforced only in PHP validation, not marked
   `Required` in the model (`x-opnsense-runtime-required`).
 
@@ -322,8 +325,8 @@ explain its result:
 | contract test without mismatches outside known gaps and accepted findings | publish; regressions and framework changes go into the release notes |
 | contract test with new mismatches | do not publish; report with the quality report (framework changes, regressions) as context |
 
-Accepted findings (known upstream issues or intended behaviour, e.g.
-broken chunked encoding over HTTP/1.1, the captive portal client API) are
+Accepted findings (known upstream issues or intended behaviour, e.g. the
+captive portal client API) are
 listed in `verify/accepted.json` with reason and evidence; matching
 results become `accepted` and do not count as failures. Adding an entry is
 a reviewed decision.
@@ -357,7 +360,7 @@ any error. Consumers therefore need a thin capability layer, generated from
 the same data:
 
 1. read `product_version` (including the hotfix revision) and the installed
-   plugin versions (`/api/core/firmware/info`, over HTTP/2);
+   plugin versions (`/api/core/firmware/info`);
 2. select the matching fragments (core version -> framework -> fragment per
    package, [capabilities.md](capabilities.md));
 3. reject requests that use operations, fields or enum values this

@@ -412,8 +412,7 @@ verify() {
 
 # contract IRFILE: contract tests against the running VM (after start)
 contract() {
-  # the list of successful installs; /api/core/firmware/info is not used
-  # because its large response arrives broken over HTTP/1.1 (26.7)
+  # the list of successful installs (installed_packages checked each one)
   local pk="opnsense" more
   more=$(listfile "$VM/plugins-installed.txt")
   [ -n "$more" ] && pk="opnsense,$more"

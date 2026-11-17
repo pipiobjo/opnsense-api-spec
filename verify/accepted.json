@@ -8,13 +8,6 @@
    "evidence": "CaptivePortal/Api/AccessController.php apiAction (26.7); HTTP 400 on 26.7 and 26.1.6 test VMs, 2026-11-11"
   },
   {
-   "path": "/api/diagnostics/firewall/log",
-   "check": "reachable",
-   "releases": "*",
-   "reason": "Upstream web server issue: large responses arrive with broken chunked encoding over HTTP/1.1 (cut after 64 KiB); complete over HTTP/2. The verifier uses HTTP/1.1 on purpose so the issue stays visible elsewhere.",
-   "evidence": "curl --http1.1 exit 56 vs --http2 complete for firmware/info (26.7, 69 plugins); firewall/log on 26.7 test VM, 2026-11-11"
-  },
-  {
    "path": "/api/udpbroadcastrelay/settings/get",
    "check": "shape",
    "releases": "25.7.*",
