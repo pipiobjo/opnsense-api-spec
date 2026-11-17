@@ -7,15 +7,15 @@
 package controller
 
 import (
-	"github.com/pipiobjo/opnsense-api-spec/internal/php"
 	"os"
-
-	"github.com/pipiobjo/opnsense-api-spec/internal/gap"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"unicode"
+
+	"github.com/pipiobjo/opnsense-api-spec/internal/gap"
+	"github.com/pipiobjo/opnsense-api-spec/internal/php"
 )
 
 // Param is a path parameter taken from the action signature.

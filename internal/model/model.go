@@ -7,16 +7,16 @@ package model
 
 import (
 	"encoding/xml"
-	"github.com/pipiobjo/opnsense-api-spec/internal/php"
-
 	"fmt"
-	"github.com/pipiobjo/opnsense-api-spec/internal/gap"
 	"io"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/pipiobjo/opnsense-api-spec/internal/gap"
+	"github.com/pipiobjo/opnsense-api-spec/internal/php"
 )
 
 // Kind is the structural role of a node.

@@ -24,6 +24,7 @@ import (
 	"github.com/pipiobjo/opnsense-api-spec/internal/diff"
 	"github.com/pipiobjo/opnsense-api-spec/internal/fragment"
 	"github.com/pipiobjo/opnsense-api-spec/internal/ir"
+	"github.com/pipiobjo/opnsense-api-spec/internal/jsonfile"
 	"github.com/pipiobjo/opnsense-api-spec/internal/openapi"
 	"github.com/pipiobjo/opnsense-api-spec/internal/pkgrepo"
 	"github.com/pipiobjo/opnsense-api-spec/internal/quality"
@@ -231,7 +232,7 @@ func (p *Pipeline) Fetch(version string, plugins bool, dir string) (*Fetched, er
 	if err := assemble.WriteOwners(dir, f.Owners); err != nil {
 		return nil, err
 	}
-	if err := WriteJSON(filepath.Join(dir, ".release.json"), f.meta()); err != nil {
+	if err := jsonfile.Write(filepath.Join(dir, ".release.json"), f.meta()); err != nil {
 		return nil, err
 	}
 	return f, nil
@@ -284,10 +285,10 @@ func (p *Pipeline) Build(version string, plugins bool, out string) (string, erro
 		name += "-core"
 	}
 	irPath := filepath.Join(out, name+".ir.json")
-	if err := WriteJSON(irPath, rel); err != nil {
+	if err := jsonfile.Write(irPath, rel); err != nil {
 		return "", err
 	}
-	if err := WriteJSON(filepath.Join(out, name+".openapi.json"), doc); err != nil {
+	if err := jsonfile.Write(filepath.Join(out, name+".openapi.json"), doc); err != nil {
 		return "", err
 	}
 	if err := os.WriteFile(filepath.Join(out, name+".coverage.md"), []byte(CoverageMD(rel, cov)), 0o644); err != nil {
@@ -352,7 +353,7 @@ func markUnavailable(dir string, reason string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	return WriteJSON(path, u)
+	return jsonfile.Write(path, u)
 }
 
 // ReadUnavailable returns the marker of a release directory, nil if absent.
@@ -395,6 +396,9 @@ type Outcome struct {
 	Reason      string
 	Composition string // id after the run
 	Status      fragment.Status
+	// Kept: a rebuild was due, but its packages are no longer available;
+	// the previous build stays (Action may still be a status change).
+	Kept bool
 	// Quality compares with the previous release of the run (nil for the
 	// first one): regressions and framework changes. It explains contract
 	// test failures; it is not a gate (framework files change in about two
@@ -469,6 +473,7 @@ func (p *Pipeline) Matrix(series []string, latestOnly, force bool) ([]Outcome, e
 		cur, ierr := ReadIR(irPath)
 		st := statusOf(all, r)
 		action, reason := Decide(comp, ierr == nil, catSum, ir.GeneratorVersion, st, force)
+		kept := false
 		if action == ActionBuild {
 			p.logf("%s: %s, building\n", r.Version, reason)
 			built, err := p.Build(r.Version, true, dir)
@@ -497,7 +502,7 @@ func (p *Pipeline) Matrix(series []string, latestOnly, force bool) ([]Outcome, e
 				p.logf("%s: %s due (%s), but packages are not available; keeping %s: %v\n",
 					r.Version, action, reason, comp.ID(), err)
 				reason = "kept: " + reason
-				action = ActionKept
+				action, kept = ActionKept, true
 				if comp.Status != st {
 					action, reason = ActionStatusOnly, reason+"; "+string(comp.Status)+" -> "+string(st)
 				}
@@ -514,23 +519,23 @@ func (p *Pipeline) Matrix(series []string, latestOnly, force bool) ([]Outcome, e
 		case ActionBuild, ActionKept:
 		case ActionStatusOnly:
 			comp.Status = st
-			if err := WriteJSON(filepath.Join(dir, "composition.json"), comp); err != nil {
+			if err := jsonfile.Write(filepath.Join(dir, "composition.json"), comp); err != nil {
 				return out, err
 			}
-			if err := WriteJSON(filepath.Join(dir, "compositions", comp.ID()+".json"), comp); err != nil {
+			if err := jsonfile.Write(filepath.Join(dir, "compositions", comp.ID()+".json"), comp); err != nil {
 				return out, err
 			}
 			p.logf("%s: status %s\n", r.Version, reason)
 		default:
 			p.logf("%s: up to date (%s)\n", r.Version, comp.ID())
 		}
-		oc := Outcome{Release: r.Version, Action: action, Reason: reason, Composition: comp.ID(), Status: comp.Status}
+		oc := Outcome{Release: r.Version, Action: action, Reason: reason, Composition: comp.ID(), Status: comp.Status, Kept: kept}
 		if prev != nil {
 			if _, err := WriteDiff(prev, cur, dir); err != nil {
 				return out, err
 			}
 			oc.Quality = quality.Compare(prev, cur)
-			if err := WriteJSON(filepath.Join(dir, prev.Version+".."+cur.Version+".quality.json"), oc.Quality); err != nil {
+			if err := jsonfile.Write(filepath.Join(dir, prev.Version+".."+cur.Version+".quality.json"), oc.Quality); err != nil {
 				return out, err
 			}
 		}
@@ -563,22 +568,10 @@ func WriteDiff(a, b *ir.Release, dir string) (*diff.Report, error) {
 		return nil, err
 	}
 	base := filepath.Join(dir, a.Version+".."+b.Version)
-	if err := WriteJSON(base+".json", r); err != nil {
+	if err := jsonfile.Write(base+".json", r); err != nil {
 		return nil, err
 	}
 	return r, os.WriteFile(base+".md", []byte(r.Markdown()), 0o644)
-}
-
-// WriteJSON writes indented JSON without HTML escaping.
-func WriteJSON(path string, v any) error {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(v); err != nil {
-		return err
-	}
-	return os.WriteFile(path, buf.Bytes(), 0o644)
 }
 
 // CoverageMD renders the human-readable coverage report.

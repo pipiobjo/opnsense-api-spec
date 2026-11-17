@@ -34,8 +34,9 @@ body=$(mktemp)
       found=1
       continue
     fi
-    fails=$(jq -r '.results[] | select(.status == "mismatch" or .status == "error")
-      | "- \(.check) `\(.path)` (\(.status)): \(.findings // [] | .[0:3] | join("; "))"' "$f")
+    # written by the contract job with "opnsense-api-spec failures": the
+    # generator decides what fails, this script only shows it
+    fails=$(cat "$d/failures.md" 2>/dev/null || true)
     [ -n "$fails" ] || continue
     found=1
     echo "### $rel (test instance $(jq -r .instance_version "$f"))"

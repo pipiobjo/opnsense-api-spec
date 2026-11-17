@@ -619,7 +619,7 @@ func TestUnavailablePackages(t *testing.T) {
 		t.Fatal(err)
 	}
 	o := outcome(t, outs, "26.7.1")
-	if o.Action != ActionKept || !strings.HasPrefix(o.Composition, "26.7.1~") {
+	if o.Action != ActionKept || !o.Kept || !strings.HasPrefix(o.Composition, "26.7.1~") {
 		t.Errorf("26.7.1 must be kept: %+v", o)
 	}
 	var kept *IndexRelease

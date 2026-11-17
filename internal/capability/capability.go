@@ -21,6 +21,7 @@ import (
 	"github.com/pipiobjo/opnsense-api-spec/internal/fragment"
 	"github.com/pipiobjo/opnsense-api-spec/internal/gap"
 	"github.com/pipiobjo/opnsense-api-spec/internal/ir"
+	"github.com/pipiobjo/opnsense-api-spec/internal/jsonfile"
 	"github.com/pipiobjo/opnsense-api-spec/internal/model"
 	"github.com/pipiobjo/opnsense-api-spec/internal/pkgrepo"
 	"github.com/pipiobjo/opnsense-api-spec/internal/verify"
@@ -191,9 +192,9 @@ type ResVerify struct {
 	Date        string `json:"date"`
 	// Read: worst status of the read checks (shape, schema) of the get and
 	// search operations; absent when none ran.
-	Read string `json:"read,omitempty"`
+	Read verify.Status `json:"read,omitempty"`
 	// Write: status of the write cycle (entries only); absent when none ran.
-	Write           string         `json:"write,omitempty"`
+	Write           verify.Status  `json:"write,omitempty"`
 	Steps           []string       `json:"steps,omitempty"`
 	Sample          map[string]any `json:"sample,omitempty"`
 	Generated       []string       `json:"generated,omitempty"`
@@ -226,7 +227,7 @@ func Build(dist string) (*Catalog, map[string]*Doc, error) {
 		if rep := reports[c.ID()]; rep != nil {
 			v := &Verification{Date: rep.Date, Generator: rep.Generator, Instance: rep.Instance, Packages: rep.Packages, Results: map[string]int{}}
 			for _, res := range rep.Results {
-				v.Results[res.Check+"/"+res.Status]++
+				v.Results[res.Key()]++
 			}
 			cc.Verified = v
 		}
@@ -309,7 +310,7 @@ func readCompositions(dist string) ([]*fragment.Composition, map[string]*verify.
 	var comps []*fragment.Composition
 	for _, p := range files {
 		var c fragment.Composition
-		if err := readJSON(p, &c); err != nil {
+		if err := jsonfile.Read(p, &c); err != nil {
 			return nil, nil, err
 		}
 		comps = append(comps, &c)
@@ -327,7 +328,7 @@ func readCompositions(dist string) ([]*fragment.Composition, map[string]*verify.
 	vfiles, _ := filepath.Glob(filepath.Join(dist, "*", "opnsense-*.verified.json"))
 	for _, p := range vfiles {
 		var rep verify.Report
-		if err := readJSON(p, &rep); err != nil {
+		if err := jsonfile.Read(p, &rep); err != nil {
 			return nil, nil, err
 		}
 		// a report without composition or package list (older generators)
@@ -341,18 +342,7 @@ func readCompositions(dist string) ([]*fragment.Composition, map[string]*verify.
 
 func readFragment(dist, pkg, hash string) (*fragment.Fragment, error) {
 	var f fragment.Fragment
-	return &f, readJSON(filepath.Join(dist, "fragments", pkg, hash+".ir.json"), &f)
-}
-
-func readJSON(path string, v any) error {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	if err := json.Unmarshal(raw, v); err != nil {
-		return fmt.Errorf("%s: %w", path, err)
-	}
-	return nil
+	return &f, jsonfile.Read(filepath.Join(dist, "fragments", pkg, hash+".ir.json"), &f)
 }
 
 // per-fragment raw values, merged into variants by finish
@@ -723,14 +713,14 @@ func (d *Doc) addVerification(hash string, c *fragment.Composition, rep *verify.
 		for op, o := range api.Operations {
 			for _, r := range byPath[o.Path] {
 				switch {
-				case r.Check == "write-cycle":
+				case r.Check == verify.CheckWriteCycle:
 					v.Write, v.Steps, v.Sample, v.Generated, v.RuntimeRequired = r.Status, r.Steps, r.Sample, r.Generated, r.RuntimeRequired
-					if r.Status != "ok" {
+					if r.Status != verify.StatusOK {
 						v.Findings = append(v.Findings, r.Findings...)
 					}
-				case (op == "get" || op == "search") && (r.Check == "shape" || r.Check == "schema"):
-					v.Read = worse(v.Read, r.Status)
-					if r.Status != "ok" && r.Status != "accepted" {
+				case (op == "get" || op == "search") && (r.Check == verify.CheckShape || r.Check == verify.CheckSchema):
+					v.Read = verify.Worse(v.Read, r.Status)
+					if r.Status != verify.StatusOK && r.Status != verify.StatusAccepted {
 						v.Findings = append(v.Findings, r.Findings...)
 					}
 				}
@@ -751,15 +741,6 @@ func (d *Doc) addVerification(hash string, c *fragment.Composition, rep *verify.
 		}
 		res.Verify[hash] = v
 	}
-}
-
-// worse returns the more severe of two check statuses.
-func worse(a, b string) string {
-	rank := map[string]int{"": 0, "ok": 1, "accepted": 2, "skipped": 3, "known-gap": 4, "mismatch": 5, "error": 6}
-	if rank[b] > rank[a] {
-		return b
-	}
-	return a
 }
 
 func sortedByFirstSeen(m map[string]int) []string {
@@ -801,28 +782,13 @@ func Write(dir string, cat *Catalog, docs map[string]*Doc) error {
 	if err := Validate(cat, docs); err != nil {
 		return err
 	}
-	if err := writeJSON(filepath.Join(dir, "catalog.json"), cat); err != nil {
+	if err := jsonfile.Write(filepath.Join(dir, "catalog.json"), cat); err != nil {
 		return err
 	}
 	for pkg, d := range docs {
-		if err := writeJSON(filepath.Join(dir, "capabilities", pkg+".json"), d); err != nil {
+		if err := jsonfile.Write(filepath.Join(dir, "capabilities", pkg+".json"), d); err != nil {
 			return err
 		}
 	}
 	return os.WriteFile(filepath.Join(dir, "capability.schema.json"), schemaJSON, 0o644)
-}
-
-func writeJSON(path string, v any) error {
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	enc := json.NewEncoder(f)
-	enc.SetEscapeHTML(false)
-	enc.SetIndent("", " ")
-	if err := enc.Encode(v); err != nil {
-		f.Close()
-		return err
-	}
-	return f.Close()
 }

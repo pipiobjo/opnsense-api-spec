@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/pipiobjo/opnsense-api-spec/internal/capability"
+	"github.com/pipiobjo/opnsense-api-spec/internal/jsonfile"
 	"github.com/pipiobjo/opnsense-api-spec/internal/openapi"
 	"github.com/pipiobjo/opnsense-api-spec/internal/pipeline"
 	"github.com/pipiobjo/opnsense-api-spec/internal/pkgrepo"
@@ -45,6 +46,9 @@ commands:
   plan                     print the releases to contract-test as a JSON list
                            (newest release per series, current composition
                            not verified with this generator)
+  failures FILE...         print the failing checks of *.verified.json files
+                           as Markdown lines (what the run summary and the
+                           failure report show; the rule is verify.Status)
 
 flags:
   -mirror URL   package mirror (default https://pkg.opnsense.org)
@@ -146,8 +150,7 @@ func main() {
 		// into annotations)
 		for _, oc := range outs {
 			switch {
-			case oc.Action == pipeline.ActionKept, oc.Action == pipeline.ActionUnavailable,
-				strings.HasPrefix(oc.Reason, "kept: "):
+			case oc.Kept, oc.Action == pipeline.ActionUnavailable:
 				fmt.Fprintf(os.Stderr, "warning: %s %s: %s\n", oc.Release, oc.Action, oc.Reason)
 			case oc.Action == pipeline.ActionFailed:
 				fmt.Fprintf(os.Stderr, "error: %s build failed: %s\n", oc.Release, oc.Reason)
@@ -171,6 +174,8 @@ func main() {
 			dir = filepath.Join(pl.Dist, "capabilities")
 		}
 		err = cmdCapabilities(pl.Dist, dir)
+	case "failures":
+		err = cmdFailures(fs.Args())
 	case "plan":
 		var idx *pipeline.Index
 		if idx, err = pipeline.ReadIndex(filepath.Join(pl.Dist, "index.json")); err == nil {
@@ -250,18 +255,18 @@ func cmdVerify(o opts, accepted *string) error {
 		fmt.Fprintf(os.Stderr, "warning: instance runs %q, IR is %s\n", rep.Instance, rel.Version)
 	}
 	base := strings.TrimSuffix(o.irFile, ".ir.json")
-	if err := pipeline.WriteJSON(base+".verified.json", rep); err != nil {
+	if err := jsonfile.Write(base+".verified.json", rep); err != nil {
 		return err
 	}
 	counts := map[string]int{}
 	for _, r := range rep.Results {
-		counts[r.Check+"/"+r.Status]++
+		counts[r.Key()]++
 	}
 	for _, k := range pipeline.SortedKeys(counts) {
 		fmt.Fprintf(os.Stderr, "%-24s %d\n", k, counts[k])
 	}
 	doc, _ := openapi.RenderVerified(rel, rep)
-	if err := pipeline.WriteJSON(base+".openapi.json", doc); err != nil {
+	if err := jsonfile.Write(base+".openapi.json", doc); err != nil {
 		return err
 	}
 	// a failed contract check must fail the command (and CI), not only
@@ -272,14 +277,28 @@ func cmdVerify(o opts, accepted *string) error {
 	return nil
 }
 
-func failures(rep *verify.Report) int {
-	n := 0
-	for _, r := range rep.Results {
-		if r.Status == "mismatch" || r.Status == "error" {
-			n++
+func failures(rep *verify.Report) int { return len(rep.Failures()) }
+
+// cmdFailures prints one Markdown line per failing check, with at most
+// three findings.
+func cmdFailures(files []string) error {
+	if len(files) == 0 {
+		usage()
+	}
+	for _, f := range files {
+		var rep verify.Report
+		if err := jsonfile.Read(f, &rep); err != nil {
+			return err
+		}
+		for _, r := range rep.Failures() {
+			fs := r.Findings
+			if len(fs) > 3 {
+				fs = fs[:3]
+			}
+			fmt.Printf("- %s `%s` (%s): %s\n", r.Check, r.Path, r.Status, strings.Join(fs, "; "))
 		}
 	}
-	return n
+	return nil
 }
 
 func cmdDiff(o opts) error {

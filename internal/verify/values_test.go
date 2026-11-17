@@ -272,9 +272,10 @@ func TestWriteCycleGeneratesValues(t *testing.T) {
 	if want := []string{"add", "read-back", "set", "read-back-set", "del"}; !reflect.DeepEqual(r.Steps, want) {
 		t.Errorf("steps %v, want %v", r.Steps, want)
 	}
-	// hostname and iface are not marked Required in the model
-	if len(r.Findings) != 1 || !strings.Contains(r.Findings[0], "hostname, iface") {
-		t.Errorf("findings %v", r.Findings)
+	// hostname and iface are not marked Required in the model: a note,
+	// which must not fail the check
+	if len(r.Findings) != 0 || len(r.Notes) != 1 || !strings.Contains(r.Notes[0], "hostname, iface") {
+		t.Errorf("findings %v, notes %v", r.Findings, r.Notes)
 	}
 }
 
@@ -315,8 +316,8 @@ func TestWriteCycleUpdateRejectedIsNotVerified(t *testing.T) {
 			t.Fatalf("update must not count as tested: steps %v", r.Steps)
 		}
 	}
-	if !strings.Contains(strings.Join(r.Findings, " "), "note: update not tested") {
-		t.Errorf("findings %v", r.Findings)
+	if !strings.Contains(strings.Join(r.Notes, " "), "update not tested") {
+		t.Errorf("notes %v", r.Notes)
 	}
 }
 
@@ -341,8 +342,8 @@ func TestWriteCycleCreatesPrerequisite(t *testing.T) {
 	if r.Sample["zone"] != "z1" {
 		t.Errorf("relation not filled with the prerequisite: %v", r.Sample)
 	}
-	if !strings.Contains(strings.Join(r.Findings, " "), "note: prerequisite entry created via /api/x/zones/addZone") {
-		t.Errorf("prerequisite must be visible: %v", r.Findings)
+	if !strings.Contains(strings.Join(r.Notes, " "), "prerequisite entry created via /api/x/zones/addZone") {
+		t.Errorf("prerequisite must be visible: %v", r.Notes)
 	}
 	if len(f.zones) != 0 || len(f.entries) != 0 {
 		t.Errorf("left behind: zones %v, entries %v", f.zones, f.entries)
@@ -355,8 +356,8 @@ func TestWriteCycleUnlocksBeforeDelete(t *testing.T) {
 	if r.Status != "ok" || len(f.entries) != 0 {
 		t.Fatalf("status %s, left %v, findings %v", r.Status, f.entries, r.Findings)
 	}
-	if !strings.Contains(strings.Join(r.Findings, " "), "note: delete refused while lock=1") {
-		t.Errorf("the unlock must be visible: %v", r.Findings)
+	if !strings.Contains(strings.Join(r.Notes, " "), "delete refused while lock=1") {
+		t.Errorf("the unlock must be visible: %v", r.Notes)
 	}
 }
 
@@ -374,7 +375,7 @@ func TestSettingsWriteBack(t *testing.T) {
 		name    string
 		answer  map[string]any
 		stores  bool
-		status  string
+		status  Status
 		finding string
 	}{
 		{"saved and unchanged", map[string]any{"result": "saved"}, true, "ok", ""},
@@ -436,7 +437,7 @@ func TestCheckModelGetShape(t *testing.T) {
 	for _, c := range []struct {
 		name    string
 		general map[string]any
-		status  string
+		status  Status
 		finding string
 	}{
 		{"matches", good, "ok", ""},

@@ -7,11 +7,10 @@ package ir
 
 import (
 	"sort"
-
-	"github.com/pipiobjo/opnsense-api-spec/internal/gap"
 	"strings"
 
 	"github.com/pipiobjo/opnsense-api-spec/internal/controller"
+	"github.com/pipiobjo/opnsense-api-spec/internal/gap"
 	"github.com/pipiobjo/opnsense-api-spec/internal/model"
 )
 

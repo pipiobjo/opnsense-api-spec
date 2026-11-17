@@ -15,8 +15,8 @@ import (
 // upstream issue or a limitation of the test environment. Every entry
 // needs a reason and evidence.
 type Accepted struct {
-	Path     string `json:"path"`     // endpoint path or path template
-	Check    string `json:"check"`    // reachable, shape, schema, write-cycle
+	Path     string `json:"path"` // endpoint path or path template
+	Check    Check  `json:"check"`
 	Releases string `json:"releases"` // glob on the release, e.g. "26.1.*" or "*"
 	Reason   string `json:"reason"`
 	Evidence string `json:"evidence"`
@@ -48,7 +48,7 @@ func LoadAccepted(file string) ([]Accepted, error) {
 func ApplyAccepted(rep *Report, list []Accepted) int {
 	n := 0
 	for _, r := range rep.Results {
-		if r.Status != "mismatch" && r.Status != "error" {
+		if !r.Status.Failed() {
 			continue
 		}
 		for _, a := range list {
@@ -60,7 +60,7 @@ func ApplyAccepted(rep *Report, list []Accepted) int {
 				continue
 			}
 			if a.Path == r.Path && a.Check == r.Check {
-				r.Status = "accepted"
+				r.Status = StatusAccepted
 				r.Findings = append(r.Findings, "accepted: "+strings.TrimSpace(a.Reason))
 				n++
 				break

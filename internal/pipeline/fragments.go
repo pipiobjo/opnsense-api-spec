@@ -14,6 +14,7 @@ import (
 
 	"github.com/pipiobjo/opnsense-api-spec/internal/fragment"
 	"github.com/pipiobjo/opnsense-api-spec/internal/ir"
+	"github.com/pipiobjo/opnsense-api-spec/internal/jsonfile"
 	"github.com/pipiobjo/opnsense-api-spec/internal/openapi"
 	"github.com/pipiobjo/opnsense-api-spec/internal/pkgrepo"
 	"github.com/pipiobjo/opnsense-api-spec/internal/schemacheck"
@@ -36,7 +37,7 @@ func writeIfAbsent(path string, v any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return WriteJSON(path, v)
+	return jsonfile.Write(path, v)
 }
 
 func shortHash(v any) (string, error) {
@@ -91,7 +92,7 @@ func writeFragments(rel *ir.Release, dist, releaseDir string, status fragment.St
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return nil, err
 		}
-		if err := WriteJSON(filepath.Join(dir, h+".openapi.json"), doc); err != nil {
+		if err := jsonfile.Write(filepath.Join(dir, h+".openapi.json"), doc); err != nil {
 			return nil, err
 		}
 	}
@@ -99,10 +100,10 @@ func writeFragments(rel *ir.Release, dist, releaseDir string, status fragment.St
 	if err := os.MkdirAll(filepath.Join(releaseDir, "compositions"), 0o755); err != nil {
 		return nil, err
 	}
-	if err := WriteJSON(filepath.Join(releaseDir, "compositions", comp.ID()+".json"), comp); err != nil {
+	if err := jsonfile.Write(filepath.Join(releaseDir, "compositions", comp.ID()+".json"), comp); err != nil {
 		return nil, err
 	}
-	return comp, WriteJSON(filepath.Join(releaseDir, "composition.json"), comp)
+	return comp, jsonfile.Write(filepath.Join(releaseDir, "composition.json"), comp)
 }
 
 // ReadComposition loads a composition file.
@@ -250,8 +251,8 @@ func BuildIndex(dist string) error {
 				v := &IndexVerification{Composition: rep.Composition, Instance: rep.Instance, Date: rep.Date,
 					Generator: rep.Generator, Results: map[string]int{}}
 				for _, r := range rep.Results {
-					v.Results[r.Check+"/"+r.Status]++
-					if r.Status == "mismatch" || r.Status == "error" {
+					v.Results[r.Key()]++
+					if r.Status.Failed() {
 						v.Failed++
 					}
 				}
@@ -281,7 +282,7 @@ func BuildIndex(dist string) error {
 	if err := pruneFragments(dist, idx.Fragments); err != nil {
 		return err
 	}
-	return WriteJSON(filepath.Join(dist, "index.json"), idx)
+	return jsonfile.Write(filepath.Join(dist, "index.json"), idx)
 }
 
 // pruneFragments deletes fragment files no composition refers to (left

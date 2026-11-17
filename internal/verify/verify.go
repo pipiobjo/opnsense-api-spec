@@ -8,18 +8,17 @@ package verify
 
 import (
 	"bytes"
-
 	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/pipiobjo/opnsense-api-spec/internal/gap"
 	"io"
 	"net/http"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/pipiobjo/opnsense-api-spec/internal/gap"
 	"github.com/pipiobjo/opnsense-api-spec/internal/ir"
 	"github.com/pipiobjo/opnsense-api-spec/internal/model"
 )
@@ -28,10 +27,11 @@ import (
 type Result struct {
 	Path     string   `json:"path"`
 	Method   string   `json:"method"`
-	Check    string   `json:"check"`  // reachable, shape, write-cycle
-	Status   string   `json:"status"` // ok, mismatch, error, skipped
+	Check    Check    `json:"check"`
+	Status   Status   `json:"status"`
 	HTTP     int      `json:"http,omitempty"`
-	Findings []string `json:"findings,omitempty"`
+	Findings []string `json:"findings,omitempty"` // what is wrong; decides the status
+	Notes    []string `json:"notes,omitempty"`    // remarks that do not fail the check
 	// RuntimeRequired: fields the instance rejected as missing when adding
 	// an entry with server defaults (write-cycle only), without wrapper
 	RuntimeRequired []string `json:"runtime_required,omitempty"`
@@ -92,7 +92,7 @@ func (c *Client) schema(e *ir.Endpoint, method, pathTemplate string, body any) {
 	if c.Schema == nil || !c.Schema.Has(method, pathTemplate) {
 		return
 	}
-	r := &Result{Path: pathTemplate, Method: method, Check: "schema", HTTP: 200}
+	r := &Result{Path: pathTemplate, Method: method, Check: CheckSchema, HTTP: 200}
 	r.Findings = c.Schema.Validate(method, pathTemplate, body)
 	r.Status = status(r.Findings)
 	c.schemaResults = append(c.schemaResults, knownGap(r, e))
@@ -286,25 +286,25 @@ func Run(c *Client, rel *ir.Release, packages map[string]bool, write bool) *Repo
 func fail(r *Result, code int, raw []byte, err error) *Result {
 	r.HTTP = code
 	if err != nil {
-		r.Status, r.Findings = "error", []string{err.Error()}
+		r.Status, r.Findings = StatusError, []string{err.Error()}
 		return r
 	}
-	r.Status, r.Findings = "error", []string{fmt.Sprintf("HTTP %d: %s", code, trunc(raw))}
+	r.Status, r.Findings = StatusError, []string{fmt.Sprintf("HTTP %d: %s", code, trunc(raw))}
 	return r
 }
 
 func checkReachable(c *Client, e *ir.Endpoint, method string) *Result {
-	r := &Result{Path: e.Path, Method: method, Check: "reachable"}
+	r := &Result{Path: e.Path, Method: method, Check: CheckReachable}
 	code, v, raw, err := c.do(method, e.Path, nil)
 	var nj *NonJSON
 	if errors.As(err, &nj) {
-		r.HTTP, r.Status, r.Findings = code, "ok", []string{err.Error()}
+		r.HTTP, r.Status, r.Findings = code, StatusOK, []string{err.Error()}
 		return r
 	}
 	if err != nil || code != 200 {
 		return fail(r, code, raw, err)
 	}
-	r.HTTP, r.Status = code, "ok"
+	r.HTTP, r.Status = code, StatusOK
 	c.schema(e, method, e.Path, v)
 	return r
 }
@@ -373,11 +373,11 @@ func fieldShapeUncertain(n *model.Node) bool {
 }
 
 func checkModelGet(c *Client, e *ir.Endpoint, m *model.Model) *Result {
-	r := &Result{Path: e.Path, Method: "GET", Check: "shape"}
+	r := &Result{Path: e.Path, Method: "GET", Check: CheckShape}
 	code, v, raw, err := c.do("GET", e.Path, nil)
 	var nj *NonJSON
 	if errors.As(err, &nj) {
-		r.HTTP, r.Status, r.Findings = code, "mismatch", []string{err.Error()}
+		r.HTTP, r.Status, r.Findings = code, StatusMismatch, []string{err.Error()}
 		return r // knownGap() turns this into known-gap for overridden actions
 	}
 	if err != nil || code != 200 {
@@ -392,11 +392,11 @@ func checkModelGet(c *Client, e *ir.Endpoint, m *model.Model) *Result {
 		for k := range obj {
 			keys = append(keys, k)
 		}
-		r.Status, r.Findings = "mismatch", []string{fmt.Sprintf("root key %q missing, got %v", e.Wrapper, keys)}
+		r.Status, r.Findings = StatusMismatch, []string{fmt.Sprintf("root key %q missing, got %v", e.Wrapper, keys)}
 		return r
 	}
 	if m == nil {
-		r.Status, r.Findings = "skipped", []string{"model unknown"}
+		r.Status, r.Findings = StatusSkipped, []string{"model unknown"}
 		return r
 	}
 	compareNode(m.Root, inner, "", &r.Findings)
@@ -404,28 +404,21 @@ func checkModelGet(c *Client, e *ir.Endpoint, m *model.Model) *Result {
 	return r
 }
 
-func status(f []string) string {
-	if len(f) == 0 {
-		return "ok"
-	}
-	return "mismatch"
-}
-
 // knownGap turns a mismatch into "known-gap" when the endpoint was already
 // marked as overriding the generic action (the test confirms the gap).
 func knownGap(r *Result, e *ir.Endpoint) *Result {
-	if r.Status != "mismatch" {
+	if r.Status != StatusMismatch {
 		return r
 	}
 	if g, ok := gap.First(e.Gaps, gap.MayDiffer); ok {
-		r.Status = "known-gap"
+		r.Status = StatusKnownGap
 		r.Findings = append(r.Findings, "expected ("+string(g.Code)+"): "+g.Detail)
 	}
 	return r
 }
 
 func checkSearch(c *Client, e *ir.Endpoint) *Result {
-	r := &Result{Path: e.Path, Method: "GET", Check: "shape"}
+	r := &Result{Path: e.Path, Method: "GET", Check: CheckShape}
 	code, v, raw, err := c.do("GET", e.Path+"?current=1&rowCount=-1", nil)
 	if err != nil || code != 200 {
 		return fail(r, code, raw, err)
@@ -444,7 +437,7 @@ func checkSearch(c *Client, e *ir.Endpoint) *Result {
 
 // item get without uuid returns a new entry with defaults
 func checkItemGet(c *Client, e *ir.Endpoint, m *model.Model) *Result {
-	r := &Result{Path: e.Path, Method: "GET", Check: "shape"}
+	r := &Result{Path: e.Path, Method: "GET", Check: CheckShape}
 	code, v, raw, err := c.do("GET", e.Path, nil)
 	if err != nil || code != 200 {
 		return fail(r, code, raw, err)
@@ -457,7 +450,7 @@ func checkItemGet(c *Client, e *ir.Endpoint, m *model.Model) *Result {
 	}
 	inner, ok := obj[e.Wrapper]
 	if !ok {
-		r.Status, r.Findings = "mismatch", []string{fmt.Sprintf("root key %q missing", strings.TrimPrefix(e.Outer+"."+e.Wrapper, "."))}
+		r.Status, r.Findings = StatusMismatch, []string{fmt.Sprintf("root key %q missing", strings.TrimPrefix(e.Outer+"."+e.Wrapper, "."))}
 		return r
 	}
 	if m != nil {
@@ -650,7 +643,7 @@ type added struct {
 func (w *writer) add(f *family, depth int) *added {
 	c := w.c
 	res := &added{chosen: map[string]bool{}, tried: map[string]int{}}
-	r := &Result{Path: f.add.Path, Method: "POST", Check: "write-cycle"}
+	r := &Result{Path: f.add.Path, Method: "POST", Check: CheckWriteCycle}
 	code, v, raw, err := c.do("GET", f.get.Path, nil)
 	if err != nil || code != 200 {
 		res.err = fail(r, code, raw, err)
@@ -693,7 +686,7 @@ func (w *writer) add(f *family, depth int) *added {
 		}
 		vals, _ := out["validations"].(map[string]any)
 		if len(vals) == 0 {
-			r.Status, r.Findings = "error", []string{"add failed without validation messages: " + trunc(raw)}
+			r.Status, r.Findings = StatusError, []string{"add failed without validation messages: " + trunc(raw)}
 			res.err = r
 			return res
 		}
@@ -733,7 +726,7 @@ func (w *writer) add(f *family, depth int) *added {
 			stuck = append(stuck, fmt.Sprintf("%s (%v)", fld, vals[prefix+fld]))
 		}
 		if len(stuck) > 0 || round+1 >= maxRounds {
-			r.Status = "skipped"
+			r.Status = StatusSkipped
 			reason := "no accepted value for: " + strings.Join(stuck, "; ")
 			if len(stuck) == 0 {
 				reason = fmt.Sprintf("not accepted after %d rounds: %s", maxRounds, strings.Join(fields, ", "))
@@ -781,7 +774,7 @@ func (w *writer) prerequisite(n *model.Node, depth int) (string, string, func() 
 			}
 			return fs
 		}
-		return a.uuid, "note: prerequisite entry created via " + f.add.Path, cleanup
+		return a.uuid, "prerequisite entry created via " + f.add.Path, cleanup
 	}
 	return "", "", nil
 }
@@ -795,18 +788,18 @@ func (w *writer) cycle(f *family) *Result {
 		}
 	}()
 	if a.err != nil {
-		if a.err.Status == "skipped" {
+		if a.err.Status == StatusSkipped {
 			if nm := notRequiredInModel(f.entry, a.runtime); len(nm) > 0 {
-				a.err.Findings = append([]string{"required at runtime but not marked Required in the model: " + strings.Join(nm, ", ")}, a.err.Findings...)
+				a.err.Notes = append(a.err.Notes, "required at runtime but not marked Required in the model: "+strings.Join(nm, ", "))
 			}
 		}
 		return a.err
 	}
-	r := &Result{Path: f.add.Path, Method: "POST", Check: "write-cycle", HTTP: 200, RuntimeRequired: a.runtime}
+	r := &Result{Path: f.add.Path, Method: "POST", Check: CheckWriteCycle, HTTP: 200, RuntimeRequired: a.runtime}
 	if nm := notRequiredInModel(f.entry, a.runtime); len(nm) > 0 {
-		r.Findings = append(r.Findings, "required at runtime but not marked Required in the model: "+strings.Join(nm, ", "))
+		r.Notes = append(r.Notes, "required at runtime but not marked Required in the model: "+strings.Join(nm, ", "))
 	}
-	r.Findings = append(r.Findings, a.notes...)
+	r.Notes = append(r.Notes, a.notes...)
 	for fld := range a.tried {
 		r.Generated = append(r.Generated, fld)
 	}
@@ -831,9 +824,9 @@ func (w *writer) cycle(f *family) *Result {
 
 	// change one field and read it back
 	if f.set == nil {
-		r.Findings = append(r.Findings, "note: update not tested (no set endpoint)")
+		r.Notes = append(r.Notes, "update not tested (no set endpoint)")
 	} else if fld, val := changeable(f.entry, body, a.chosen); fld == "" {
-		r.Findings = append(r.Findings, "note: update not tested (no field to change)")
+		r.Notes = append(r.Notes, "update not tested (no field to change)")
 	} else {
 		code, v, raw, err := c.do("POST", f.set.Path+"/"+uuid, map[string]any{f.set.Wrapper: map[string]any{fld: val}})
 		res, _ := v.(map[string]any)
@@ -843,7 +836,7 @@ func (w *writer) cycle(f *family) *Result {
 		case res["result"] != "saved" && res["validations"] != nil:
 			// the changed value broke a rule involving other fields; this
 			// says nothing about the endpoint, but update is not verified
-			r.Findings = append(r.Findings, fmt.Sprintf("note: update not tested (%s=%q rejected: %s)", fld, val, trunc(raw)))
+			r.Notes = append(r.Notes, fmt.Sprintf("update not tested (%s=%q rejected: %s)", fld, val, trunc(raw)))
 		case res["result"] != "saved":
 			r.Findings = append(r.Findings, "set "+fld+": "+trunc(raw))
 		default:
@@ -863,7 +856,7 @@ func (w *writer) cycle(f *family) *Result {
 		// before removal"; lock defaults to 1. Clients must unlock first.
 		if c2, v2, _, _ := c.do("POST", f.set.Path+"/"+uuid, map[string]any{f.set.Wrapper: map[string]any{"lock": "0"}}); c2 == 200 {
 			if res2, _ := v2.(map[string]any); res2["result"] == "saved" {
-				r.Findings = append(r.Findings, "note: delete refused while lock=1 (the default); deleted after setting lock=0")
+				r.Notes = append(r.Notes, "delete refused while lock=1 (the default); deleted after setting lock=0")
 				code, v, raw, err = c.do("POST", f.del.Path+"/"+uuid, map[string]any{})
 			}
 		}
@@ -884,8 +877,8 @@ func (w *writer) cycle(f *family) *Result {
 		r.Findings = append(r.Findings, cl()...)
 	}
 	a.cleanups = nil
-	r.Status = writeStatus(r.Findings)
-	if r.Status == "mismatch" {
+	r.Status = status(r.Findings)
+	if r.Status == StatusMismatch {
 		r = knownGap(r, f.get)
 	}
 	return r
@@ -994,18 +987,6 @@ func notRequiredInModel(entry *model.Node, fields []string) []string {
 	return out
 }
 
-// writeStatus: read-back differences and failed steps are mismatches;
-// notes (update not tested) and the remark about runtime-required fields
-// are not. Whether the update was tested is in Result.Steps.
-func writeStatus(f []string) string {
-	for _, s := range f {
-		if !strings.HasPrefix(s, "required at runtime but not marked Required") && !strings.HasPrefix(s, "note: ") {
-			return "mismatch"
-		}
-	}
-	return "ok"
-}
-
 // entryGet picks the get endpoint of an entry list: the one taking a uuid
 // with the add endpoint's wrapper (os-wol has getHost and getwake for the
 // same list; only getHost reads an entry).
@@ -1058,16 +1039,16 @@ func settingsWriteBacks(c *Client, rel *ir.Release, models map[string]*model.Mod
 }
 
 func settingsWriteBack(c *Client, get, set *ir.Endpoint, m *model.Model) *Result {
-	r := &Result{Path: set.Path, Method: "POST", Check: "write-cycle"}
+	r := &Result{Path: set.Path, Method: "POST", Check: CheckWriteCycle}
 	if m == nil {
-		r.Status, r.Findings = "skipped", []string{"model unknown"}
+		r.Status, r.Findings = StatusSkipped, []string{"model unknown"}
 		return r
 	}
 	read := func() (map[string]any, *Result) {
 		code, v, raw, err := c.do("GET", get.Path, nil)
 		var nj *NonJSON
 		if errors.As(err, &nj) {
-			r.HTTP, r.Status, r.Findings = code, "skipped", []string{"not a configuration resource: get answers with " + err.Error()}
+			r.HTTP, r.Status, r.Findings = code, StatusSkipped, []string{"not a configuration resource: get answers with " + err.Error()}
 			return nil, r
 		}
 		if err != nil || code != 200 {
@@ -1083,13 +1064,13 @@ func settingsWriteBack(c *Client, get, set *ir.Endpoint, m *model.Model) *Result
 	}
 	path, val := plainField(m.Root, cur, "")
 	if path == "" {
-		r.Status, r.Findings = "skipped", []string{"no plain field to write back (the model holds only entry lists or option fields)"}
+		r.Status, r.Findings = StatusSkipped, []string{"no plain field to write back (the model holds only entry lists or option fields)"}
 		return r
 	}
 	code, v, raw, err := c.do("POST", set.Path, map[string]any{set.Wrapper: nested(path, val)})
 	var nj *NonJSON
 	if errors.As(err, &nj) {
-		r.HTTP, r.Status, r.Findings = code, "skipped", []string{"set does not save configuration, it answers with " + err.Error()}
+		r.HTTP, r.Status, r.Findings = code, StatusSkipped, []string{"set does not save configuration, it answers with " + err.Error()}
 		return r
 	}
 	if err != nil || code != 200 {
@@ -1104,16 +1085,16 @@ func settingsWriteBack(c *Client, get, set *ir.Endpoint, m *model.Model) *Result
 		for k := range asMap(out["validations"]) {
 			f := strings.TrimPrefix(k, set.Wrapper+".")
 			if f == path {
-				r.Status, r.Findings = "mismatch", []string{fmt.Sprintf("its own current value of %s was rejected: %v", path, out["validations"])}
+				r.Status, r.Findings = StatusMismatch, []string{fmt.Sprintf("its own current value of %s was rejected: %v", path, out["validations"])}
 				return r
 			}
 			others = append(others, f)
 		}
 		sort.Strings(others)
-		r.Status, r.Findings = "skipped", []string{"model not valid in its default state, set rejected for: " + strings.Join(others, ", ")}
+		r.Status, r.Findings = StatusSkipped, []string{"model not valid in its default state, set rejected for: " + strings.Join(others, ", ")}
 		return r
 	default:
-		r.Status, r.Findings = "skipped", []string{"set does not save configuration, it answers " + trunc(raw)}
+		r.Status, r.Findings = StatusSkipped, []string{"set does not save configuration, it answers " + trunc(raw)}
 		return r
 	}
 	after, bad := read()
@@ -1121,10 +1102,10 @@ func settingsWriteBack(c *Client, get, set *ir.Endpoint, m *model.Model) *Result
 		return bad
 	}
 	if got := leaf(after, path); fmt.Sprint(got) != val {
-		r.Status, r.Findings = "mismatch", []string{fmt.Sprintf("read-back after set: %s sent %q, read %v", path, val, got)}
+		r.Status, r.Findings = StatusMismatch, []string{fmt.Sprintf("read-back after set: %s sent %q, read %v", path, val, got)}
 		return r
 	}
-	r.Status, r.Steps = "ok", []string{"set", "read-back"}
+	r.Status, r.Steps = StatusOK, []string{"set", "read-back"}
 	return r
 }
 
