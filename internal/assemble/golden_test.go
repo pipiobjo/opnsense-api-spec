@@ -192,10 +192,11 @@ func TestWriteSideOnRealSources(t *testing.T) {
 		saveModels []string // model classes with custom-save
 		saveArrays []string // "<model class> <array name>" with custom-save
 	}{
-		// from grep "function serializeToConfig" in the sources, 2026-11-16
-		"25.7.10": {[]string{`OPNsense\Bind\Domain`}, nil},
-		"26.1.10": {[]string{`OPNsense\Bind\Domain`}, nil},
-		"26.7.7": {[]string{`OPNsense\Bind\Domain`, `OPNsense\Firewall\Filter`, `OPNsense\Interfaces\NetworkInterface`, `OPNsense\Quagga\General`},
+		// from grep "function (init|serializeToConfig)" in the sources, 2026-11-17
+		"25.7.10": {[]string{`OPNsense\Bind\Domain`, `OPNsense\Core\InitialSetup`, `OPNsense\Dnsmasq\Dnsmasq`, `OPNsense\ProxySSO\ProxySSO`}, nil},
+		"26.1.10": {[]string{`OPNsense\Bind\Domain`, `OPNsense\Core\InitialSetup`, `OPNsense\Dnsmasq\Dnsmasq`, `OPNsense\ProxySSO\ProxySSO`}, nil},
+		"26.7.7": {[]string{`OPNsense\Bind\Domain`, `OPNsense\Firewall\Filter`, `OPNsense\Interfaces\NetworkInterface`, `OPNsense\Quagga\General`,
+			`OPNsense\Core\InitialSetup`, `OPNsense\Dnsmasq\Dnsmasq`, `OPNsense\ProxySSO\ProxySSO`},
 			[]string{`OPNsense\Interfaces\NetworkInterface interface`}},
 	}
 	tested := 0

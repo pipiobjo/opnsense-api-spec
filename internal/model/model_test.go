@@ -100,7 +100,8 @@ func TestWriteSideGaps(t *testing.T) {
 			t.Errorf("%s: gaps %v, want %v", path, got, w)
 		}
 	}
-	if len(m.Gaps) != 1 || m.Gaps[0].Code != "custom-save" || !strings.Contains(m.Gaps[0].Detail, "serializeToConfig") {
+	if len(m.Gaps) != 2 || m.Gaps[0].Code != "custom-save" || !strings.Contains(m.Gaps[0].Detail, "serializeToConfig") ||
+		m.Gaps[1].Code != "custom-save" || !strings.Contains(m.Gaps[1].Detail, "init") {
 		t.Errorf("model gaps %+v", m.Gaps)
 	}
 }

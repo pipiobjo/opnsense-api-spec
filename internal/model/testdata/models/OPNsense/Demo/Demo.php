@@ -13,4 +13,10 @@ class Demo extends BaseModel
     {
         return parent::serializeToConfig($validateFullModel, $disable_validation);
     }
+
+    /* fills values from elsewhere on every load, like OPNsense\Core\InitialSetup */
+    protected function init()
+    {
+        $this->general->enabled = '1';
+    }
 }

@@ -156,8 +156,10 @@ the endpoint that activates saved changes; writes alone change only the
 stored configuration.
 
 `gaps` on an API variant concerns the stored data as a whole: `custom-save`
-when the model saves through its own code (`serializeToConfig`: bind
-domains, the firewall filter, os-frr's general settings) or the entries are
+when the model saves or loads through its own code (`serializeToConfig`:
+bind domains, the firewall filter, os-frr's general settings; `init`: the
+setup wizard, which reads every value from the rest of the configuration,
+so a value written to it does not read back) or the entries are
 stored through `toLegacy`/`fromLegacy` (interface assignments, which drop
 the DHCPv6 options unless the IPv6 type is DHCPv6). A field's `gaps` has
 `custom-write` when its type converts or normalizes values on write. Both

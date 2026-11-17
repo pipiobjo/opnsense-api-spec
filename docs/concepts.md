@@ -202,7 +202,7 @@ typed, whatever their kind.
 | `multiple-helpers` | several helper calls; the one matching the action is documented |
 | `helper-non-literal` | helper called with non-literal arguments; untyped |
 | `custom-write` | (field) the field type, or one it inherits from, overrides `setValue`: the stored value may differ from the request (normalized, encoded, converted). Core normalizers count too (`HostnameField`, `NetworkField`, `PortField`, `MacAddressField`, ...) |
-| `custom-save` | (model or entry list) saving runs own code: the model class overrides `serializeToConfig`, or the entries are stored through `toLegacy`/`fromLegacy` (interface assignments). Values may be changed, computed, written elsewhere or dropped depending on other fields; the rule itself is not derived |
+| `custom-save` | (model or entry list) own code between the request and what is read: the model class overrides `serializeToConfig` or `init` (the setup wizard loads every value from the rest of the configuration), or the entries are stored through `toLegacy`/`fromLegacy` (interface assignments). Values may be changed, computed, written elsewhere or dropped depending on other fields; the rule itself is not derived |
 | `magic-call` | the controller answers other action names through PHP's `__call` (unbound's `*Dot` endpoints, aliases of `*Forward` with `type` dot); those endpoints are not in the spec |
 | `overlay-unknown` | `addBase`/`setBase` force fields through an overlay whose fields cannot be derived (a helper method, an overlay assembled after reading the request, an expression); which fields is unknown |
 | `no-apply-endpoint` | no apply/reconfigure endpoint found |

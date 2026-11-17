@@ -127,6 +127,7 @@ var (
 	writeFnRe      = regexp.MustCompile(`function\s+(setValue|toLegacy|fromLegacy)\s*\(`)
 	newContainerRe = regexp.MustCompile(`function\s+newContainerField\s*\([^)]*\)[^{]*\{[^}]*\bnew\s+([\\\w]+)\s*\(`)
 	saveFnRe       = regexp.MustCompile(`function\s+serializeToConfig\s*\(`)
+	initFnRe       = regexp.MustCompile(`function\s+init\s*\(`)
 )
 
 // the core defaults; overrides below them change the read shape
@@ -631,8 +632,15 @@ func LoadAll(appDir string) ([]*Model, *TypeIndex, error) {
 		}
 		if m != nil {
 			// the model class lives next to its XML (Domain.xml, Domain.php)
-			if src, err := os.ReadFile(strings.TrimSuffix(p, ".xml") + ".php"); err == nil && saveFnRe.Match(src) {
-				m.Gaps = append(m.Gaps, gap.New(gap.CustomSave, "%s overrides serializeToConfig; saving runs own code (values may be changed, computed or written elsewhere)", m.Class))
+			if src, err := os.ReadFile(strings.TrimSuffix(p, ".xml") + ".php"); err == nil {
+				if saveFnRe.Match(src) {
+					m.Gaps = append(m.Gaps, gap.New(gap.CustomSave, "%s overrides serializeToConfig; saving runs own code (values may be changed, computed or written elsewhere)", m.Class))
+				}
+				if initFnRe.Match(src) {
+					// e.g. OPNsense\Core\InitialSetup loads every value from
+					// the rest of the configuration on each read
+					m.Gaps = append(m.Gaps, gap.New(gap.CustomSave, "%s overrides init; values read may be set by its own code (loaded from elsewhere or derived), not the ones stored", m.Class))
+				}
 			}
 			out = append(out, m)
 		}
