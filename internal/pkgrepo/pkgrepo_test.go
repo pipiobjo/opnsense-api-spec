@@ -22,12 +22,28 @@ import (
 )
 
 func TestCompareVersions(t *testing.T) {
-	for _, c := range []struct {
-		a, b string
-		want int
-	}{{"26.7", "26.7.1", -1}, {"26.7.10", "26.7.9", 1}, {"26.1.11", "26.7", -1}, {"26.7.5", "26.7.5", 0}} {
-		if got := CompareVersions(c.a, c.b); got != c.want {
-			t.Errorf("CompareVersions(%s, %s) = %d", c.a, c.b, got)
+	// the same table as in the other repository (opnsense-api-go
+	// opnsense/capability, opnsense-api-spec internal/pkgrepo): both
+	// implementations must agree
+	ordered := []string{"1.0", "1.0_6", "1.0_10", "1.1", "2.1", "2.1a", "2.2", "25.7", "25.7_1", "25.7.1", "25.7.9",
+		"25.7.10", "25.7.11_2", "25.7.11_9", "25.7.11_10", "26.1"}
+	for i := 0; i < len(ordered); i++ {
+		for j := 0; j < len(ordered); j++ {
+			got := CompareVersions(ordered[i], ordered[j])
+			want := 0
+			if i < j {
+				want = -1
+			} else if i > j {
+				want = 1
+			}
+			if got != want {
+				t.Errorf("CompareVersions(%s, %s) = %d, want %d", ordered[i], ordered[j], got, want)
+			}
+		}
+	}
+	for _, eq := range [][2]string{{"26.7", "26.7.0"}, {"26.7_0", "26.7"}} {
+		if CompareVersions(eq[0], eq[1]) != 0 {
+			t.Errorf("CompareVersions(%s, %s) must be 0", eq[0], eq[1])
 		}
 	}
 }

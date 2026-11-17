@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -381,36 +382,56 @@ func ReadArchive(r io.Reader, keep func(name string) bool) (map[string][]byte, e
 	return out, nil
 }
 
-// CompareVersions compares OPNsense release versions like "26.7" and
-// "26.7.10" numerically. Non-numeric parts compare as strings.
+// CompareVersions compares package versions such as 26.7.9_1, 1.0_6 or
+// 2.1a: release parts numerically (a part's letter suffix after its
+// number, "2.1" < "2.1a" < "2.2"), then the hotfix revision numerically
+// ("_2" < "_10"). 26.7 < 26.7_1 < 26.7.1; missing parts count as 0.
+//
+// The same algorithm, with the same test table, is
+// capability.CompareVersions in opnsense-api-go; change both together.
 func CompareVersions(a, b string) int {
-	pa, pb := strings.Split(a, "."), strings.Split(b, ".")
+	ra, reva, _ := strings.Cut(a, "_")
+	rb, revb, _ := strings.Cut(b, "_")
+	pa, pb := strings.Split(ra, "."), strings.Split(rb, ".")
 	for i := 0; i < len(pa) || i < len(pb); i++ {
-		var x, y string
+		x, y := "0", "0"
 		if i < len(pa) {
 			x = pa[i]
 		}
 		if i < len(pb) {
 			y = pb[i]
 		}
-		var nx, ny int
-		_, ex := fmt.Sscanf(x, "%d", &nx)
-		_, ey := fmt.Sscanf(y, "%d", &ny)
-		switch {
-		case x == y:
-			continue
-		case x == "":
-			return -1
-		case y == "":
-			return 1
-		case ex == nil && ey == nil && nx != ny:
-			if nx < ny {
-				return -1
-			}
-			return 1
-		default:
-			return strings.Compare(x, y)
+		if c := comparePart(x, y); c != 0 {
+			return c
 		}
 	}
-	return 0
+	if reva == "" {
+		reva = "0"
+	}
+	if revb == "" {
+		revb = "0"
+	}
+	return comparePart(reva, revb)
+}
+
+// comparePart compares "12" < "12a" < "13" numerically, then by suffix.
+func comparePart(a, b string) int {
+	na, sa := splitNum(a)
+	nb, sb := splitNum(b)
+	switch {
+	case na < nb:
+		return -1
+	case na > nb:
+		return 1
+	}
+	return strings.Compare(sa, sb)
+}
+
+func splitNum(s string) (int, string) {
+	i := 0
+	for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+		i++
+	}
+	n, _ := strconv.Atoi(s[:i]) // empty -> 0
+	return n, s[i:]
 }
