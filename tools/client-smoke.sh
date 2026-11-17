@@ -17,7 +17,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RELEASE="${1:?release, e.g. 26.7}"
 RUN="${2:-}"
 OAPI_CODEGEN="github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.2"
-GO_IMAGE="docker.io/library/golang:1.25.3-bookworm"
+GO_IMAGE="docker.io/library/golang:1.27.4-bookworm@sha256:fb7cceb528b47141eccd9b60bf3cbd27d5ef5f8cf5b7d338bec866da495b50dc" # pinned by digest; Go security fixes need a new pin (Dependabot does not see it)
 SPEC="dist/$RELEASE/opnsense-$RELEASE.openapi.json"
 URL="https://127.0.0.1:${PORT:-18443}"
 

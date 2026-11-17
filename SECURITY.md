@@ -38,3 +38,32 @@ OPNsense project), and the behaviour of third-party code generators.
   release ([ADR 0004](docs/adr/0004-contract-tests-throwaway-vm.md)).
 - All third-party actions are pinned by commit hash; publishing jobs never
   run for pull requests; nothing is published when a gate fails.
+
+## Dependencies
+
+| What | Used for | Licence |
+|---|---|---|
+| `github.com/klauspost/compress` | zstd package archives | BSD-3-Clause |
+| `github.com/ulikunitz/xz` | xz package archives | BSD-3-Clause |
+| `github.com/santhosh-tekuri/jsonschema/v6` | schema checks of the generated documents | Apache-2.0 |
+| `golang.org/x/crypto` (`blake2b` only) | package checksums | BSD-3-Clause |
+| `golang.org/x/text` | text normalisation | BSD-3-Clause |
+| Tools in CI, isolated in rootless Podman: `oapi-codegen` (consumer gate), `cyclonedx-gomod` (SBOM), the official `golang` image pinned by digest | | |
+| GitHub Actions: GitHub's own and `jdx/mise-action`, pinned by commit hash | | |
+
+How they are watched: Dependabot alerts are on; Dependabot proposes
+updates monthly (grouped, versions at least 7 days old) against `dev`,
+and they reach `main` only through promotion. The Go toolchain is the
+newest patch release of the minor version in `mise.toml`. The container
+images are pinned by digest, which Dependabot does not update: a Go
+security release needs a new pin by hand.
+
+Review of 2026-11-17 against the OSV database (which includes the Go
+vulnerability database): no known vulnerability in code the generator
+compiles. The findings for its module graph concern packages it does not
+import (`x/crypto/openpgp`, `x/net/html`); the one for Go 1.27.3 (HTTP
+server) is fixed in 1.27.4, which CI uses. `test/consumer-go` has old
+modules in its graph through `oapi-codegen/runtime`'s optional
+middleware; only the runtime, `google/uuid` and `go-jsonmerge` are
+compiled, without known vulnerabilities, and it runs only against the
+test VM.

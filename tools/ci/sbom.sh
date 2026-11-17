@@ -23,7 +23,7 @@ shift
 ARGS=("$@")
 [ ${#ARGS[@]} -gt 0 ] || ARGS=(app -main cmd/opnsense-api-spec)
 GOMOD_TOOL="github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.12.0"
-GO_IMAGE="docker.io/library/golang:1.27.3-bookworm@sha256:025eefc1e8dbe63201734a72aaa0a55d7a077f2d8410432f8ae2f3e939f32871"
+GO_IMAGE="docker.io/library/golang:1.27.4-bookworm@sha256:fb7cceb528b47141eccd9b60bf3cbd27d5ef5f8cf5b7d338bec866da495b50dc"
 
 ROOT="$(git rev-parse --show-toplevel)"
 MODULE=$(cd "$ROOT" && go list -m)
