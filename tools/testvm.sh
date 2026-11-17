@@ -69,11 +69,16 @@ waits() { echo $(($1 * SLOW)); }
 
 die() { echo "error: $*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null || die "$1 not installed"; }
+# Downloads from outside (mirror, changelog, GitHub) retry: one dropped
+# connection must not end a job that already booted a VM. Everything
+# downloaded is verified afterwards (checksums, signatures), so a retry
+# cannot let a wrong file through.
+NET=(--retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 20)
 
 # image version of a series: images may be built on a patch release
 # (26.1 -> 26.1.6); the key is always OPNsense-<series>.pub
 image_version() {
-  curl -fsS -m 30 "$MIRROR/$1/" | grep -oE "OPNsense-$1(\.[0-9]+)?-nano-amd64\.img\.bz2\"" \
+  curl -fsS "${NET[@]}" -m 30 "$MIRROR/$1/" | grep -oE "OPNsense-$1(\.[0-9]+)?-nano-amd64\.img\.bz2\"" \
     | head -1 | sed -E "s/^OPNsense-(.*)-nano-amd64.*/\1/"
 }
 
@@ -92,20 +97,20 @@ prepare() {
   echo "series $series: image $v"
   mkdir -p "$d" "$VM"
   for f in "OPNsense-$v-checksums-amd64.sha256" "$n.sig" "OPNsense-$series.pub"; do
-    curl -fsS -m 60 -o "$d/$f" "$MIRROR/$series/$f"
+    curl -fsS "${NET[@]}" -m 60 -o "$d/$f" "$MIRROR/$series/$f"
   done
-  [ -f "$d/$n.bz2" ] || curl -fsS -m 1800 -o "$d/$n.bz2" "$MIRROR/$series/$n.bz2"
+  [ -f "$d/$n.bz2" ] || curl -fsS "${NET[@]}" -m 1800 -o "$d/$n.bz2" "$MIRROR/$series/$n.bz2"
 
   local got want announced
   got=$(sha256sum "$d/$n.bz2" | cut -d' ' -f1)
   want=$(grep "($n.bz2)" "$d/OPNsense-$v-checksums-amd64.sha256" | awk '{print $NF}')
-  announced=$(curl -fsS -m 30 "$CHANGELOG/$series/$v" | grep "($n.bz2)" | awk '{print $NF}')
+  announced=$(curl -fsS "${NET[@]}" -m 30 "$CHANGELOG/$series/$v" | grep "($n.bz2)" | awk '{print $NF}')
   [ "$got" = "$want" ] || die "checksum mismatch against mirror"
   [ "$got" = "$announced" ] || die "checksum mismatch against changelog announcement"
   echo "checksum ok (mirror + changelog announcement)"
 
   diff <(sed -n '/BEGIN PUBLIC KEY/,/END PUBLIC KEY/p' "$d/OPNsense-$series.pub") \
-       <(curl -fsS -m 30 "$CHANGELOG/$series/$series" | sed -n '/BEGIN PUBLIC KEY/,/END PUBLIC KEY/p' | sed 's/^# *//') \
+       <(curl -fsS "${NET[@]}" -m 30 "$CHANGELOG/$series/$series" | sed -n '/BEGIN PUBLIC KEY/,/END PUBLIC KEY/p' | sed 's/^# *//') \
        >/dev/null || die "release key differs from the changelog announcement"
   [ -f "$d/$n" ] || bunzip2 -k "$d/$n.bz2"
   openssl base64 -d -in "$d/$n.sig" -out "$d/$n.sig.bin"
@@ -339,9 +344,9 @@ ensure_ir() {
   local rel="$1" f="$ROOT/dist/$1/opnsense-$1.ir.json"
   [ -f "$f" ] && return
   mkdir -p "$(dirname "$f")"
-  curl -fsSL -m 120 -o "$f" \
-    "https://github.com/${TESTVM_SPEC_REPO:-pipiobjo/opnsense-api-spec}/releases/download/opnsense-$rel/opnsense-$rel.ir.json" \
-    || { rm -f "$f"; die "no IR for $rel (not in dist/ and not published)"; }
+  local url="https://github.com/${TESTVM_SPEC_REPO:-pipiobjo/opnsense-api-spec}/releases/download/opnsense-$rel/opnsense-$rel.ir.json"
+  curl -fsSL "${NET[@]}" -m 120 -o "$f" "$url" \
+    || { local rc=$?; rm -f "$f"; die "no IR for $rel: not in dist/, and downloading $url failed (curl exit $rc; 22 means not published)"; }
 }
 
 start() {
