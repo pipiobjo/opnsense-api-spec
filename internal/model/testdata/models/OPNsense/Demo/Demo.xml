@@ -46,6 +46,8 @@
             <stored type=".\StoredField"/>
             <mac type="MacAddressField"/>
             <commented type=".\CommentedField"/>
+            <uid type="UniqueIdField"/>
+            <secret type="UpdateOnlyTextField"/>
         </general>
         <legacy>
             <entry type=".\LegacyEntryField">

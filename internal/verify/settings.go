@@ -131,8 +131,6 @@ func plainField(n *model.Node, obj map[string]any, prefix string) (string, strin
 	return pickField(n, obj, prefix, false)
 }
 
-var serverSet = map[string]bool{"UniqueIdField": true, "AutoNumberField": true, "JsonAuditField": true, "UpdateOnlyTextField": true}
-
 func pickField(n *model.Node, obj map[string]any, prefix string, numeric bool) (string, string) {
 	for _, ch := range n.Children {
 		p := ch.Name
@@ -147,7 +145,7 @@ func pickField(n *model.Node, obj map[string]any, prefix string, numeric bool) (
 				}
 			}
 		case model.KindField:
-			if ch.Volatile || serverSet[ch.BaseType] || serverSet[ch.Type] || len(ch.Gaps) > 0 {
+			if ch.Volatile || ch.ServerSet() || ch.WriteOnly() || len(ch.Gaps) > 0 {
 				continue
 			}
 			if isNum := ch.BaseType == "BooleanField" || ch.BaseType == "IntegerField"; isNum != numeric {

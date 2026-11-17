@@ -106,3 +106,30 @@ func TestWriteSideGaps(t *testing.T) {
 		t.Errorf("model gaps %+v", m.Gaps)
 	}
 }
+
+// Which fields the firewall sets itself or never returns is defined once,
+// here, and published in the capability data.
+func TestServerSetAndWriteOnly(t *testing.T) {
+	ms, _, err := LoadAll("testdata")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := ms[0]
+	for path, want := range map[string][2]bool{
+		"general.uid":     {true, false},
+		"general.secret":  {false, true},
+		"general.enabled": {false, false},
+	} {
+		n := m.Find(path)
+		if n == nil {
+			t.Fatalf("%s missing", path)
+		}
+		if n.ServerSet() != want[0] || n.WriteOnly() != want[1] {
+			t.Errorf("%s: server-set %v write-only %v, want %v", path, n.ServerSet(), n.WriteOnly(), want)
+		}
+	}
+	var none *Node
+	if none.ServerSet() || none.WriteOnly() {
+		t.Error("a missing node is neither")
+	}
+}

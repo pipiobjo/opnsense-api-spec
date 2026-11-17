@@ -85,6 +85,26 @@ type Model struct {
 	Gaps []gap.Gap `json:"gaps,omitempty"`
 }
 
+// ServerSet: the firewall fills the field itself and ignores a value sent
+// (UniqueIdField, AutoNumberField, JsonAuditField). Published as
+// "server_set" in the capability data, so consumers need no list of types.
+func (n *Node) ServerSet() bool {
+	if n == nil {
+		return false
+	}
+	switch n.BaseType {
+	case "UniqueIdField", "AutoNumberField", "JsonAuditField":
+		return true
+	}
+	return false
+}
+
+// WriteOnly: the field is stored but never returned (UpdateOnlyTextField,
+// e.g. passwords). Published as "write_only".
+func (n *Node) WriteOnly() bool {
+	return n != nil && (n.BaseType == "UpdateOnlyTextField" || n.Type == "UpdateOnlyTextField")
+}
+
 // Find returns the node at a dotted path below the root ("dnsbl.blocklist").
 func (m *Model) Find(path string) *Node {
 	n := m.Root

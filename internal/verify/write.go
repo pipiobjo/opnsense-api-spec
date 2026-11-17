@@ -333,7 +333,7 @@ func (w *writer) cycle(f *family) *Result {
 	// ids, audit fields or serials, are not writes of ours)
 	sent := map[string]any{}
 	for fld := range a.chosen {
-		if !writeOnly(node(f.entry, fld)) {
+		if !node(f.entry, fld).WriteOnly() {
 			assign(sent, fld, lookup(body, fld))
 		}
 	}
@@ -403,11 +403,6 @@ func (w *writer) cycle(f *family) *Result {
 		r = knownGap(r, f.get)
 	}
 	return r
-}
-
-// writeOnly: fields the server never returns (passwords and the like).
-func writeOnly(n *model.Node) bool {
-	return n != nil && (n.BaseType == "UpdateOnlyTextField" || n.Type == "UpdateOnlyTextField")
 }
 
 // readBack gets the entry and compares every sent field (write form).
@@ -484,7 +479,7 @@ func changeable(entry *model.Node, body map[string]any, chosen map[string]bool) 
 	sort.Strings(rest)
 	for _, f := range append(order, rest...) {
 		n := node(entry, f)
-		if writeOnly(n) {
+		if n.WriteOnly() {
 			continue
 		}
 		cur, _ := lookup(body, f).(string)

@@ -426,3 +426,19 @@ func TestWriteSideGapsInData(t *testing.T) {
 		t.Error("field area not marked custom-write in v2")
 	}
 }
+
+// The flags reach the data, so consumers need no list of field types.
+func TestServerSetWriteOnlyInData(t *testing.T) {
+	uid := &model.Node{Name: "uid", Kind: model.KindField, Type: "UniqueIdField", BaseType: "UniqueIdField"}
+	pw := &model.Node{Name: "pw", Kind: model.KindField, Type: "UpdateOnlyTextField", BaseType: "UpdateOnlyTextField"}
+	plain := &model.Node{Name: "x", Kind: model.KindField, Type: "TextField", BaseType: "TextField"}
+	if f := field(uid); !f.ServerSet || f.WriteOnly {
+		t.Errorf("uid: %+v", f)
+	}
+	if f := field(pw); f.ServerSet || !f.WriteOnly {
+		t.Errorf("pw: %+v", f)
+	}
+	if f := field(plain); f.ServerSet || f.WriteOnly {
+		t.Errorf("plain: %+v", f)
+	}
+}

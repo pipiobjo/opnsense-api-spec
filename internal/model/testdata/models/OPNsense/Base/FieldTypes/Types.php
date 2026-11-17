@@ -42,5 +42,7 @@ class PortField extends BaseListField {}
 class InterfaceField extends BaseListField {}
 class HostnameField extends BaseSetField {}
 class TextField extends BaseField {}
+class UniqueIdField extends BaseField {}
+class UpdateOnlyTextField extends BaseField {}
 class ContainerField extends BaseField {}
 class MacAddressField extends BaseField { public function setValue($value) { /* lower case */ } }

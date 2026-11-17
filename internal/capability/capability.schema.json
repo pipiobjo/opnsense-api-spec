@@ -200,6 +200,8 @@
         "multiple": {"type": "boolean"},
         "required": {"type": "boolean"},
         "volatile": {"type": "boolean"},
+        "server_set": {"type": "boolean", "description": "the firewall fills the field itself and ignores a value sent"},
+        "write_only": {"type": "boolean", "description": "stored but never returned (passwords)"},
         "default": {"type": "string"},
         "options": {
           "type": "array",

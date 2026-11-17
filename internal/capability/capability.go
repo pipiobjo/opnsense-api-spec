@@ -158,13 +158,18 @@ type Operation struct {
 
 // Field is one variant of a field.
 type Field struct {
-	In        any               `json:"in"`
-	Type      string            `json:"type"`
-	Base      string            `json:"base,omitempty"`
-	ReadShape string            `json:"read_shape,omitempty"`
-	Multiple  bool              `json:"multiple,omitempty"`
-	Required  bool              `json:"required,omitempty"`
-	Volatile  bool              `json:"volatile,omitempty"`
+	In        any    `json:"in"`
+	Type      string `json:"type"`
+	Base      string `json:"base,omitempty"`
+	ReadShape string `json:"read_shape,omitempty"`
+	Multiple  bool   `json:"multiple,omitempty"`
+	Required  bool   `json:"required,omitempty"`
+	Volatile  bool   `json:"volatile,omitempty"`
+	// ServerSet: the firewall fills the field itself and ignores a value
+	// sent; WriteOnly: stored but never returned (passwords). Consumers
+	// use these flags instead of a list of field types.
+	ServerSet bool              `json:"server_set,omitempty"`
+	WriteOnly bool              `json:"write_only,omitempty"`
 	Default   *string           `json:"default,omitempty"`
 	Options   []model.Option    `json:"options,omitempty"`
 	Relations []model.Relation  `json:"relations,omitempty"`
@@ -564,6 +569,7 @@ var uiText = map[string]bool{"ValidationMessage": true, "BlankDesc": true}
 func field(n *model.Node) *Field {
 	f := &Field{Type: strings.TrimPrefix(n.Type, ".\\"), Base: n.BaseType, ReadShape: string(n.Shape),
 		Multiple: n.Multiple, Required: n.Required, Volatile: n.Volatile, Default: n.Default,
+		ServerSet: n.ServerSet(), WriteOnly: n.WriteOnly(),
 		Options: n.Options, Relations: n.Relations, Gaps: gapCodes(n.Gaps)}
 	// an empty default and no default both leave the field empty
 	if f.Default != nil && *f.Default == "" {
