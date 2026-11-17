@@ -58,6 +58,13 @@ newest patch release of the minor version in `mise.toml`. The container
 images are pinned by digest, which Dependabot does not update: a Go
 security release needs a new pin by hand.
 
+Build tools: `jdx/mise-action` installs mise only from releases at least
+7 days old and verifies the binary against mise's signed checksums; mise
+verifies the Go download against go.dev's checksums. Every action is
+pinned to the commit of its release tag (checked 2026-11-17: all match,
+all at least 6 weeks old except `jdx/mise-action` v5.2.8, released
+2026-11-12; later versions come through Dependabot, which waits 7 days).
+
 Review of 2026-11-17 against the OSV database (which includes the Go
 vulnerability database): no known vulnerability in code the generator
 compiles. The findings for its module graph concern packages it does not
