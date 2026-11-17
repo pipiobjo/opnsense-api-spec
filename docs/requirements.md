@@ -3,15 +3,16 @@
 What the project must achieve: this repository (the API description and
 capability data), the Go client
 [opnsense-api-go](https://github.com/pipiobjo/opnsense-api-go), and an
-OpenTofu/Terraform provider that is planned. Each repository's
+OpenTofu/Terraform provider and an MCP server, both planned. Each repository's
 `docs/testing.md` traces its tests back to these IDs. How the parts work:
 [concepts.md](concepts.md).
 
 ## Goal
 
-An OpenTofu provider for OPNsense. On the way, two things that did not
-exist: an API description generated from OPNsense itself, and a Go
-client that adapts to the firewall it talks to.
+An OpenTofu provider for OPNsense, and an MCP server that gives AI agents
+safe access to it. On the way, two things that did not exist: an API
+description generated from OPNsense itself, and a Go client that adapts
+to the firewall it talks to.
 
 ## Functional requirements
 
@@ -36,6 +37,20 @@ client that adapts to the firewall it talks to.
 | Q6 | Design consistency: the same problem is solved the same way; code is reused, not copied. |
 | Q7 | Quality evidence is visible: coverage reports with a floor, software bills of materials, and a document per repository that says what is tested, how, and what is not. |
 
+## MCP server (planned)
+
+| ID | Requirement |
+|---|---|
+| M1 | An MCP server gives AI agents access to OPNsense. It lives in its own repository, is released on its own, and is built on opnsense-api-go: no HTTP code and no API knowledge of its own. |
+| M2 | A small, fixed set of generic tools, not one tool per resource and operation (about 390 resources): `list_resources`, `describe_resource` (fields, types, options and flags from the capability data), `get`, `list`, `add`, `set`, `delete`, `apply`, each taking the resource ID as a parameter. The tool set is the same for every OPNsense version; what exists comes from the connected firewall's data at run time. The provider's generic engine follows the same pattern. |
+| M3 | The client's guarantees reach the agent (F2, F6): nothing is sent that the firewall's version does not have, every write is read back, and errors come back as tool errors whose message says what failed and what to do. |
+| M4 | Read-only by default. Writing tools exist only when the operator enables them in the configuration; `delete` and `apply` can be enabled separately; an optional allowlist limits the resources or packages a session may touch. |
+| M5 | Credentials come only from the operator's environment or a file, never from tool input, and never appear in tool output or logs. TLS is verified as in the client. No generic raw-call tool: it would bypass every check. Local transport (stdio) first; a network transport only with authentication. |
+| M6 | Values read from the firewall (descriptions, names, log lines) are returned as data; the tool descriptions say they are untrusted, because they can contain text that looks like instructions. |
+| M7 | Secrets stay hidden: `write_only` fields are never returned, and fields that look like secrets (password, secret, key, by name) are masked in tool output unless the operator allows them. |
+| M8 | Every mutation is logged for the operator: tool, resource, ID and the names of the changed fields, without secret values. |
+| M9 | Tested like the client (Q1, Q7): protocol tests against a fake firewall, integration tests on the throwaway VM for every supported series, coverage with a floor, a `docs/testing.md`. |
+
 ## Constraints
 
 | ID | Constraint |
@@ -53,3 +68,4 @@ client that adapts to the firewall it talks to.
 | 2026-11-15 | The capability format is published once the provider has used it. |
 | 2026-11-16 | The client is re-tested when this repository publishes new data: daily before the first stable release, weekly or monthly after it. |
 | 2026-11-17 | A firewall on a series newer than the data is refused with a typed error; a package older than all data is read-only. |
+| 2026-11-17 | The provider and the MCP server build on the Go client. Code generators for other languages are not run as long as every consumer is Go ([ADR 0007](adr/0007-openapi-3-1.md)). |

@@ -1,6 +1,6 @@
 # 0007: OpenAPI 3.1 as the only output format
 
-Status: accepted, implemented (Go consumer gate blocking in every pipeline run; openapi-generator checks manual)
+Status: accepted; partly implemented. Blocking in every pipeline run: validation against the OpenAPI 3.1 schema (`internal/schemacheck`) and the Go consumer gate (`tools/client-smoke.sh`). Not implemented: the openapi-generator checks, deferred on 2026-11-17 (see Amendment); the table below is a one-time measurement.
 
 ## Context
 
@@ -33,8 +33,8 @@ support; that version was simply outdated.
   existing renderer, so this decision is cheap to revisit.
 - Compatibility is checked on every build:
   - **blocking:** validation against the OpenAPI 3.1 specification
-    (language-neutral; tool to be chosen), and oapi-codegen generate +
-    compile (our consumer);
+    (language-neutral; `internal/schemacheck` with the official schema),
+    and oapi-codegen generate + compile (our consumer);
   - **informational:** openapi-generator for other languages. Failures are
     reported, not blocking, because they are often generator issues rather
     than spec errors.
@@ -54,3 +54,21 @@ support; that version was simply outdated.
 - One format, one set of tests, full expressiveness.
 - Third-party clients generated with less mature 3.1 tooling may need
   tool-specific settings; the README lists the known ones.
+
+## Amendment 2026-11-17: openapi-generator checks deferred
+
+The informational openapi-generator checks were never automated: the
+table above was measured once by hand, and the status line called that
+"manual". Two reasons not to build them now:
+
+- Every consumer of this project's own chain uses Go: the Go client, the
+  planned provider and the planned MCP server all build on
+  opnsense-api-go, which reads the capability data rather than generated
+  code. The blocking Go gate covers the OpenAPI documents for Go.
+- An informational check that notifies nobody has no effect under quiet
+  operation ([ADR 0012](0012-quiet-operation.md)).
+
+Re-evaluate when a consumer in another language needs the OpenAPI
+documents. Then run the generators in the pipeline and publish the result
+with each release (generator, version, generate, compile, error excerpt),
+so a consumer reads it in the artifact instead of anyone watching a check.
