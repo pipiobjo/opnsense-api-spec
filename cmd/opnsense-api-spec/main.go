@@ -9,8 +9,10 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/pipiobjo/opnsense-api-spec/internal/capability"
@@ -39,6 +41,9 @@ commands:
                            contract tests against a THROWAWAY test instance
                            (only https://127.0.0.1:<port> or localhost);
                            writes *.verified.json and re-renders the OpenAPI
+  installed -url U -keyfile K
+                           installed packages of the THROWAWAY test instance,
+                           one per line (what verify -packages installed uses)
   index                    rebuild dist/index.json (after verify runs)
   capabilities [-out DIR]  build the capability data (catalog.json and one
                            document per package) from dist/ into DIR
@@ -166,6 +171,11 @@ func main() {
 			usage()
 		}
 		err = cmdVerify(o, accepted)
+	case "installed":
+		if o.url == "" || o.keyfile == "" {
+			usage()
+		}
+		err = cmdInstalled(o)
 	case "index":
 		err = pipeline.BuildIndex(pl.Dist)
 	case "capabilities":
@@ -206,20 +216,43 @@ func cmdReleases(c *pkgrepo.Client, arch string) error {
 	return nil
 }
 
+// vmClient connects to the throwaway test instance (loopback only) with
+// the API key file tools/testvm.sh wrote.
+func vmClient(o opts) (*verify.Client, error) {
+	raw, err := os.ReadFile(o.keyfile)
+	if err != nil {
+		return nil, err
+	}
+	var key struct{ Key, Secret string }
+	if err := json.Unmarshal(raw, &key); err != nil || key.Key == "" {
+		return nil, fmt.Errorf("%s: expected {\"key\": ..., \"secret\": ...}", o.keyfile)
+	}
+	return verify.NewClient(o.url, key.Key, key.Secret, []string{"127.0.0.1", "localhost"})
+}
+
+// cmdInstalled prints the installed packages of the test instance, one per
+// line, sorted: the same detection the contract test uses, for testvm.sh.
+func cmdInstalled(o opts) error {
+	c, err := vmClient(o)
+	if err != nil {
+		return err
+	}
+	pk, err := c.InstalledPackages()
+	if err != nil {
+		return err
+	}
+	for _, p := range slices.Sorted(maps.Keys(pk)) {
+		fmt.Println(p)
+	}
+	return nil
+}
+
 func cmdVerify(o opts, accepted *string) error {
 	rel, err := pipeline.ReadIR(o.irFile)
 	if err != nil {
 		return err
 	}
-	raw, err := os.ReadFile(o.keyfile)
-	if err != nil {
-		return err
-	}
-	var key struct{ Key, Secret string }
-	if err := json.Unmarshal(raw, &key); err != nil || key.Key == "" {
-		return fmt.Errorf("%s: expected {\"key\": ..., \"secret\": ...}", o.keyfile)
-	}
-	c, err := verify.NewClient(o.url, key.Key, key.Secret, []string{"127.0.0.1", "localhost"})
+	c, err := vmClient(o)
 	if err != nil {
 		return err
 	}

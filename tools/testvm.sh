@@ -231,13 +231,11 @@ install_plugin() {
   return 1
 }
 
-# installed_packages: names of installed packages and plugins, from
-# firmware/info over HTTP/2 (the large response is broken over HTTP/1.1)
+# installed_packages: names of installed packages and plugins, with the
+# contract test's own detection (built by proxy_for, which every
+# installation goes through)
 installed_packages() {
-  local k s
-  k=$(jq -r .key "$VM/apikey.json"); s=$(jq -r .secret "$VM/apikey.json")
-  curl -sk --http2 -u "$k:$s" "$URL/api/core/firmware/info" \
-    | jq -r '[.package[]?, .plugin[]? | select(.installed == "1") | .name] | unique | .[]'
+  "$ROOT/.cache/bin/opnsense-api-spec" installed -url "$URL" -keyfile "$VM/apikey.json"
 }
 
 # proxy_for REL: the package proxy serves exactly the snapshot of REL and
