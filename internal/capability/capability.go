@@ -12,10 +12,15 @@
 package capability
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -39,11 +44,16 @@ const All = "*"
 // each one has. Together with Doc.Select it maps what a firewall reports
 // (core version, installed package versions) to fragments.
 type Catalog struct {
-	Format    int                  `json:"format"`
-	Generator string               `json:"generator"`
-	Cores     map[string]*Core     `json:"cores"`    // core version (26.7.9_1) -> framework
-	Releases  []*Release           `json:"releases"` // in version order
-	Packages  map[string]*PkgEntry `json:"packages"` // package -> document file
+	Format    int    `json:"format"`
+	Generator string `json:"generator"`
+	// DataID identifies this data state: the first 16 hex digits of the
+	// SHA-256 over every file Write produces, with catalog.json encoded
+	// with an empty DataID (DataIDOf). Same data, same ID; any change in
+	// any document gives a new one. Releases are tagged catalog-v<format>-<id>.
+	DataID   string               `json:"data_id,omitempty"`
+	Cores    map[string]*Core     `json:"cores"`    // core version (26.7.9_1) -> framework
+	Releases []*Release           `json:"releases"` // in version order
+	Packages map[string]*PkgEntry `json:"packages"` // package -> document file
 }
 
 // Core is one core package version.
@@ -717,7 +727,10 @@ func (d *Doc) addVerification(hash string, c *fragment.Composition, rep *verify.
 			continue
 		}
 		v := &ResVerify{Release: c.Release, Composition: c.ID(), Generator: rep.Generator, Date: rep.Date}
-		for op, o := range api.Operations {
+		// in name order: map order would make the findings order, and so
+		// the output and its data_id, differ between runs
+		for _, op := range slices.Sorted(maps.Keys(api.Operations)) {
+			o := api.Operations[op]
 			for _, r := range byPath[o.Path] {
 				switch {
 				case r.Check == verify.CheckWriteCycle:
@@ -789,13 +802,85 @@ func Write(dir string, cat *Catalog, docs map[string]*Doc) error {
 	if err := Validate(cat, docs); err != nil {
 		return err
 	}
-	if err := jsonfile.Write(filepath.Join(dir, "catalog.json"), cat); err != nil {
+	files, err := encodeAll(cat, docs)
+	if err != nil {
 		return err
 	}
-	for pkg, d := range docs {
-		if err := jsonfile.Write(filepath.Join(dir, "capabilities", pkg+".json"), d); err != nil {
+	id := dataID(files)
+	c := *cat
+	c.DataID = id
+	if files["catalog.json"], err = jsonfile.Encode(&c); err != nil {
+		return err
+	}
+	for name, b := range files {
+		if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(name)), b, 0o644); err != nil {
 			return err
 		}
 	}
-	return os.WriteFile(filepath.Join(dir, "capability.schema.json"), schemaJSON, 0o644)
+	cat.DataID = id
+	return nil
+}
+
+// encodeAll returns the bytes of every file Write produces, with
+// catalog.json encoded without DataID.
+func encodeAll(cat *Catalog, docs map[string]*Doc) (map[string][]byte, error) {
+	files := map[string][]byte{"capability.schema.json": schemaJSON}
+	c := *cat
+	c.DataID = ""
+	var err error
+	if files["catalog.json"], err = jsonfile.Encode(&c); err != nil {
+		return nil, err
+	}
+	for pkg, d := range docs {
+		if files["capabilities/"+pkg+".json"], err = jsonfile.Encode(d); err != nil {
+			return nil, err
+		}
+	}
+	return files, nil
+}
+
+// dataID hashes the files in name order, each as name, NUL, length, NUL,
+// content, so no two different file sets give the same input.
+func dataID(files map[string][]byte) string {
+	names := make([]string, 0, len(files))
+	for n := range files {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	h := sha256.New()
+	for _, n := range names {
+		fmt.Fprintf(h, "%s\x00%d\x00", n, len(files[n]))
+		h.Write(files[n])
+	}
+	return hex.EncodeToString(h.Sum(nil))[:16]
+}
+
+// DataIDOf recomputes the DataID of a directory written by Write, so a
+// consumer (or a test) can check that catalog.json names its own data.
+func DataIDOf(dir string) (string, error) {
+	files := map[string][]byte{}
+	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		rel, err := filepath.Rel(dir, p)
+		if err != nil {
+			return err
+		}
+		b, err := os.ReadFile(p)
+		files[filepath.ToSlash(rel)] = b
+		return err
+	})
+	if err != nil {
+		return "", err
+	}
+	var c Catalog
+	if err := json.Unmarshal(files["catalog.json"], &c); err != nil {
+		return "", fmt.Errorf("catalog.json: %w", err)
+	}
+	c.DataID = ""
+	if files["catalog.json"], err = jsonfile.Encode(&c); err != nil {
+		return "", err
+	}
+	return dataID(files), nil
 }

@@ -27,12 +27,22 @@ func Read(path string, v any) error {
 
 // Write encodes v into the file at path.
 func Write(path string, v any) error {
+	b, err := Encode(v)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, b, 0o644)
+}
+
+// Encode returns v in the file format of Write (indented, no HTML
+// escaping, trailing newline).
+func Encode(v any) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	enc.SetEscapeHTML(false)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(v); err != nil {
-		return err
+		return nil, err
 	}
-	return os.WriteFile(path, buf.Bytes(), 0o644)
+	return buf.Bytes(), nil
 }

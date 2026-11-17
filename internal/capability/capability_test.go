@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -304,6 +305,48 @@ func TestWrite(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(out, f)); err != nil {
 			t.Error(err)
 		}
+	}
+}
+
+// The data state has an identity derived from its content: the same data
+// gives the same ID (deterministic), catalog.json names it, and a change
+// in any file gives another ID.
+func TestDataID(t *testing.T) {
+	d, _, _, _ := buildDemo(t)
+	write := func() (string, string) {
+		cat, docs, err := Build(d.dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := t.TempDir()
+		if err := Write(out, cat, docs); err != nil {
+			t.Fatal(err)
+		}
+		return out, cat.DataID
+	}
+	out, id := write()
+	if ok, _ := regexp.MatchString(`^[0-9a-f]{16}$`, id); !ok {
+		t.Fatalf("DataID %q", id)
+	}
+	if _, id2 := write(); id2 != id {
+		t.Errorf("same data, different IDs: %s %s", id, id2)
+	}
+	var onDisk Catalog
+	b, _ := os.ReadFile(filepath.Join(out, "catalog.json"))
+	if err := json.Unmarshal(b, &onDisk); err != nil || onDisk.DataID != id {
+		t.Errorf("catalog.json data_id %q, want %s (%v)", onDisk.DataID, id, err)
+	}
+	if got, err := DataIDOf(out); err != nil || got != id {
+		t.Errorf("DataIDOf = %q %v, want %s", got, err, id)
+	}
+	doc := filepath.Join(out, "capabilities", "os-demo.json")
+	b, _ = os.ReadFile(doc)
+	b[len(b)/2] ^= 1 // same length, one bit different
+	if err := os.WriteFile(doc, b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := DataIDOf(out); got == id {
+		t.Error("a changed document kept the data ID")
 	}
 }
 

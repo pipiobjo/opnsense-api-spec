@@ -1,6 +1,8 @@
 # 0010: Capability data per package instead of an OpenAPI superset
 
-Status: accepted 2026-11-15; published as the release `catalog` from the next scheduled run
+Status: accepted 2026-11-15. Publication was switched off again the same
+day (`CATALOG_PUBLISH=false`) until a consumer had used the format;
+amended 2026-11-18: immutable release per data state (see Decision).
 
 ## Context
 
@@ -41,12 +43,21 @@ Measured on the published data (34 releases, core and 75 packages):
   does not count.
 - UI texts (`ValidationMessage`, `BlankDesc`) are not part of the format;
   an empty default equals no default.
-- Published as the rolling release `catalog` (`catalog.json`,
-  `capabilities.tar.zst`, `SHA256SUMS`, build provenance attestations),
-  rebuilt by the daily pipeline and replaced only when the checksums
-  change. The archive is reproducible (same input, same bytes).
+- Published per data state as the immutable pre-release
+  `catalog-v1-<data_id>` and as the rolling pre-release `catalog` (newest
+  state), each with `catalog.json`, `capabilities.tar.zst`, `SHA256SUMS`
+  and build provenance attestations (capabilities.md, "Identity and
+  releases"). The build is deterministic and checks it by building twice;
+  `data_id` is derived from the content.
+- Amendment 2026-11-18 (architecture review): the first design had only
+  the rolling `catalog`, and the Go client fell back to the unverified
+  pipeline state when it was missing. A provider that embeds data needs a
+  state it can fetch again and verify, so each state gets its own release
+  that is never changed. The review also found the build was not
+  deterministic (map order in the verification results); fixed and
+  guarded.
 - Publishing is controlled by the repository variable `CATALOG_PUBLISH`
-  (on since 2026-11-15, after review); every run builds and validates the
+  (off since 2026-11-15 20:48 UTC); every run builds and validates the
   data and keeps it as a workflow artifact either way.
 
 ## Consequences

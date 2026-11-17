@@ -28,6 +28,31 @@ without any code from this repository.
 Size over 34 releases, core and 75 packages: 3.8 MB as JSON, 0.13 MB
 compressed with zstd. The core document is the largest (1.8 MB).
 
+## Identity and releases
+
+Every data state has an ID, `data_id` in `catalog.json`: the first 16
+hex digits of a SHA-256 over all files of the state (each as name, NUL,
+length, NUL, content, in name order; `catalog.json` taken with `data_id`
+removed). The same data gives the same ID; any change in any file gives a
+new one. The build is deterministic and checks that itself: it builds
+twice and fails if the results differ.
+
+Each state is published twice, with identical assets (`catalog.json`,
+`capabilities.tar.zst`, `SHA256SUMS`) and build provenance attestations:
+
+| Release | Changes | Use it for |
+|---|---|---|
+| `catalog-v1-<data_id>` | never; created once per state | anything that must reproduce a state: a provider that embeds the data, a bug report |
+| `catalog` | replaced when the data changes | finding the newest state; its `catalog.json` names the fixed release |
+
+Both are GitHub pre-releases: format 1 may still change before the first
+provider release that uses it. A consumer verifies `SHA256SUMS`, then the
+attestation (`gh attestation verify <file> -R pipiobjo/opnsense-api-spec
+--signer-workflow pipiobjo/opnsense-api-spec/.github/workflows/pipeline.yml
+--source-ref refs/heads/main`: only the publishing pipeline on `main`
+counts, not a dry run from another branch),
+and reports the `data_id` it uses.
+
 ## Identifiers
 
 - **Fragment**: 16 hex digits, the hash of a package's derived API
@@ -62,10 +87,20 @@ revision) and the versions of installed packages.
 
 A combination that was never seen (a core hotfix newer than the data, a
 plugin version built after the last run) has no entry. What to do then is
-the consumer's policy; the recommended order is: the newest fragment of
-the same package version on any framework of the same series, then the
-newest fragment of the package in that series, with a warning that the
-combination is unverified. Never fall back silently.
+the consumer's policy. The Go client's, which we recommend:
+
+1. Same package version on the nearest **older** core of the same series:
+   used, with a note (usual after a hotfix).
+2. A package version the data has never seen: the newest fragment of the
+   package in that series is used, with a warning that the combination is
+   unverified.
+3. An installed version older than all data of its series: read only,
+   writes are refused (the data may describe fields it lacks).
+4. A series newer than the data: no fragment. Writes are refused, because
+   a new series can change the framework the API is derived from.
+
+Never take data newer than what is installed for a write, and never fall
+back silently: a consumer must show the note or warning.
 
 ## Variants and `in`
 
@@ -253,7 +288,7 @@ rather than guess:
   change of `base` between variants is often a refactoring in OPNsense
   with no change on the wire.
 - **Unknown versions.** Business editions and versions newer than the
-  data have no entry; see the fallback order above.
+  data have no entry; see the order above.
 
 ## Compatibility rules
 

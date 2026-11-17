@@ -26,7 +26,14 @@ for plugins.
   identified by the catalog hash and named after OPNsense (`26.7.8_2`) plus
   the catalog revision.
 - Status `provisional` while a snapshot is live, `final` afterwards; final
-  outputs are immutable. Generator versions add outputs, never overwrite.
+  fragments are immutable (content addresses). Generator versions add
+  fragments, never overwrite them.
+- Clarified 2026-11-18 (architecture review): the per-release GitHub
+  assets (OpenAPI views) are re-rendered and replaced when the generator
+  changes, also for final releases; what identifies one version of them is
+  `SHA256SUMS`, the generator version in the release notes and the
+  attestation. Consumers that need a fixed state use the capability
+  data's immutable releases (ADR 0010).
 - Daily change detection on catalog hashes; rebuild only changed fragments.
 - Views derived from fragments: per release, per fragment, superset per
   package with availability ranges.

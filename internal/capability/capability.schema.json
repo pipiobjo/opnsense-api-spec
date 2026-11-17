@@ -24,6 +24,7 @@
       "properties": {
         "format": {"const": 1},
         "generator": {"type": "string"},
+        "data_id": {"type": "string", "pattern": "^[0-9a-f]{16}$", "description": "identity of this data state: SHA-256 prefix over all files, docs/capabilities.md section Identity"},
         "cores": {
           "type": "object",
           "description": "core package version (as the firewall reports it, e.g. 26.7.9_1) -> release and framework",
