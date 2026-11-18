@@ -38,6 +38,18 @@ to the firewall it talks to.
 | Q6 | Design consistency: the same problem is solved the same way; code is reused, not copied. |
 | Q7 | Quality evidence is visible: coverage reports with a floor, software bills of materials, and a document per repository that says what is tested, how, and what is not. |
 
+### Acceptance conditions
+
+A release gate (client v0.1, a provider release, the MCP server) checks
+these; each condition is either automated or a named, recorded review.
+
+| ID | Met when |
+|---|---|
+| Q1 | (a) Every test is named under the claim it shows in `docs/testing.md` (`TestEveryTestIsDocumented`). (b) Coverage stays above the floor of each profile (`tools/ci/coverage.sh`). (c) The table of targeted mutants is killed on every run (`TestMutantsAreKilled`: signature, checksum, revoked key, version order, shape types, known-gap narrowing, accepted match, failure rule); a new security or verdict check is added to it. (d) Every new check's commit names the break it was seen failing for. (e) Summaries count skipped and tolerated checks separately from passed ones. |
+| Q3 | (a) Each repository has a README (what and how to use), a concepts or design document, `docs/testing.md`, `docs/development.md` (build, test, change) and CONTRIBUTING. (b) Every decision someone might question is an ADR with context, decision, consequences and evidence, listed in the ADR index with its status. (c) Before a release, a reader with only the public repository (no private notes, no history; a fresh agent counts) follows the README and `development.md` from a clean clone to a passing local test run, and the steps it could not follow are fixed. |
+| Q5 | (a) No open high or critical finding from the most recent architecture review board, and that review is less than three months old. (b) The public surface (the client's exported API, capability format 1, the provider schema) had no breaking change in the four weeks before the release. (c) CI and the contract or acceptance tests are green on every supported series with the release candidate. (d) For the provider: the stop rule of the first slice passed (empty plan after apply, readable diffs, import) on all supported series. |
+| Q6 | (a) One implementation per concept; the layout table in `docs/development.md` names where each lives (version order, PHP scanning, failure rule, signature checks), and a second copy, also in shell, jq or YAML, is a finding. When two repositories need the same rule, both test against one published table (`version-order.json`). (b) Vocabularies are typed constants with documentation (`TestEveryCodeIsDocumented` for gap codes); behaviour never depends on message text. (c) Before a release, a design review with a fresh reader finds no duplicated helper and no file over about 500 lines doing several jobs, or the findings are fixed. |
+
 ## OpenTofu/Terraform provider (planned)
 
 | ID | Requirement |
@@ -85,5 +97,6 @@ to the firewall it talks to.
 | 2026-11-18 | After the architecture review: the capability data is published before the provider uses it, as GitHub pre-releases without a stability promise: one immutable release per data state (`catalog-v1-<data_id>`) and a rolling `catalog` for the newest (capabilities.md, "Identity and releases"). Replaces the 2026-11-15 decision to wait for the provider. |
 | 2026-11-18 | The provider embeds a fixed data state and can load a newer attested one at run time (P3). |
 | 2026-11-18 | A firewall on a newer series can be read with the newest data, marked unverified; writes stay refused (P5; refines 2026-11-17). |
+| 2026-11-18 | Q1, Q3, Q5 and Q6 got acceptance conditions. Q1's lasting proof is a fixed table of targeted mutants run on every push (`TestMutantsAreKilled`), not a general mutation tool, whose survivors would need sorting by a person on every run ([testing.md](testing.md#how-we-know-a-test-can-fail)). |
 | 2026-11-18 | Provider attributes are named once from the field path in the newest data at their first release and recorded in an append-only name table; a field move adds a path to the existing attribute. `moved_from` is not generated: OPNsense states moves only in migration code, and matching removed and added fields by name found one move in fourteen candidates (P8, [ADR 0014](adr/0014-attribute-identity-and-moves.md)). The first slice's resources need no mapping. |
 | 2026-11-17 | The provider and the MCP server build on the Go client. Code generators for other languages are not run as long as every consumer is Go ([ADR 0007](adr/0007-openapi-3-1.md)). |

@@ -17,9 +17,10 @@ is derived from where and why. This page explains how.
 | `internal/assemble` | sources of one release -> IR; golden tests on three real releases |
 | `internal/openapi`, `internal/schemacheck` | IR -> OpenAPI 3.1, checked against the official schema |
 | `internal/fragment`, `internal/pipeline` | per-package fragments, compositions, `dist/index.json` |
-| `internal/capability` | capability data ([capabilities.md](capabilities.md)) |
+| `internal/capability` | capability data ([capabilities.md](capabilities.md)); `version-order.json`, the version order's test table shared with the Go client |
 | `internal/verify` | contract tests against a throwaway instance; the failure rule (`Status.Failed`) |
 | `internal/gap` | gap codes; every code has a row in concepts.md (a test checks) |
+| `internal/mutation` | targeted mutants of the key checks; each must make its test fail (add a case for a new security or verdict check) |
 | `tools/testvm.sh` | the throwaway OPNsense VM |
 | `tools/ci/` | scripts the workflows run; each also runs locally |
 | `verify/accepted.json` | upstream behaviour declared as expected, with evidence |

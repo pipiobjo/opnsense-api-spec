@@ -41,7 +41,7 @@ How to run everything locally: [development.md](development.md).
 | S5 | `TestCompareVersions` (the table `version-order.json`, published with the data; the Go client tests the same file), `TestSplitCoversEverythingOnce`, `TestHash`, `TestComposeAndStatus`, `TestBuildVariantsAndSelect`, `TestSelectConflict`, `TestFamilies`, `TestWriteSideGapsInData`, `TestServerSetWriteOnlyInData`, `TestFirstSeen`, `TestFetchAttribution`, `TestUnavailablePackages` |
 | S6 | `TestForRelease` (SBOM valid against the official CycloneDX 1.6 schema, real hashes, deterministic), `TestForReleaseRefusesBadInput`, `TestMatrixLifecycle`, `TestDecide`, `TestVerifyPlan`, `TestNeedsVerification`, `TestUntested`, `TestVerification`; `tools/ci/roundtrip.sh`, `tools/ci/check-published.sh`; the "only promoted commits publish" step of `pipeline.yml` |
 | S7 | `tools/ci/alerts_test.sh` (41 cases: one failed day sends nothing, 7 days open one issue, a new workflow that has not run yet sends nothing, a release without current data for 7 days is named, recovery closes it, ...) |
-| S8 | `TestNewClientRefusesOtherHosts`, `TestPackageListUsesHTTP2ChecksUseHTTP1` (checks over HTTP/1.1 so a cut answer shows; the package list over HTTP/2 so detection does not depend on it), `TestApplyAccepted`, `TestApplyAcceptedMatchAndUnused`, `TestAcceptedEntriesHaveMatch`, `TestWriteCycleWithoutPrerequisiteIsSkipped`, `TestWriteCycleUpdateRejectedIsNotVerified`; the failure rule `Status.Failed` used by the CLI, the run summary and the report |
+| S8 | `TestMutantsAreKilled` (the most important checks of S1, S4, S5 and S8 still fail when their rule is removed), `TestNewClientRefusesOtherHosts`, `TestPackageListUsesHTTP2ChecksUseHTTP1` (checks over HTTP/1.1 so a cut answer shows; the package list over HTTP/2 so detection does not depend on it), `TestFailureRule`, `TestApplyAccepted`, `TestApplyAcceptedMatchAndUnused`, `TestAcceptedEntriesHaveMatch`, `TestWriteCycleWithoutPrerequisiteIsSkipped`, `TestWriteCycleUpdateRejectedIsNotVerified`; the failure rule `Status.Failed` used by the CLI, the run summary and the report |
 
 `TestEveryTestIsDocumented` fails when a Go test exists that this page
 does not name, or the page names one that does not exist.
@@ -55,6 +55,27 @@ signature check, accepting a key that is not RSA, a gap code without
 documentation, a field rule that matched a commented-out function. The
 golden hashes fail on any change of the derived API of three real
 releases. Commit messages record the checks ("seen failing for ...").
+
+A one-time proof does not show that a test keeps its power after later
+changes. `TestMutantsAreKilled` (`internal/mutation`) repeats the proof
+on every run of the unit tests (every push, promotion and pipeline run)
+for the checks whose silent loss would hurt most: catalog signature,
+revoked keys, package checksums, version order, the shape check's type
+errors, the known-gap narrowing, the match of accepted entries and the
+failure rule. Each case replaces one exact line through go's `-overlay`
+(the source is not touched), runs the guarding test and requires a
+failing test, not a build error. If the code changes so the line no
+longer exists, the case fails and names the line, so the table follows
+the code; it does not change on a schedule. About 5 seconds; skipped
+with `-short`. Its first run found a real gap: removing "mismatch" from
+the failure rule broke no test (`TestFailureRule` since).
+
+A general mutation tool (go-mutesting, gremlins) was considered and not
+adopted: it mutates every statement (thousands of mutants here, hours
+per run), and its survivors include many equivalent mutants that a
+person would have to sort on every run. That is routine work (Q4) and a
+new dependency for a weaker signal than a short table of mutants that
+each name the claim they break.
 
 ## Coverage
 

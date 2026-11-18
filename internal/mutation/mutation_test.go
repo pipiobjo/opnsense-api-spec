@@ -1,0 +1,113 @@
+// SPDX-FileCopyrightText: 2026 opnsense-api-spec contributors
+// SPDX-License-Identifier: BSD-2-Clause
+
+// Package mutation keeps the proof that the most important checks can
+// fail (requirement Q1). Each case breaks one rule in the source and runs
+// the test that guards it; the test must fail. The source files are not
+// touched: the broken copy is given to the compiler with go's -overlay.
+package mutation
+
+import (
+	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+type mutant struct {
+	name     string // the rule that is broken
+	file     string // relative to the module root
+	from, to string // exact text, must occur once in file
+	pkg      string // package with the guarding test
+	test     string // -run pattern
+}
+
+// The checks whose silent loss would hurt most: trust in the inputs (S1),
+// the contract test's verdicts (S4, S8) and the version order (S5).
+var mutants = []mutant{
+	{"catalog signature not checked", "internal/pkgrepo/verify.go",
+		"if err := rsa.VerifyPKCS1v15(pub, crypto.SHA256, msg[:], cat.Signature); err != nil {",
+		"if err := rsa.VerifyPKCS1v15(pub, crypto.SHA256, msg[:], cat.Signature); err != nil && false {",
+		"./internal/pkgrepo/", "^TestVerifyCatalog"},
+	{"revoked key accepted for any series", "internal/pkgrepo/verify.go",
+		`if key.RevokedIn == "" || ser == "" || CompareVersions(ser, key.RevokedIn) >= 0 {`,
+		`if false {`,
+		"./internal/pkgrepo/", "^TestVerifyCatalogRevokedKeyOnlyForOlderSeries$"},
+	{"package checksum not compared", "internal/pkgrepo/verify.go",
+		`if got := "2$" + encodePkgBase32(h[:]); got != sum {`,
+		`if got := "2$" + encodePkgBase32(h[:]); got != sum && false {`,
+		"./internal/pkgrepo/", "^TestVerifyPackage$"},
+	{"hotfix revision compared as text", "internal/pkgrepo/pkgrepo.go",
+		"return comparePart(reva, revb)",
+		"return strings.Compare(reva, revb)",
+		"./internal/pkgrepo/", "^TestCompareVersions$"},
+	{"string field type not checked", "internal/verify/read.go",
+		`typeErr(p, "string", val)`,
+		`_ = val`,
+		"./internal/verify/", "^TestCompareNodeTypeErrors$"},
+	{"missing field explained by a subset gap", "internal/verify/read.go",
+		"section: ch.Kind != model.KindField,",
+		"section: true,",
+		"./internal/verify/", "^TestKnownGapSubsetOnlyExplainsSections$"},
+	{"accepted entry ignores its match", "internal/verify/accepted.go",
+		`if a.Match == "" {`,
+		`if true {`,
+		"./internal/verify/", "^TestApplyAcceptedMatchAndUnused$"},
+	{"a mismatch does not fail the run", "internal/verify/status.go",
+		"func (s Status) Failed() bool { return s == StatusMismatch || s == StatusError }",
+		"func (s Status) Failed() bool { return s == StatusError }",
+		"./internal/verify/", "^TestFailureRule$"},
+}
+
+// Claim (Q1): every check in the table above fails when its rule is
+// removed. A mutant that survives means the test lost its power; an
+// anchor that no longer matches means the code changed and the table must
+// follow it (the failure says which).
+func TestMutantsAreKilled(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs go test once per mutant")
+	}
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gobin := filepath.Join(os.Getenv("GOROOT"), "bin", "go")
+	if _, err := os.Stat(gobin); err != nil {
+		gobin = "go"
+	}
+	for _, m := range mutants {
+		t.Run(m.name, func(t *testing.T) {
+			src, err := os.ReadFile(filepath.Join(root, m.file))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if n := strings.Count(string(src), m.from); n != 1 {
+				t.Fatalf("anchor found %d times in %s (want 1); update the mutant to the current code: %q", n, m.file, m.from)
+			}
+			dir := t.TempDir()
+			mutated := filepath.Join(dir, filepath.Base(m.file))
+			if err := os.WriteFile(mutated, []byte(strings.Replace(string(src), m.from, m.to, 1)), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			overlay, _ := json.Marshal(map[string]map[string]string{"Replace": {filepath.Join(root, m.file): mutated}})
+			ov := filepath.Join(dir, "overlay.json")
+			if err := os.WriteFile(ov, overlay, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command(gobin, "test", "-count=1", "-overlay", ov, "-run", m.test, m.pkg)
+			cmd.Dir = root
+			cmd.Env = append(os.Environ(), "GOFLAGS=")
+			out, err := cmd.CombinedOutput()
+			switch {
+			case err == nil:
+				t.Errorf("mutant survived: %s still passes with %q", m.test, m.to)
+			case strings.Contains(string(out), "[build failed]") || strings.Contains(string(out), "[setup failed]"):
+				t.Errorf("mutant does not compile; break the rule, not the build:\n%s", out)
+			case !strings.Contains(string(out), "--- FAIL"):
+				t.Errorf("go test failed without a failing test:\n%s", out)
+			}
+		})
+	}
+}

@@ -104,6 +104,24 @@ func TestCompareNodeTypeErrors(t *testing.T) {
 	}
 }
 
+// Claim (S8): mismatch and error fail a run, every other status does
+// not; Failures, which the CLI, the job summary and the report use, lists
+// exactly those results. Found by TestMutantsAreKilled: before this test,
+// "a mismatch does not fail the run" survived the whole suite.
+func TestFailureRule(t *testing.T) {
+	rep := &Report{}
+	for _, s := range []Status{StatusOK, StatusAccepted, StatusSkipped, StatusKnownGap, StatusMismatch, StatusError} {
+		rep.Results = append(rep.Results, &Result{Path: "/api/" + string(s), Status: s})
+	}
+	var failed []string
+	for _, r := range rep.Failures() {
+		failed = append(failed, string(r.Status))
+	}
+	if want := []string{"mismatch", "error"}; !reflect.DeepEqual(failed, want) {
+		t.Errorf("failures %v, want %v", failed, want)
+	}
+}
+
 func TestApplyAccepted(t *testing.T) {
 	rep := &Report{Release: "26.1.6", Results: []*Result{
 		{Path: "/api/x/get", Check: "reachable", Status: "error"},
