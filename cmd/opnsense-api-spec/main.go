@@ -247,6 +247,9 @@ func vmClient(o opts) (*verify.Client, error) {
 			return nil, fmt.Errorf("TESTVM_SLOW=%q: want a whole number of at least 1", s)
 		}
 		c.ScaleTimeouts(n)
+		if n == 1 {
+			return c, nil
+		}
 		fmt.Fprintf(os.Stderr, "request time limit %s (TESTVM_SLOW=%d)\n", verify.RequestTimeout*time.Duration(n), n)
 	}
 	return c, nil
