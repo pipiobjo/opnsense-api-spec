@@ -13,15 +13,7 @@
    "check": "shape",
    "releases": "25.7.*",
    "match": "HTTP 500",
-   "reason": "Upstream plugin issue in os-udpbroadcastrelay on the 25.7 and 26.1 series: settings/get returns HTTP 500; works on 26.7.",
-   "evidence": "HTTP 500 on 26.1.6 (every run since 2026-11-09), 26.1.11_10 and 25.7.11_9 test VMs (2026-11-12); HTTP 200 on 26.7, 26.7.5 and 26.7.9"
-  },
-  {
-   "path": "/api/udpbroadcastrelay/settings/get",
-   "check": "shape",
-   "releases": "26.1.*",
-   "match": "HTTP 500",
-   "reason": "Upstream plugin issue in os-udpbroadcastrelay on the 25.7 and 26.1 series: settings/get returns HTTP 500; works on 26.7.",
+   "reason": "Upstream plugin issue in os-udpbroadcastrelay on the 25.7 series: settings/get returns HTTP 500; works on 26.1.11 and 26.7.",
    "evidence": "HTTP 500 on 26.1.6 (every run since 2026-11-09), 26.1.11_10 and 25.7.11_9 test VMs (2026-11-12); HTTP 200 on 26.7, 26.7.5 and 26.7.9"
   }
  ]
