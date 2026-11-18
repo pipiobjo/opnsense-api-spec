@@ -64,6 +64,10 @@ on:
         description: Plan no contract tests
         type: boolean
         default: false
+      roundtrip:
+        description: Dry run only - upload the newest release to a draft, check it as published, delete it
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -388,8 +392,11 @@ jobs:
   # no mise, nothing of the build runs here.
   upload:
     needs: [prepare]
+    # !cancelled(): without it a skipped contract job (a day without
+    # changes) would skip this job too; "complete" fails a run where it
+    # should have run and did not
     if: >-
-      needs.prepare.result == 'success' &&
+      !cancelled() && needs.prepare.result == 'success' &&
       (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.publish == true))
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -458,7 +465,7 @@ jobs:
   roundtrip:
     needs: [prepare]
     if: >-
-      needs.prepare.result == 'success' && inputs.roundtrip == true &&
+      !cancelled() && needs.prepare.result == 'success' && inputs.roundtrip == true &&
       !(github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.publish == true))
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -481,8 +488,33 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: tools/ci/roundtrip.sh .ci/dist
 
+  # A job skipped by a wrong condition looks like a pass (on 2026-11-18
+  # the round trip was skipped this way and the promotion still moved
+  # main). This fails the run when the upload of a live run or a requested
+  # round trip did not succeed.
+  complete:
+    needs: [prepare, upload, roundtrip]
+    if: ${{ !cancelled() && needs.prepare.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Every job that had to run did
+        env:
+          UPLOAD: ${{ needs.upload.result }}
+          ROUNDTRIP: ${{ needs.roundtrip.result }}
+          WANT_ROUNDTRIP: ${{ inputs.roundtrip }}
+        run: |
+          echo "live=$LIVE upload=$UPLOAD roundtrip requested=$WANT_ROUNDTRIP roundtrip=$ROUNDTRIP"
+          if [ "$LIVE" = true ] && [ "$UPLOAD" != success ]; then
+            echo "::error::live run, but the upload job is '$UPLOAD'"; exit 1
+          fi
+          if [ "$LIVE" != true ] && [ "$WANT_ROUNDTRIP" = true ] && [ "$ROUNDTRIP" != success ]; then
+            echo "::error::round trip requested, but the roundtrip job is '$ROUNDTRIP'"; exit 1
+          fi
+
   report:
-    needs: [keepalive, build, contract, prepare, upload, roundtrip]
+    needs: [keepalive, build, contract, prepare, upload, roundtrip, complete]
     if: always() && contains(needs.*.result, 'failure')
     runs-on: ubuntu-24.04
     timeout-minutes: 10

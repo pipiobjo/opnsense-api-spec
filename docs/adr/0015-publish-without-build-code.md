@@ -57,7 +57,14 @@ permissions) as in scope.
 - `publish.sh upload --dry-run` runs in every dry run against the real
   plan, so the upload's reading of the plan is tested before `main`
   moves, although the upload job itself runs only live.
-- Two more jobs and one artifact per run (`publish-input`, kept 7 days).
+- Three more jobs and one artifact per run (`publish-input`, kept 7
+  days). A job-level condition also decides whether a job runs at all,
+  and a skipped job looks like a pass: the first promotion of this split
+  (run 44264067994) skipped the round trip because a skipped contract job
+  made the default success() false, and still moved `main`. The `upload`
+  and `roundtrip` conditions now start with `!cancelled()`, and the job
+  `complete` fails a run in which a live upload or a requested round trip
+  did not succeed.
 - The check of what was published now runs before the state is saved: a
   failure leaves the previous state, so the next run publishes the same
   releases again. `publish.sh` compares the asset list as well as
