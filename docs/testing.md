@@ -86,7 +86,7 @@ summary, HTML artifact) and fails below the floor in
 | Profile | Covered | Floor | Where |
 |---|---:|---:|---|
 | unit (all Go tests, golden releases included) | 83.0% | 83% | `gates.sh`, artifact `coverage-unit` |
-| contract (the command and `internal/verify` against a VM with every plugin; `internal/verify` alone 83.0%, 2026-11-18) | 69.9% to 70.6% (per release) | 69% | pipeline contract job, artifact `coverage-contract-<release>` |
+| contract (the command and `internal/verify` against a VM with every plugin; `internal/verify` alone 83.0%, 2026-11-18) | 69.7% to 70.6% (per release) | 69% | pipeline contract job, artifact `coverage-contract-<release>` |
 
 The contract profile fell from 72.4% (2026-11-17) because it can only
 count what a firewall makes happen: branches for faults the VM rarely
