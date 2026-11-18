@@ -24,7 +24,8 @@ field went unnoticed in a Terraform provider.
   versions, select fragments, and reject unsupported operations, fields and
   values before sending.
 - Providers keep one stable schema across versions and map moved fields per
-  detected version.
+  detected version. (2026-11-18: the moved-from information is not
+  generated; the provider maps moves in its name table, ADR 0014.)
 
 ## Consequences
 

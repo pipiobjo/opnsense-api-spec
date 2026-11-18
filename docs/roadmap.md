@@ -90,8 +90,8 @@ generator changes.
    and attestations. Format 1 accepted 2026-11-15; additions found by the
    client: `shared_with`, `forced`/`computed`/`transformed`, resource
    families (`@<family>`), gap `magic-call`. Publication paused until the
-   provider has used the format (`CATALOG_PUBLISH=false`). Open:
-   `moved_from`.
+   provider has used the format (`CATALOG_PUBLISH=false`). `moved_from`
+   decided against (ADR 0014, 2026-11-18).
 10. **Retention and size.** `dist/` is ~540 MB for 34 releases (10 MB
     compressed); the Actions caches about 2.6 GB. Open: keeping the packages
     of final releases, because the mirror can withdraw them.
@@ -138,7 +138,6 @@ GitHub-hosted Linux runners, no self-hosted runner:
 
 ## Later
 
-- `moved_from` in the capability data (generated from the diffs).
 - Capability layer for the Go client and the provider (ADR 0006).
 - Second derivation: compare endpoint lists with OPNsense's
   `collect_api_endpoints.py`.

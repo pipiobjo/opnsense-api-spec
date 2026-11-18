@@ -390,8 +390,10 @@ the same data:
 - resources belong to a package: missing plugin -> clear error at plan time;
 - attributes with availability: "requires OPNsense >= 25.7.8" at plan time
   instead of a silent no-op;
-- moved fields: one attribute maps to the right API location per version
-  (generated from the diffs, not hand-written).
+- moved fields: one attribute keeps its name and maps to the right API
+  location per version through the provider's name table; `moved_from` is
+  not generated, because OPNsense states moves only in migration code
+  ([ADR 0014](adr/0014-attribute-identity-and-moves.md), requirement P8).
 
 ## 10. Known limitations
 

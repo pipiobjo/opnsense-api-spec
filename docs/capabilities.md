@@ -318,5 +318,9 @@ rather than guess:
 ## Not in format 1 yet
 
 - `moved_from`: which field a field replaced (a rename or a move within
-  the model). Planned as an additional key, generated from the diffs.
+  the model). Not generated: OPNsense states moves only in migration code,
+  and matching removed and added fields by name is wrong in most measured
+  cases. Consumers map moves themselves; the provider does it in its name
+  table ([ADR 0014](adr/0014-attribute-identity-and-moves.md)). If it is
+  ever added, it is an optional key and format 1 stays.
 - Per-field verification (today: per resource).

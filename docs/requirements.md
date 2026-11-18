@@ -49,6 +49,7 @@ to the firewall it talks to.
 | P5 | A firewall on a series newer than the data can be read (refresh, import, data sources) with the newest data, marked unverified; changes are refused with a message that names the data to update. |
 | P6 | Apply semantics survive the process: a change saved but not applied (failure, lost answer) is applied on the next run; plan shows it. |
 | P7 | Tested like the client (Q1, Q7): acceptance tests on the throwaway VM for every supported series, coverage with a floor, a `docs/testing.md`. |
+| P8 | Attribute names are stable: once released, an attribute keeps its name and its state across OPNsense versions, also when OPNsense moves the field. A move is mapped to the existing attribute (one attribute, several field paths, each valid for its releases), never by a second attribute or a state upgrade. Before a mapping exists, the moved field is unavailable on the affected releases with a plan-time message ([ADR 0014](adr/0014-attribute-identity-and-moves.md)). |
 
 ## MCP server (planned)
 
@@ -84,4 +85,5 @@ to the firewall it talks to.
 | 2026-11-18 | After the architecture review: the capability data is published before the provider uses it, as GitHub pre-releases without a stability promise: one immutable release per data state (`catalog-v1-<data_id>`) and a rolling `catalog` for the newest (capabilities.md, "Identity and releases"). Replaces the 2026-11-15 decision to wait for the provider. |
 | 2026-11-18 | The provider embeds a fixed data state and can load a newer attested one at run time (P3). |
 | 2026-11-18 | A firewall on a newer series can be read with the newest data, marked unverified; writes stay refused (P5; refines 2026-11-17). |
+| 2026-11-18 | Provider attributes are named once from the field path in the newest data at their first release and recorded in an append-only name table; a field move adds a path to the existing attribute. `moved_from` is not generated: OPNsense states moves only in migration code, and matching removed and added fields by name found one move in fourteen candidates (P8, [ADR 0014](adr/0014-attribute-identity-and-moves.md)). The first slice's resources need no mapping. |
 | 2026-11-17 | The provider and the MCP server build on the Go client. Code generators for other languages are not run as long as every consumer is Go ([ADR 0007](adr/0007-openapi-3-1.md)). |

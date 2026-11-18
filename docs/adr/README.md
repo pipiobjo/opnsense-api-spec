@@ -15,6 +15,7 @@
 | [0011](0011-testvm-action.md) | The test VM as a composite action in this repository, used by the contract job and by other repositories | accepted, implemented |
 | [0012](0012-quiet-operation.md) | Quiet operation: one self-closing signal after 7 stale days, `main` only through dry runs, dependencies update themselves | accepted, implemented |
 | [0013](0013-sbom.md) | Software bills of materials: per release (OPNsense packages) and per generator version | accepted; published once `SBOM_PUBLISH` is on |
+| [0014](0014-attribute-identity-and-moves.md) | Provider attribute names are fixed once; field moves are mapped in the provider's name table, `moved_from` is not generated | accepted 2026-11-18 (P8) |
 
 Format: context, decision, consequences, evidence. A superseded ADR stays
 and links to its successor.
