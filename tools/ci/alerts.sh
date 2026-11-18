@@ -5,8 +5,8 @@
 #
 #   tools/ci/alerts.sh check
 #
-# Opens at most one issue labelled "needs-you", edits it while a condition
-# lasts and closes it when none is left. Conditions:
+# Opens at most one issue labelled "needs-you" in GITHUB_REPOSITORY, edits
+# it while a condition lasts and closes it when none is left. Conditions:
 #
 #   stale     the last successful scheduled run of the workflow (pipeline.yml,
 #             or WD_WORKFLOW) is older
@@ -15,6 +15,16 @@
 #             for 7 days (a new repository has not had its first run yet)
 #   disabled  the workflow is disabled and cannot be re-enabled here (a
 #             workflow GitHub disabled for inactivity is re-enabled silently)
+#   watched   the same two conditions for each workflow in WD_WATCH, usually
+#             in another repository: GitHub disables all schedules of a
+#             repository at once after 60 days without activity, so each
+#             repository of the project watches the others (read-only; a
+#             watched workflow is never re-enabled from here)
+#   promotion WD_PROMOTE set: the branch WD_PROMOTE_FROM (dev) has had
+#             commits that WD_PROMOTE_TO (main) lacks for 7 days and no
+#             promotion run is in progress (a failed promotion notifies
+#             nobody by itself, and automatic dependency merges have no
+#             person who would notice)
 #   coverage  a release whose catalog state was first built in the last 14
 #             days lost typing against the release before it (its
 #             *.quality.json lists regressions); clears by itself 14 days
@@ -29,22 +39,59 @@
 # does. Nothing here is urgent: consumers keep working with the last
 # published data.
 #
+# Interface (stable; opnsense-api-go and later repositories check out this
+# script at a pinned commit):
+#
+#   GITHUB_REPOSITORY   owner/repo that gets the issue and owns WD_WORKFLOW
+#   GH_TOKEN            the job token: issues: write, actions: write (only
+#                       to re-enable WD_WORKFLOW), reads of public
+#                       repositories for WD_WATCH
+#   WD_WORKFLOW         own scheduled workflow file (default pipeline.yml)
+#   WD_COVERAGE_CHECK   1 (default): the coverage and missing conditions,
+#                       which read this repository's releases; 0: off
+#   WD_WATCH            space-separated owner/repo:workflow.yml pairs to
+#                       watch (default none), e.g.
+#                       "pipiobjo/opnsense-api-go:spec-update.yml
+#                        pipiobjo/opnsense-api-go:watchdog.yml"
+#   WD_PROMOTE          promotion workflow file in GITHUB_REPOSITORY
+#                       (default none: no promotion condition), with
+#                       WD_PROMOTE_FROM (dev) and WD_PROMOTE_TO (main)
+#   WD_STALE_HOURS      168 (7 days), for every condition above
+#
+# A watched workflow that cannot be read (deleted, renamed, private, API
+# fault) is not a condition: the check prints a warning and fails at the
+# end, after the issue is written. A failed watchdog run notifies nobody;
+# the other repositories' watchdogs see it as a stale watchdog.yml.
+#
 # Tests: tools/ci/alerts_test.sh. Every read from GitHub can be replaced by
-# a variable (ALERTS_ISSUES, WD_STATE, WD_LAST_SUCCESS, WD_CREATED,
-# WD_FAILED_RUN, WD_COVERAGE, WD_INDEX) and ALERTS_DRY_RUN=1 prints the write calls instead of making
-# them.
+# a variable, and ALERTS_DRY_RUN=1 prints the write calls instead of making
+# them. Own workflow: WD_STATE, WD_CREATED, WD_LAST_SUCCESS, WD_RUNS (the
+# recent scheduled runs, as "gh run list --json
+# databaseId,status,conclusion,createdAt"), WD_RUN_VIEW (the runs to show,
+# as "gh run view --json url,createdAt,conclusion,jobs", keyed by run
+# id: {"<id>": {...}}); watched
+# workflows: WD_WATCH_DATA, {"owner/repo:file": {state, created,
+# last_success, runs, run_view}} (a missing pair or field is read from
+# GitHub; the field "error" simulates a read failure); promotion:
+# WD_PROMOTE_COMPARE ({ahead_by, status, oldest, head}), WD_PROMOTE_RUN
+# (newest promotion run, {databaseId, status, conclusion, headSha, url,
+# createdAt} or null), WD_PROMOTE_VIEW; releases: WD_COVERAGE, WD_INDEX.
 set -euo pipefail
 
 REPO="${GITHUB_REPOSITORY:-pipiobjo/opnsense-api-spec}"
-# Also used by other repositories of the project (opnsense-api-go checks out
-# this script): the scheduled workflow to watch, and whether the typing-loss
-# condition applies (it reads this repository's releases).
 WORKFLOW="${WD_WORKFLOW:-pipeline.yml}"
 COVERAGE="${WD_COVERAGE_CHECK:-1}"
+WATCH="${WD_WATCH:-}"
+PROMOTE="${WD_PROMOTE:-}"
+PROMOTE_FROM="${WD_PROMOTE_FROM:-dev}"
+PROMOTE_TO="${WD_PROMOTE_TO:-main}"
 NOW="${ALERTS_NOW:-$(date -u +%s)}"
 STALE_HOURS="${WD_STALE_HOURS:-168}"
 SERVER="${GITHUB_SERVER_URL:-https://github.com}"
 LABEL=needs-you
+# what a run that did not succeed may have ended with; "skipped" and
+# "neutral" are not failures
+NOT_OK='["failure","cancelled","timed_out","startup_failure","action_required","stale"]'
 
 # ghw: a write call to GitHub, or its printout in a dry run (with the body)
 ghw() {
@@ -69,36 +116,90 @@ open_issue() { # number of the open needs-you issue, or nothing
 }
 
 epoch() { date -u -d "$1" +%s; }
+hours_since() { echo $(( (NOW - $(epoch "$1")) / 3600 )); }
 
 # ------------------------------------------------------------ inputs
 
-workflow_state() {
-  if [ -n "${WD_STATE+x}" ]; then echo "$WD_STATE"; return; fi
-  gh api "repos/$REPO/actions/workflows/$WORKFLOW" --jq .state
+# given NAME REPO FILE: the test value of an input, if the test gives one
+# (WD_<NAME> for the own workflow, WD_WATCH_DATA for watched ones)
+given() {
+  local name="$1" r="$2" w="$3" var
+  if [ "$r" = "$REPO" ] && [ "$w" = "$WORKFLOW" ]; then
+    var="WD_${name^^}"
+    [ -n "${!var+x}" ] || return 1
+    printf '%s\n' "${!var}"
+  else
+    [ -n "${WD_WATCH_DATA:-}" ] || return 1
+    jq -e --arg k "$r:$w" --arg n "$name" '.[$k] | has($n)' <<<"$WD_WATCH_DATA" >/dev/null 2>&1 || return 1
+    if jq -e --arg k "$r:$w" '.[$k] | has("error")' <<<"$WD_WATCH_DATA" >/dev/null; then
+      echo "simulated read failure" >&2; return 2
+    fi
+    jq -r --arg k "$r:$w" --arg n "$name" '.[$k][$n] | if type == "string" then . else tojson end' <<<"$WD_WATCH_DATA"
+  fi
 }
 
-# workflow_created: when the workflow file was first registered; a workflow
+# Each reader prints the value and fails when GitHub cannot be read.
+# (given returns 1 for "no test value", 2 for a simulated failure.)
+wf_state() { # REPO FILE
+  local rc=0; given state "$1" "$2" || rc=$?
+  [ "$rc" = 1 ] || return "$rc"
+  gh api "repos/$1/actions/workflows/$2" --jq .state
+}
+
+# wf_created: when the workflow file was first registered; a workflow
 # younger than STALE_HOURS that never succeeded is new, not stale
-workflow_created() {
-  if [ -n "${WD_CREATED+x}" ]; then echo "$WD_CREATED"; return; fi
-  gh api "repos/$REPO/actions/workflows/$WORKFLOW" --jq .created_at
+wf_created() {
+  local rc=0; given created "$1" "$2" || rc=$?
+  [ "$rc" = 1 ] || return "$rc"
+  gh api "repos/$1/actions/workflows/$2" --jq .created_at
 }
 
 last_success() {
-  if [ -n "${WD_LAST_SUCCESS+x}" ]; then echo "$WD_LAST_SUCCESS"; return; fi
-  gh run list -R "$REPO" -w "$WORKFLOW" -e schedule -s success -L 1 --json updatedAt -q '.[0].updatedAt // ""'
+  local rc=0; given last_success "$1" "$2" || rc=$?
+  [ "$rc" = 1 ] || return "$rc"
+  gh run list -R "$1" -w "$2" -e schedule -s success -L 1 --json updatedAt -q '.[0].updatedAt // ""'
 }
 
-# failed_run: the newest failed scheduled run with its failed jobs and steps,
-# as {url, created, jobs: [{name, steps: [..]}]}, or null
+recent_runs() {
+  local rc=0; given runs "$1" "$2" || rc=$?
+  [ "$rc" = 1 ] || return "$rc"
+  gh run list -R "$1" -w "$2" -e schedule -L 30 --json databaseId,status,conclusion,createdAt
+}
+
+# run_jobs: a run as {url, created, conclusion, jobs: [{name, conclusion,
+# steps: [..]}]} with only the jobs and steps that did not succeed
+run_jobs() { # REPO FILE ID
+  local raw rc=0
+  # (test values are keyed by run id, so the choice of run is visible)
+  raw=$(given run_view "$1" "$2") || rc=$?
+  case "$rc" in
+    0) raw=$(jq -c --arg id "$3" '.[$id] // error("no test value for run \($id)")' <<<"$raw") ;;
+    1) raw=$(gh run view "$3" -R "$1" --json url,createdAt,conclusion,jobs) ;;
+    *) return "$rc" ;;
+  esac
+  jq -c --argjson bad "$NOT_OK" '{url, created: .createdAt, conclusion,
+    jobs: [.jobs[] | select(.conclusion as $c | $bad | index($c))
+      | {name, conclusion, steps: [.steps[] | select(.conclusion as $c | $bad | index($c)) | .name]}]}' <<<"$raw"
+}
+
+# failed_run REPO FILE LAST: the newest scheduled run after the last
+# success (LAST, empty: any) that did not succeed, failed or cancelled or
+# timed out or never started, via run_jobs; or null
 failed_run() {
-  if [ -n "${WD_FAILED_RUN+x}" ]; then echo "$WD_FAILED_RUN"; return; fi
-  local id
-  id=$(gh run list -R "$REPO" -w "$WORKFLOW" -e schedule -s failure -L 1 --json databaseId -q '.[0].databaseId // empty')
+  local runs id
+  runs=$(recent_runs "$1" "$2") || return 1
+  id=$(jq -r --arg last "$3" --argjson bad "$NOT_OK" '[.[]
+      | select(.status == "completed" and (.conclusion as $c | $bad | index($c)) and ($last == "" or .createdAt > $last))]
+    | sort_by(.createdAt) | last | .databaseId // empty' <<<"$runs")
   [ -n "$id" ] || { echo null; return; }
-  gh run view "$id" -R "$REPO" --json url,createdAt,jobs --jq '{url, created: .createdAt,
-    jobs: [.jobs[] | select(.conclusion == "failure")
-      | {name, steps: [.steps[] | select(.conclusion == "failure") | .name]}]}'
+  run_jobs "$1" "$2" "$id"
+}
+
+# why_md RUN: the "why" lines for a run from failed_run or run_jobs
+why_md() {
+  jq -r '"\(.url) (\(.created), \(.conclusion))", "",
+    if (.jobs | length) == 0 then "- no job ran (a run that cannot start: workflow syntax, an action outside the allowed list, billing)"
+    else .jobs[] | "- job `\(.name)` \(.conclusion), step \(if (.steps | length) > 0 then (.steps | map("`\(.)`") | join(", ")) else "(none recorded)" end)" end' <<<"$1"
 }
 
 # coverage: regressions of releases created in the last COVERAGE_DAYS days
@@ -154,68 +255,151 @@ recent_releases() {
   jq -r --arg since "$since" '.releases[] | select((.first_seen // "") >= $since and .first_seen != null) | .release' <<<"$index"
 }
 
+# ------------------------------------------------------------ conditions
+
+# workflow_problem REPO FILE OWN: prints the issue section when the
+# workflow is stale or disabled, nothing when it is fine; fails when
+# GitHub cannot be read. OWN=1: the own workflow (re-enabled after GitHub
+# disabled it for inactivity; section title "Publishing has stopped").
+workflow_problem() {
+  local r="$1" w="$2" own="$3" state last stale="" state_msg="" failed created age
+  state=$(wf_state "$r" "$w") || return 1
+  last=$(last_success "$r" "$w") || return 1
+  case "$state" in
+    active) ;;
+    disabled_inactivity)
+      if [ "$own" = 1 ]; then
+        ghw api -X PUT "repos/$r/actions/workflows/$w/enable" >&2
+        echo "check: $w was disabled for inactivity, re-enabled" >&2
+      else
+        state_msg="The workflow \`$w\` in \`$r\` was disabled by GitHub for inactivity; its own repository re-enables it on its next run, or run \`gh workflow enable $w -R $r\`."
+      fi ;;
+    *) state_msg="The workflow \`$w\` is \`$state\`; it is only re-enabled automatically after GitHub disabled it for inactivity." ;;
+  esac
+  if [ -z "$last" ]; then
+    created=$(wf_created "$r" "$w") || return 1
+    if [ -z "$created" ] || [ "$(hours_since "$created")" -ge "$STALE_HOURS" ]; then
+      stale="No successful scheduled run of \`$w\` was found."
+    fi
+  else
+    age=$(hours_since "$last")
+    if [ "$age" -ge "$STALE_HOURS" ]; then
+      stale="The last successful scheduled run of \`$w\` ended $last, $((age / 24)) days ago."
+    fi
+  fi
+  [ -n "$stale" ] || [ -n "$state_msg" ] || return 0
+  failed=$(failed_run "$r" "$w" "$last") || return 1
+  if [ "$own" = 1 ]; then
+    echo "## Publishing has stopped"
+  else
+    echo "## \`$w\` in [$r]($SERVER/$r/actions/workflows/$w) has stopped"
+  fi
+  echo
+  echo "**What is stale.** $stale $state_msg"
+  echo
+  if [ "$failed" != null ] && [ -n "$failed" ]; then
+    echo "**Why.** The newest scheduled run since the last success that did not succeed:"
+    why_md "$failed"
+    echo
+    echo "The run's summary page has the details (contract test findings, if any)."
+  else
+    echo "**Why.** No scheduled run since the last success ended at all: the workflow"
+    echo "did not run (disabled, account or billing problem, GitHub outage)."
+  fi
+  echo
+  if [ "$own" = 1 ]; then
+    echo "**If you do nothing.** Everything published keeps working. New OPNsense"
+    echo "releases and plugin updates are not described until a run succeeds;"
+    echo "clients use the newest data they have and read back every write."
+  else
+    echo "**If you do nothing.** That repository's automation stays stopped and"
+    echo "nothing there reports it: its own watchdog may be stopped too."
+  fi
+  echo
+}
+
+# promotion_problem: prints the issue section when WD_PROMOTE_FROM has had
+# commits WD_PROMOTE_TO lacks for STALE_HOURS and no promotion runs now
+promotion_problem() {
+  [ -n "$PROMOTE" ] || return 0
+  local cmp run view ahead oldest
+  cmp="${WD_PROMOTE_COMPARE:-}"
+  [ -n "$cmp" ] || cmp=$(gh api "repos/$REPO/compare/$PROMOTE_TO...$PROMOTE_FROM" \
+    --jq '{ahead_by, status, oldest: (.commits[0].commit.committer.date // ""), head: (.commits[-1].sha // "")}') || return 1
+  ahead=$(jq -r .ahead_by <<<"$cmp"); oldest=$(jq -r .oldest <<<"$cmp")
+  [ "$ahead" -gt 0 ] && [ -n "$oldest" ] && [ "$(hours_since "$oldest")" -ge "$STALE_HOURS" ] || return 0
+  if [ -n "${WD_PROMOTE_RUN+x}" ]; then run="$WD_PROMOTE_RUN"; else
+    run=$(gh run list -R "$REPO" -w "$PROMOTE" -L 1 --json databaseId,status,conclusion,headSha,url,createdAt --jq '.[0] // null') || return 1
+  fi
+  if [ "$run" != null ] && [ "$(jq -r .status <<<"$run")" != completed ]; then
+    echo "check: $PROMOTE is running ($(jq -r .url <<<"$run")); promotion not judged" >&2
+    return 0
+  fi
+  echo "## Promotion to \`$PROMOTE_TO\` has stopped"
+  echo
+  echo "**What.** \`$PROMOTE_FROM\` has $ahead commit(s) that \`$PROMOTE_TO\` lacks, the oldest from $oldest ($(( $(hours_since "$oldest") / 24 )) days); the scheduled runs keep using the old \`$PROMOTE_TO\`, including old dependencies."
+  echo
+  if [ "$(jq -r .status <<<"$cmp")" = diverged ]; then
+    echo "**Why.** \`$PROMOTE_FROM\` has diverged from \`$PROMOTE_TO\` (\`$PROMOTE_TO\` has commits that \`$PROMOTE_FROM\` lacks), so it cannot be fast-forwarded: rebase \`$PROMOTE_FROM\` on \`$PROMOTE_TO\`."
+  elif [ "$run" = null ]; then
+    echo "**Why.** \`$PROMOTE\` has never run."
+  elif [ "$(jq -r .conclusion <<<"$run")" = success ]; then
+    echo "**Why.** The last \`$PROMOTE\` run succeeded, on $(jq -r '.headSha[0:12]' <<<"$run"), but no run tested the head of \`$PROMOTE_FROM\`, $(jq -r '.head[0:12]' <<<"$cmp") (a push that started no run, or a dispatch that failed)."
+  else
+    if [ -n "${WD_PROMOTE_VIEW+x}" ]; then
+      view=$(jq -c --argjson bad "$NOT_OK" '{url, created: .createdAt, conclusion,
+        jobs: [.jobs[] | select(.conclusion as $c | $bad | index($c))
+          | {name, conclusion, steps: [.steps[] | select(.conclusion as $c | $bad | index($c)) | .name]}]}' <<<"$WD_PROMOTE_VIEW")
+    else
+      view=$(run_jobs "$REPO" "$PROMOTE" "$(jq -r .databaseId <<<"$run")") || return 1
+    fi
+    echo "**Why.** The last \`$PROMOTE\` run, on $(jq -r '.headSha[0:12]' <<<"$run"), did not succeed:"
+    why_md "$view"
+  fi
+  echo
+  echo "**If you do nothing.** Published data keeps coming from the old \`$PROMOTE_TO\`;"
+  echo "fixes and security updates on \`$PROMOTE_FROM\` do not reach it."
+  echo
+}
+
 # ------------------------------------------------------------ check
 
 check() {
-  local state last failed cov miss open body stale="" problems=0
-  state=$(workflow_state)
-  last=$(last_success)
+  local cov miss open body sec problems=0 unread=0 pair r w last
   cov="[]" miss="[]"
   [ "$COVERAGE" = 1 ] && cov=$(coverage) && miss=$(missing)
   open=$(open_issue)
   body=$(mktemp)
 
-  case "$state" in
-    active) state_msg="" ;;
-    disabled_inactivity)
-      ghw api -X PUT "repos/$REPO/actions/workflows/$WORKFLOW/enable"
-      echo "check: $WORKFLOW was disabled for inactivity, re-enabled"
-      state_msg="" ;;
-    *) state_msg="The workflow \`$WORKFLOW\` is \`$state\`; it is only re-enabled automatically after GitHub disabled it for inactivity." ;;
-  esac
-
-  if [ -z "$last" ]; then
-    local created; created=$(workflow_created)
-    if [ -z "$created" ] || [ $(( (NOW - $(epoch "$created")) / 3600 )) -ge "$STALE_HOURS" ]; then
-      stale="No successful scheduled run of \`$WORKFLOW\` was found."
-    fi
-  else
-    local age=$(( (NOW - $(epoch "$last")) / 3600 ))
-    if [ "$age" -ge "$STALE_HOURS" ]; then
-      stale="The last successful scheduled run ended $last, $((age / 24)) days ago."
-    fi
-  fi
-
   {
     echo "Written and closed by the \`watchdog\` workflow; nothing here is urgent."
     echo "Updated $(date -u -d "@$NOW" +'%F %H:%M UTC')."
     echo
-    if [ -n "$stale" ] || [ -n "$state_msg" ]; then
-      problems=$((problems + 1))
-      echo "## Publishing has stopped"
-      echo
-      echo "**What is stale.** $stale $state_msg"
-      echo
-      failed=$(failed_run)
-      if [ "$failed" != null ] && [ -n "$failed" ]; then
-        echo "**Why.** The newest failed scheduled run, $(jq -r .created <<<"$failed"):"
-        echo "$(jq -r .url <<<"$failed")"
-        echo
-        jq -r '.jobs[] | "- job `\(.name)`, step \(if (.steps | length) > 0 then (.steps | map("`\(.)`") | join(", ")) else "(none recorded)" end)"' <<<"$failed"
-        echo
-        echo "The run's summary page has the contract test findings, if any."
-      else
-        echo "**Why.** No failed scheduled run was found: the workflow did not run at all"
-        echo "(disabled, account or billing problem, GitHub outage)."
-      fi
-      echo
-      echo "**If you do nothing.** Everything published keeps working. New OPNsense"
-      echo "releases and plugin updates are not described until a run succeeds;"
-      echo "clients use the newest data they have and read back every write."
-      echo
+  } > "$body"
+
+  # the own workflow: a read failure ends the check (set -e) as before
+  sec=$(workflow_problem "$REPO" "$WORKFLOW" 1)
+  [ -z "$sec" ] || { problems=$((problems + 1)); echo "$sec" >> "$body"; echo >> "$body"; }
+
+  for pair in $WATCH; do
+    r="${pair%%:*}"; w="${pair#*:}"
+    [ "$r" != "$pair" ] && [ -n "$w" ] || { echo "::warning::WD_WATCH entry '$pair' is not owner/repo:workflow.yml"; unread=$((unread + 1)); continue; }
+    if ! sec=$(workflow_problem "$r" "$w" 0); then
+      echo "::warning::could not read $w in $r; not judged"
+      unread=$((unread + 1)); continue
     fi
+    [ -z "$sec" ] || { problems=$((problems + 1)); echo "$sec" >> "$body"; echo >> "$body"; }
+  done
+
+  if ! sec=$(promotion_problem); then
+    echo "::warning::could not read the promotion state; not judged"
+    unread=$((unread + 1))
+  elif [ -n "$sec" ]; then
+    problems=$((problems + 1)); echo "$sec" >> "$body"; echo >> "$body"
+  fi
+
+  {
     if [ "$(jq length <<<"$cov")" -gt 0 ]; then
-      problems=$((problems + 1))
       echo "## Typing lost in a new release"
       echo
       jq -r --arg url "$SERVER/$REPO/releases/tag/opnsense-" '.[] |
@@ -232,7 +416,6 @@ check() {
       echo
     fi
     if [ "$(jq length <<<"$miss")" -gt 0 ]; then
-      problems=$((problems + 1))
       echo "## Releases without current data"
       echo
       jq -r '.[] | "- OPNsense \(.release): \(.kind) since \(.since): \(.reason)"' <<<"$miss"
@@ -248,8 +431,11 @@ check() {
     echo
     echo "Start a Claude Code session in this repository with the link to this issue"
     echo "(skill \`opnsense-pipeline-triage\`). This issue closes itself after the fix."
-  } > "$body"
+  } >> "$body"
+  [ "$(jq length <<<"$cov")" -gt 0 ] && problems=$((problems + 1))
+  [ "$(jq length <<<"$miss")" -gt 0 ] && problems=$((problems + 1))
 
+  last=$(last_success "$REPO" "$WORKFLOW")
   if [ "$problems" -gt 0 ]; then
     gh_label
     if [ -n "$open" ]; then
@@ -261,11 +447,15 @@ check() {
     echo "check: $problems condition(s)"
   else
     if [ -n "$open" ]; then
-      ghw issue close "$open" -R "$REPO" --comment "Resolved: last successful scheduled run $last, no typing loss in the newest releases, every release has current data."
+      ghw issue close "$open" -R "$REPO" --comment "Resolved: every condition is gone (last successful scheduled run of $WORKFLOW: $last)."
     fi
     echo "check: nothing needs a person (last success $last)"
   fi
   rm -f "$body"
+  if [ "$unread" -gt 0 ]; then
+    echo "check: $unread watched input(s) could not be read; failing so the other repositories' watchdogs notice" >&2
+    exit 1
+  fi
 }
 
 gh_label() {

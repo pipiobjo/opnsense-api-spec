@@ -3,12 +3,18 @@
 #
 # The one signal to a person (docs/operations.md, ADR 0012): daily, opens
 # one issue labelled "needs-you" when publishing has been stale for 7 days,
-# pipeline.yml is disabled, or a new release lost typing; edits it while
-# that lasts and closes it when it is over. A schedule GitHub disabled for
-# inactivity is re-enabled without a message.
+# pipeline.yml is disabled, a new release lost typing, dev has not reached
+# main for 7 days, or a watched workflow of the Go client stopped; edits it
+# while that lasts and closes it when it is over. A schedule GitHub
+# disabled for inactivity is re-enabled without a message (own workflows
+# only).
 #
 # The pipeline's keepalive job re-enables this workflow, and this one the
-# pipeline, so neither is lost to the 60-day inactivity rule alone.
+# pipeline, so neither is lost to the 60-day inactivity rule alone. GitHub
+# applies that rule to a whole repository at once, so the repositories
+# watch each other: this one checks the client's spec-update.yml and
+# watchdog.yml (read-only), the client's watchdog checks pipeline.yml and
+# this watchdog.yml.
 name: watchdog
 
 on:
@@ -22,9 +28,6 @@ permissions:
 concurrency:
   group: watchdog
   cancel-in-progress: false
-
-env:
-  GH_TOKEN: ${{ github.token }}
 
 defaults:
   run:
@@ -40,5 +43,14 @@ jobs:
       actions: write # re-enable pipeline.yml after GitHub disabled it
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # interface: tools/ci/alerts.sh
+          WD_WATCH: >-
+            pipiobjo/opnsense-api-go:spec-update.yml
+            pipiobjo/opnsense-api-go:watchdog.yml
+          WD_PROMOTE: promote.yml
         run: tools/ci/alerts.sh check

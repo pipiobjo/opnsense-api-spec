@@ -31,11 +31,15 @@ below).
 | `pipeline.yml` is disabled by hand (a workflow GitHub disabled for inactivity is re-enabled without a message) | it is enabled again |
 | A release whose catalog state the pipeline first built in the last 14 days lost typing against the release before it (`first_seen` in the index) | 14 days later |
 | A release on the mirror has had no current data for 7 days: never built (packages not served; the important case is a new series) or kept on an old build (a rebuild could not get its packages) | data for it is built |
+| `dev` has had commits that `main` lacks for 7 days and no `promote.yml` run is in progress (a failed promotion, an automatic dependency merge whose dry run broke, a push that started no run, or `dev` diverged from `main`) | `main` reaches `dev` |
+| A watched workflow of another repository of the project (`spec-update.yml` and `watchdog.yml` of the Go client) has had no successful scheduled run for 7 days, or is disabled (never re-enabled from here) | it succeeds, or is enabled, in its own repository |
 
 The issue is edited while the condition lasts and closed by the watchdog
 when it is over. Nobody closes it by hand. Its text has four parts: what
-is stale, why (the newest failed run with its failed jobs and steps), what
-happens if nobody acts, and how to start the fix.
+is stale, why (the newest scheduled run since the last success that did
+not succeed: failed, cancelled, timed out or never started, with the jobs
+and steps that did not succeed), what happens if nobody acts, and how to
+start the fix.
 
 Not sent: an issue per failed run, digests, notification tests, dependency
 pull requests that pass their checks.
@@ -58,8 +62,8 @@ scheduled run closes the issue.
 ## Changes and dependency updates
 
 - `main` changes only through `promote.yml`; a live run refuses a commit
-  that did not pass it. A failed promotion notifies nobody; `main` stays
-  where it was.
+  that did not pass it. A failed promotion notifies nobody at once; `main`
+  stays where it was, and after 7 days the watchdog opens the issue.
 - Dependabot opens one grouped pull request per month for Go modules and
   for actions, against `dev`, for versions at least 7 days old.
   `automerge.yml` merges it when `ci.yml` passed and starts `promote.yml`.
@@ -69,18 +73,32 @@ scheduled run closes the issue.
 ## Keeping the schedules alive
 
 GitHub disables scheduled workflows of public repositories after 60 days
-without repository activity. The pipeline re-enables itself and the
-watchdog on every scheduled run, and the watchdog re-enables the pipeline.
-If both stop at once, only an outside check notices, for example
-monitoring that the newest `opnsense-*` release is not much older than the
-newest OPNsense release.
+without repository activity, all workflows of a repository on the same
+day. The pipeline re-enables itself and the watchdog on every scheduled
+run, and the watchdog re-enables the pipeline. Because one repository's
+workflows can stop together, the repositories of the project watch each
+other with the same script: this watchdog checks the Go client's
+`spec-update.yml` and `watchdog.yml`, the client's watchdog checks
+`pipeline.yml` and `watchdog.yml` here (variable `WD_WATCH` of
+`tools/ci/alerts.sh`; reading another public repository needs no extra
+rights). A watchdog that fails, for example because the GitHub API
+changed, is therefore noticed by the other repository after 7 days. Only
+if every repository stops at once does it take an outside check, for
+example monitoring that the newest `opnsense-*` release is not much older
+than the newest OPNsense release.
 
 ## Checking by hand
 
 ```sh
-GITHUB_REPOSITORY=pipiobjo/opnsense-api-spec ALERTS_DRY_RUN=1 tools/ci/alerts.sh check
+GITHUB_REPOSITORY=pipiobjo/opnsense-api-spec ALERTS_DRY_RUN=1 WD_PROMOTE=promote.yml \
+  WD_WATCH="pipiobjo/opnsense-api-go:spec-update.yml pipiobjo/opnsense-api-go:watchdog.yml" \
+  tools/ci/alerts.sh check
 tools/ci/alerts_test.sh
 ```
 
 `ALERTS_DRY_RUN=1` prints the issue it would open, edit or close instead
 of doing it.
+
+The variables of `tools/ci/alerts.sh` (own workflow, watched workflows,
+promotion, stale time) are listed at the top of the script; other
+repositories of the project use the same script at a pinned commit.

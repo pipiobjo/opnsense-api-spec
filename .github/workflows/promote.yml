@@ -12,7 +12,9 @@
 #
 # Anyone with write access could still push to main; a live pipeline run
 # then refuses to publish that commit (pipeline.yml, "Only promoted commits
-# publish"). A failure here notifies nobody: main simply stays where it was.
+# publish"). A failure here notifies nobody at once: main stays where it
+# was, and after 7 days the watchdog reports it (tools/ci/alerts.sh,
+# condition "promotion").
 name: promote
 
 on:

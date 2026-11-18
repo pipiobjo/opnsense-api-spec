@@ -64,8 +64,10 @@ issues, and the notification test workflow.
 
 - A normal month produces no message. A real problem reaches a person
   after a week, at the earliest; nothing breaks in that week.
-- A failure of `promote.yml` concerns only whoever pushed to `dev`; it
-  notifies nobody and leaves `main` where it was.
+- A failure of `promote.yml` notifies nobody at once and leaves `main`
+  where it was. Automatic dependency merges have no person who would
+  notice, so since 2026-11-18 the watchdog reports `dev` ahead of `main`
+  for 7 days without a promotion in progress (review finding OPS-6).
 - A typing loss is reported only for new releases, and only for 14 days.
   Older losses stay recorded in each release's `*.quality.json`.
 - A commit pushed to `main` by hand is not published until it passed
