@@ -83,3 +83,40 @@ func TestClassify(t *testing.T) {
 		})
 	}
 }
+
+// Claim: an own settings get/set action (no parent call) carries the key
+// its code shows, never the generic $internalModelName guess; without such
+// a key, or for an action taking parameters, the wrapper stays empty.
+func TestOwnActionWrapper(t *testing.T) {
+	m := &model.Model{Class: `OPNsense\Freeradius\Client`, Root: &model.Node{Kind: model.KindContainer}}
+	const own = `OPNsense\Freeradius\Api\ClientController`
+	for _, c := range []struct {
+		name   string
+		action controller.Action
+		want   string
+	}{
+		{"get with its own key", controller.Action{Name: "get", RespKey: "client"}, "client"},
+		{"get with static::$internalModelName", controller.Action{Name: "get", RespKey: controller.ModelNameRef}, "Client"},
+		{"get whose key is not shown", controller.Action{Name: "get"}, ""},
+		{"get taking a uuid", controller.Action{Name: "get", RespKey: "network", Params: []controller.Param{{Name: "uuid", Optional: true}}}, ""},
+		{"set on new Client()", controller.Action{Name: "set", ReqKey: "client", ReqNew: "Client"}, "client"},
+		{"set on getModel()", controller.Action{Name: "set", ReqKey: "client"}, "client"},
+		{"set on another model", controller.Action{Name: "set", ReqKey: "client", ReqNew: `\OPNsense\Other\Thing`}, ""},
+		{"set whose key is not shown", controller.Action{Name: "set"}, ""},
+		{"generic get calling the parent keeps the generic key", controller.Action{Name: "get", CallsParent: true, RespKey: "x"}, "Client"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			a := c.action
+			a.DeclaredIn, a.Overrides = own, baseModelCtl
+			ctl := &controller.Controller{Class: own, Module: "freeradius", Name: "client", ModelName: "Client",
+				ModelClass: m.Class, Actions: []*controller.Action{&a}}
+			e := Build([]*model.Model{m}, []*controller.Controller{ctl})[0]
+			if e.Wrapper != c.want {
+				t.Errorf("wrapper %q, want %q", e.Wrapper, c.want)
+			}
+			if !c.action.CallsParent && !gap.Has(e.Gaps, gap.OverrideNotDerived) {
+				t.Errorf("gaps %v lack %s", e.Gaps, gap.OverrideNotDerived)
+			}
+		})
+	}
+}

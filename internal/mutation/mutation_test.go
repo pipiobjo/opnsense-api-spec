@@ -25,7 +25,8 @@ type mutant struct {
 }
 
 // The checks whose silent loss would hurt most: trust in the inputs (S1),
-// the contract test's verdicts (S4, S8) and the version order (S5).
+// the contract test's verdicts (S4, S8), the version order (S5) and the
+// rule that nothing is guessed (S2).
 var mutants = []mutant{
 	{"catalog signature not checked", "internal/pkgrepo/verify.go",
 		"if err := rsa.VerifyPKCS1v15(pub, crypto.SHA256, msg[:], cat.Signature); err != nil {",
@@ -51,6 +52,14 @@ var mutants = []mutant{
 		"section: ch.Kind != model.KindField,",
 		"section: true,",
 		"./internal/verify/", "^TestKnownGapSubsetOnlyExplainsSections$"},
+	{"missing root key explained by a gap", "internal/verify/read.go",
+		`if r.rootMissing && e.Wrapper != "" {`,
+		`if false {`,
+		"./internal/verify/", "^TestRootKeyIsData$"},
+	{"own settings action gets the generic key (a guess)", "internal/ir/ir.go",
+		"e.Wrapper = ownKey(a, c)",
+		"e.Wrapper = c.ModelName",
+		"./internal/ir/", "^TestOwnActionWrapper$"},
 	{"accepted entry ignores its match", "internal/verify/accepted.go",
 		`if a.Match == "" {`,
 		`if true {`,

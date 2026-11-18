@@ -21,7 +21,7 @@ import (
 // v<GeneratorVersion> (tools/ci/publish.sh).
 const (
 	GeneratorName    = "opnsense-api-spec"
-	GeneratorVersion = "0.9.3"
+	GeneratorVersion = "0.9.4"
 )
 
 // Source says how an endpoint description was derived.
@@ -200,6 +200,29 @@ func Build(models []*model.Model, ctls []*controller.Controller) []*Endpoint {
 	return out
 }
 
+// ownKey is the JSON key of an own settings get or set action, as its code
+// shows it (controller.Action.RespKey, ReqKey), or "". An action taking
+// parameters (getAction($uuid), os-zerotier networks) does not answer
+// with the settings and has no settings key; a set action must hand the
+// request to the bound model, not another one.
+func ownKey(a *controller.Action, c *controller.Controller) string {
+	if len(a.Params) > 0 {
+		return ""
+	}
+	k := a.RespKey
+	if a.Name == "set" {
+		k = a.ReqKey
+		short := c.ModelClass[strings.LastIndex(c.ModelClass, `\`)+1:]
+		if n := a.ReqNew; n != "" && n[strings.LastIndex(n, `\`)+1:] != short {
+			return ""
+		}
+	}
+	if k == controller.ModelNameRef {
+		k = c.ModelName
+	}
+	return k
+}
+
 func isMutation(k Kind) bool {
 	switch k {
 	case KindModelSet, KindItemAdd, KindItemSet, KindItemDel, KindItemToggle:
@@ -256,8 +279,15 @@ func classify(e *Endpoint, c *controller.Controller, a *controller.Action, mdl *
 			if a.CallsParent {
 				e.Gaps = append(e.Gaps, gap.New(gap.OverrideCallsParent, "overrides %sAction and calls the parent; request/response may differ from the full model (subset or extra keys)", a.Name))
 			} else {
+				// the generic key does not apply: the action's own code
+				// names it, or it stays unknown
 				e.Source = SourceSignature
-				e.Gaps = append(e.Gaps, gap.New(gap.OverrideNotDerived, "overrides %sAction without calling the parent; shape not derived", a.Name))
+				e.Wrapper = ownKey(a, c)
+				if e.Wrapper == "" {
+					e.Gaps = append(e.Gaps, gap.New(gap.OverrideNotDerived, "overrides %sAction without calling the parent; shape and root key not derived", a.Name))
+				} else {
+					e.Gaps = append(e.Gaps, gap.New(gap.OverrideNotDerived, "overrides %sAction without calling the parent; root key %q read from its code, shape not derived", a.Name, e.Wrapper))
+				}
 			}
 		}
 		return

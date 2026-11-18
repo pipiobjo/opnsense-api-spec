@@ -8,6 +8,8 @@ package verify
 import (
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/pipiobjo/opnsense-api-spec/internal/gap"
@@ -127,22 +129,26 @@ func checkModelGet(c *Client, e *ir.Endpoint, m *model.Model) *Result {
 	code, v, raw, err := c.do("GET", e.Path, nil)
 	var nj *NonJSON
 	if errors.As(err, &nj) {
-		r.HTTP, r.Status, r.Findings = code, StatusMismatch, []string{err.Error()}
-		return r // knownGap() turns this into known-gap for overridden actions
+		r.HTTP, r.Status, r.Findings, r.rootMissing = code, StatusMismatch, []string{err.Error()}, true
+		return r // knownGap() decides whether a gap explains it
 	}
 	if err != nil || code != 200 {
 		return fail(r, code, raw, err)
 	}
 	r.HTTP = code
 	c.schema(e, "GET", e.Path, v)
+	if e.Wrapper == "" {
+		// an own get action whose code does not show its key: nothing to
+		// compare against (the endpoint is no resource in the capability
+		// data)
+		r.Status, r.Findings = StatusSkipped, []string{"root key not derived; shape not compared"}
+		return r
+	}
 	obj, _ := v.(map[string]any)
 	inner, ok := obj[e.Wrapper]
 	if !ok {
-		var keys []string
-		for k := range obj {
-			keys = append(keys, k)
-		}
-		r.Status, r.Findings = StatusMismatch, []string{fmt.Sprintf("root key %q missing, got %v", e.Wrapper, keys)}
+		keys := slices.Sorted(maps.Keys(obj))
+		r.Status, r.Findings, r.rootMissing = StatusMismatch, []string{fmt.Sprintf("root key %q missing, got %v", e.Wrapper, keys)}, true
 		return r
 	}
 	if m == nil {
@@ -162,14 +168,23 @@ func checkModelGet(c *Client, e *ir.Endpoint, m *model.Model) *Result {
 // added); a missing field, a type error, a missing root key or an answer
 // that is not JSON stays a mismatch, so a new deviation on such an endpoint
 // is not swallowed. Other marks (custom logic, post-processing, overrides
-// that are not derived) explain any difference: the source says the shape
-// is built by code the generator does not read.
+// that are not derived) explain any difference in the content: the source
+// says the shape is built by code the generator does not read. No mark
+// explains a missing root key (or an answer that is not JSON) when the data
+// names one: the key is published as derived, and a consumer relies on it.
 func knownGap(r *Result, e *ir.Endpoint) *Result {
 	if r.Status != StatusMismatch {
 		return r
 	}
 	g, ok := gap.First(e.Gaps, gap.MayDiffer)
 	if !ok {
+		return r
+	}
+	if r.rootMissing && e.Wrapper != "" {
+		// the root key is derived (from the generic action or the
+		// action's own code) and published as such; a gap on the
+		// content does not explain an answer without it
+		r.Findings = append(r.Findings, fmt.Sprintf("not explained by %s: the root key is part of the data, not of the gap", g.Code))
 		return r
 	}
 	_, broad := gap.First(e.Gaps, func(c gap.Code) bool { return gap.MayDiffer(c) && !gap.Subset(c) })
@@ -233,7 +248,7 @@ func checkItemGet(c *Client, e *ir.Endpoint, m *model.Model) *Result {
 	}
 	inner, ok := obj[e.Wrapper]
 	if !ok {
-		r.Status, r.Findings = StatusMismatch, []string{fmt.Sprintf("root key %q missing", strings.TrimPrefix(e.Outer+"."+e.Wrapper, "."))}
+		r.Status, r.Findings, r.rootMissing = StatusMismatch, []string{fmt.Sprintf("root key %q missing", strings.TrimPrefix(e.Outer+"."+e.Wrapper, "."))}, true
 		return r
 	}
 	if m != nil {

@@ -38,6 +38,16 @@ func TestMatchSkipsStrings(t *testing.T) {
 	}
 }
 
+func TestStatementEnd(t *testing.T) {
+	s := `$r = ['a;' => f(1; 2), "b" => [3;]]; next();`
+	if got := StatementEnd(s, 0); got != strings.Index(s, "]];")+2 {
+		t.Errorf("StatementEnd = %d", got)
+	}
+	if StatementEnd(`return $x`, 0) != -1 {
+		t.Error("a statement without ';' must give -1")
+	}
+}
+
 func TestSplitArgs(t *testing.T) {
 	got := SplitArgs(`'a', ['x' => 1, 'y' => f(2, 3)], "c,d", $e`)
 	want := []string{`'a'`, `['x' => 1, 'y' => f(2, 3)]`, `"c,d"`, `$e`}

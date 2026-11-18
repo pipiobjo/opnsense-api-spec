@@ -77,12 +77,25 @@ func demoFragment(areaType string, msg string) *fragment.Fragment {
 	getAll := ep("getNetworks", ir.KindItemGet, "networks.network") // second get, no uuid: an action
 	status := &ir.Endpoint{Path: "/api/demo/service/status", Package: "os-demo", Module: "demo", Controller: "service",
 		Action: "status", Methods: []string{"GET"}, Kind: ir.KindServiceStatus, Source: ir.SourceBase}
-	// a second controller on the same model, as acmeclient/accounts next to acmeclient/settings;
-	// the class is written in another case
+	// a second settings controller on the same model; the class is written
+	// in another case
 	other := &ir.Endpoint{Path: "/api/demo/general/set", Package: "os-demo", Module: "demo", Controller: "general",
 		Action: "set", Methods: []string{"POST"}, Kind: ir.KindModelSet, Source: ir.SourceBase, Model: "OPNsense\\demo\\demo", Wrapper: "demo"}
+	otherGet := *other
+	otherGet.Path, otherGet.Action, otherGet.Kind, otherGet.Methods = "/api/demo/general/get", "get", ir.KindModelGet, []string{"GET"}
+	// the generic set inherited next to an own entry get (acmeclient/accounts):
+	// no settings get, so an action
+	setOnly := *other
+	setOnly.Path, setOnly.Controller = "/api/demo/accounts/set", "accounts"
+	// an own get/set whose root key the code does not show (relayd/settings):
+	// actions
+	noKey := *other
+	noKey.Path, noKey.Controller, noKey.Action, noKey.Kind, noKey.Wrapper = "/api/demo/relay/get", "relay", "get", ir.KindModelGet, ""
+	noKey.Source, noKey.Gaps = ir.SourceSignature, []gap.Gap{gap.New(gap.OverrideNotDerived, "x")}
+	noKeySet := noKey
+	noKeySet.Path, noKeySet.Action, noKeySet.Kind = "/api/demo/relay/set", "set", ir.KindModelSet
 	return &fragment.Fragment{Package: "os-demo", Models: []*model.Model{m},
-		Endpoints: []*ir.Endpoint{add, del, get, getAll, getItem, other, set, status}}
+		Endpoints: []*ir.Endpoint{add, del, get, getAll, getItem, other, &otherGet, &setOnly, &noKey, &noKeySet, set, status}}
 }
 
 func coreFragment() *fragment.Fragment {
@@ -199,6 +212,18 @@ func TestBuildVariantsAndSelect(t *testing.T) {
 	}
 	if doc.Actions["/api/demo/settings/getNetworks"] == nil || doc.Actions["/api/demo/service/status"] == nil {
 		t.Errorf("second get and service action must be actions: %v", keys(doc.Actions))
+	}
+	// Claim: a settings resource has a get with a root key; a lone set, or
+	// a get/set whose key is not derived, is listed as an action
+	for _, id := range []string{"demo/accounts", "demo/relay"} {
+		if doc.Resources[id] != nil {
+			t.Errorf("%s must not be a settings resource: %s", id, js(doc.Resources[id]))
+		}
+	}
+	for _, p := range []string{"/api/demo/accounts/set", "/api/demo/relay/get", "/api/demo/relay/set"} {
+		if doc.Actions[p] == nil {
+			t.Errorf("%s must be an action: %v", p, keys(doc.Actions))
+		}
 	}
 }
 

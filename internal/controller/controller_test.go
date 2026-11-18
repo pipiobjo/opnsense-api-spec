@@ -164,3 +164,119 @@ func TestOverlay(t *testing.T) {
 		}
 	}
 }
+
+// Claim: the key of an own settings get or set action is read from its
+// code, and left empty whenever the code does not show exactly one key on
+// the bound model. Bodies as in the 26.7.9 plugin sources (2026-11-18): the
+// generic key ($internalModelName, "Client") was wrong for os-freeradius,
+// os-siproxd and os-zerotier, whose own actions answer {"client": ...}.
+func TestOwnSettingsKeys(t *testing.T) {
+	for _, c := range []struct {
+		name, body, want string
+	}{
+		{"os-freeradius client get", `{
+        $result = array();
+        if ($this->request->isGet()) {
+            $mdlClient = new Client();
+            $result['client'] = $mdlClient->getNodes();
+        }
+        return $result;
+    }`, "client"},
+		{"os-zerotier settings get", `{
+        $result = array();
+        if ($this->request->isGet()) {
+            $mdlZerotier = $this->getModel();
+            if (empty($mdlZerotier->localconf->__toString())) {
+                $mdlZerotier->localconf = '{}';
+            }
+            $result = array("zerotier" => $mdlZerotier->getNodes());
+        }
+        return $result;
+    }`, "zerotier"},
+		{"core source nat get", `{
+        return [
+            self::$internalModelName => [
+                'general' => $this->getModel()->general->getNodes()
+            ]
+        ];
+    }`, ModelNameRef},
+		{"os-stunnel services get", `{
+        $result = array();
+        $result[static::$internalModelName] = [
+            "general" => $this->getModel()->general->getNodes()
+        ];
+        return $result;
+    }`, ModelNameRef},
+		{"os-netbird authentication get", `{
+        $mdl = new Authentication();
+        $result = [
+            'authentication' => [
+                'managementUrl' => $mdl->managementUrl->getValue(),
+                'setupKey' => '',
+            ]
+        ];
+        if (!empty($setupKey)) {
+            $result['authentication']['%setupKey'] = substr($setupKey, 0, 5);
+        }
+        return $result;
+    }`, "authentication"},
+		{"os-relayd: several keys", `{
+        $result = array("result" => "failed");
+        if ($node != null) {
+            $result['relayd'] = array($nodeType => $node->getNodes());
+            $result['status'] = 'ok';
+        }
+        return $result;
+    }`, ""},
+		{"os-squid template: not an array", `{
+        $result = json_decode($backend->configdRun("proxy download_error_pages"), true);
+        if ($result != null) {
+            return base64_decode($result['payload']);
+        } else {
+            return "";
+        }
+    }`, ""},
+		{"variable assigned an expression", `{ $result = $this->load(); $result['x'] = 1; return $result; }`, ""},
+		{"variable passed on", `{ $result = ['x' => 1]; $this->fill($result); return $result; }`, ""},
+		{"computed key", `{ $result = []; $result[$name] = 1; return $result; }`, ""},
+		{"no return", `{ $result['x'] = 1; }`, ""},
+		{"one return is not an array", `{ if ($x) { return $this->other(); } return ['x' => 1]; }`, ""},
+	} {
+		if got := responseKey(c.body); got != c.want {
+			t.Errorf("get %s: %q, want %q", c.name, got, c.want)
+		}
+	}
+	for _, c := range []struct {
+		name, body, key, class string
+	}{
+		{"os-freeradius client set", `{
+            $mdlClient = new Client();
+            $mdlClient->setNodes($this->request->getPost("client"));
+            $valMsgs = $mdlClient->performValidation();
+    }`, "client", "Client"},
+		{"core source nat set: a node below the model", `{
+            $mdl = $this->getModel();
+            $mdl->general->setNodes($this->request->getPost('filter')['general'] ?? []);
+    }`, "filter", ""},
+		{"core firmware set: through a variable", `{
+        $values = $this->request->getPost(static::$internalModelName);
+        unset($values['plugins']);
+        $mdl = $this->getModel();
+        $mdl->setNodes($values);
+    }`, ModelNameRef, ""},
+		{"getModel() directly", `{ $this->getModel()->setNodes($this->request->getPost('x')); }`, "x", ""},
+		{"os-wol set: an entry, not the model", `{
+            $wol = $this->getModel();
+            $wolent = $wol->wolentry->Add();
+            $wolent->setNodes($this->request->getPost('wake'));
+    }`, "", ""},
+		{"os-iperf set: $_POST", `{ $interface_name = $_POST['instance']['interface']; }`, "", ""},
+		{"two keys", `{ $m = $this->getModel(); $m->a->setNodes($this->request->getPost('a')); $m->b->setNodes($this->request->getPost('b')); }`, "", ""},
+		{"argument not from the request", `{ $m = $this->getModel(); $m->setNodes($this->defaults()); }`, "", ""},
+		{"model variable assigned twice", `{ $m = new A(); $m = $other; $m->setNodes($this->request->getPost('a')); }`, "", ""},
+	} {
+		if k, cl := requestKey(c.body); k != c.key || cl != c.class {
+			t.Errorf("set %s: %q %q, want %q %q", c.name, k, cl, c.key, c.class)
+		}
+	}
+}

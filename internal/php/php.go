@@ -82,6 +82,31 @@ func Match(src string, open int, o, c byte) int {
 	return -1
 }
 
+// StatementEnd returns the index of the ';' ending the statement that
+// starts at from, skipping brackets and string literals; -1 if there is
+// none.
+func StatementEnd(src string, from int) int {
+	for i := from; i < len(src); i++ {
+		switch src[i] {
+		case '\'', '"':
+			q := src[i]
+			for i++; i < len(src) && src[i] != q; i++ {
+				if src[i] == '\\' {
+					i++
+				}
+			}
+		case '(', '[', '{':
+			c := map[byte]byte{'(': ')', '[': ']', '{': '}'}[src[i]]
+			if i = Match(src, i, src[i], c); i < 0 {
+				return -1
+			}
+		case ';':
+			return i
+		}
+	}
+	return -1
+}
+
 // SplitArgs splits a parameter/argument list at top-level commas.
 func SplitArgs(s string) []string {
 	var out []string

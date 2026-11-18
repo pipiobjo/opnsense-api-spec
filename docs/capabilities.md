@@ -177,7 +177,13 @@ in the fragments of the variants that list it.
 `operations` holds one endpoint per operation of a resource. `wrapper`
 is the key around the object in request and response bodies
 (`{"network": {...}}`); `outer`, where present, is one more key around it
-in the response (three os-squid PAC endpoints today). `forced` names
+in the response (three os-squid PAC endpoints today). The key is always
+derived: the first argument of a generic helper (`addBase('network', ...)`),
+`$internalModelName` for the generic settings `get`/`set`, and for a
+settings action the controller writes itself, the key its code uses
+(`$result['client'] = ...` in os-freeradius, `getPost('zerotier')` in
+os-zerotier). The contract test treats it as data: an answer without it is
+a `mismatch`, whatever gaps the operation has. `forced` names
 fields the endpoint sets to a fixed value whatever the request says, and
 `computed` fields it fills itself; a value sent for them is overwritten.
 Examples: the bind endpoints `addPrimaryDomain`/`addForwardDomain` force
@@ -211,19 +217,25 @@ writing should expect differences there and report them as such.
 
 Endpoints that are not resource operations (service actions such as
 `reconfigure`, custom actions, a second endpoint of the same kind) are in
-`actions`, keyed by path, with variants by fragment.
+`actions`, keyed by path, with variants by fragment. A settings resource
+has a `get` with a derived key; where there is none, its endpoints are
+actions too: an own settings action whose code does not show one key on
+the model (os-relayd's `settings/get` takes a node type, os-zerotier's
+`network/get` a UUID, os-squid's `template/get` answers a zip file), and
+a generic `set` without a `get` beside it (os-acme-client's `accounts`,
+`actions`, `certificates` and `validations` inherit it next to their own
+entry `get`; the same data is the `acmeclient/settings` resource).
 
 ### Resources that share data
 
-Several controllers can expose the same model. `acmeclient/accounts`,
-`acmeclient/actions` and `acmeclient/settings` all have a settings `set`
-on the whole os-acme-client model; `firewall/filter`, `firewall/npt` and
-others share the settings of the core's firewall model. `shared_with`
+Several controllers can expose the same model: `firewall/filter`,
+`firewall/npt` and others share the settings of the core's firewall
+model. `shared_with`
 lists the other resources of the package whose API names the same model
 class and model path, so the same stored data. A consumer should manage
 such data through one of them, usually the one that has both `get` and
 `set`; two owners of one object overwrite each other. Over 34 releases,
-36 resources in 12 models have `shared_with`. Entry lists inside a shared
+33 resources in 12 models have `shared_with`. Entry lists inside a shared
 model are not affected: they have their own model path. The families of
 one model path (above) share their data by design and list each other.
 

@@ -409,12 +409,27 @@ func (d *Doc) add(hash string, f *fragment.Fragment) {
 	var loose []*ir.Endpoint
 	for _, e := range f.Endpoints {
 		id, kind, op := ResourceID(e)
-		if id == "" {
+		if id == "" || kind == "settings" && e.Wrapper == "" {
+			// a settings operation whose root key is not derived is an
+			// action: a client cannot address it
 			loose = append(loose, e)
 			continue
 		}
 		groups[id] = append(groups[id], cand{e, op})
 		kinds[id] = kind
+	}
+	// settings are read before they are written (read-back, partial
+	// updates): without a get they are no resource; the set endpoint alone
+	// (os-acme-client's accounts/set, the generic set inherited next to an
+	// own entry get) is an action
+	for id, cs := range groups {
+		if kinds[id] != "settings" || slices.ContainsFunc(cs, func(c cand) bool { return c.op == "get" }) {
+			continue
+		}
+		for _, c := range cs {
+			loose = append(loose, c.e)
+		}
+		delete(groups, id)
 	}
 	for gid, all := range groups {
 		for _, fam := range families(all) {

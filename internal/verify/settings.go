@@ -67,7 +67,15 @@ func settingsWriteBack(c *Client, get, set *ir.Endpoint, m *model.Model) *Result
 			return nil, fail(r, code, raw, err)
 		}
 		obj, _ := v.(map[string]any)
-		inner, _ := obj[get.Wrapper].(map[string]any)
+		inner, ok := obj[get.Wrapper].(map[string]any)
+		if l, isList := obj[get.Wrapper].([]any); isList && len(l) == 0 {
+			inner, ok = map[string]any{}, true // PHP encodes an empty object as []
+		}
+		if !ok {
+			// otherwise it would pass as "no plain field to write back"
+			r.HTTP, r.Status, r.Findings = code, StatusMismatch, []string{fmt.Sprintf("root key %q missing or not an object in the answer of %s", get.Wrapper, get.Path)}
+			return nil, r
+		}
 		return inner, nil
 	}
 	cur, bad := read()

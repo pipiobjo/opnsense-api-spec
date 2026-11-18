@@ -1,4 +1,4 @@
 # Coverage floors (tools/ci/coverage.sh): name, minimum percent of statements.
 # The measured value rounded down; see the script before changing one.
-unit 81
+unit 82
 contract 72

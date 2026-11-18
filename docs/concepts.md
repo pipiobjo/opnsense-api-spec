@@ -195,7 +195,7 @@ typed, whatever their kind.
 | `custom-action` | own action; request and response not derived |
 | `http-method-unknown` | HTTP method not derivable |
 | `override-calls-parent` | overrides a generic action and calls the parent; may return a subset or extra keys |
-| `override-not-derived` | overrides a generic action without the parent; untyped |
+| `override-not-derived` | overrides a generic action without the parent; untyped. The root key is the one its code shows, or none (then the operation is an action in the capability data) |
 | `service-override` | overrides a generic service action |
 | `get-model-nodes-override` | `getModelNodes` overridden; `get` may return a subset |
 | `custom-logic` | own code around a generic helper |
@@ -232,8 +232,13 @@ key; a missing field (for example a renamed one), a value of another type,
 a missing root key or an answer that is not JSON stays a `mismatch`. There
 is no baseline file to maintain: the rule follows from the gap code and the
 model. The other codes describe code the generator does not read, so any
-difference there is expected; such resources are marked `known-gap`, not
-`ok`, in the capability data. The document also carries `x-opnsense-coverage` (gaps counted
+difference in the content there is expected; such resources are marked
+`known-gap`, not `ok`, in the capability data. No code explains a missing
+root key: the key is derived (a helper's first argument, the model name of
+the generic actions, or the key an own settings action uses in its code,
+`override-not-derived` included) and published as such; where it cannot be
+derived the operation has none, and the contract test does not compare
+its shape. The document also carries `x-opnsense-coverage` (gaps counted
 by code), and each release has a `coverage.md`.
 
 Further extensions: `x-opnsense-relation` (on relation fields: the model and entry list whose UUIDs are valid values), `x-opnsense-package` (which package provides an

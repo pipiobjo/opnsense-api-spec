@@ -31,3 +31,33 @@ Contract tests found about 15 cases where a pattern matched but the
 meaning differed (field types overriding their read shape, post-processed
 helper results, an extra wrapper key, overridden hooks); each became a
 generator rule or a gap.
+
+## Addendum 2026-11-18: a gap on an operation does not cover its keys
+
+Up to generator 0.9.3 an own settings `get`/`set` action (one that
+overrides the generic action without calling it) was marked
+`override-not-derived`, yet carried the generic root key
+(`$internalModelName`) anyway. For nine settings that key was wrong
+(os-freeradius answers `{"client": ...}` where the data said `Client`;
+os-siproxd, os-zerotier, os-relayd likewise), and the contract test
+accepted the missing key as `known-gap`, because that gap explained any
+difference. The Go client, reading these settings with the published
+key, failed on every series.
+
+Decision:
+
+- An own action's root key is read from its code (the one key of the
+  array its `get` returns; the request key its `set` hands to the
+  model's `setNodes`), or left empty. The gap stays: the content is
+  still not derived.
+- The contract test treats a root key in the data as data: a missing
+  key is a `mismatch` whatever gaps the operation has. Gaps explain
+  differences inside the key only.
+- A settings resource needs a `get` with a key. Operations without one,
+  and a lone generic `set` (os-acme-client's `accounts`, `actions`,
+  `certificates`, `validations` inherit it next to their own entry
+  `get`), are listed as actions in the capability data.
+
+Evidence: contract results of 25.7.11_9, 26.1.11_10 and 26.7.9_3
+(2026-11-18) before and after; `TestOwnSettingsKeys`,
+`TestOwnActionWrapper`, `TestRootKeyIsData`.

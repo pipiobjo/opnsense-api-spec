@@ -513,3 +513,75 @@ func TestKnownGapSubsetOnlyExplainsSections(t *testing.T) {
 		})
 	}
 }
+
+// Claim: the root key the data names is checked as data. No gap explains
+// an answer without it (os-freeradius client/get answered {"client": ...}
+// while the data said "Client", and override-not-derived turned that into
+// known-gap on 25.7.11, 26.1.11 and 26.7.9), while a gap still explains
+// differences inside it. Without a derived key nothing is compared
+// (skipped), and a settings write-back whose get lacks the key is a
+// mismatch, not "no plain field to write back".
+func TestRootKeyIsData(t *testing.T) {
+	m := &model.Model{Class: `OPNsense\Freeradius\Client`, Root: &model.Node{Kind: model.KindContainer, Children: []*model.Node{
+		{Name: "general", Kind: model.KindContainer, Children: []*model.Node{
+			{Name: "enabled", Kind: model.KindField, Type: "BooleanField", BaseType: "BooleanField", Shape: model.ShapeString},
+		}},
+	}}}
+	broad := []gap.Gap{gap.New(gap.OverrideNotDerived, "own get action")}
+	serve := func(t *testing.T, answer any) *Client {
+		srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if answer == nil {
+				w.Header().Set("Content-Type", "application/octet-stream")
+				_, _ = w.Write([]byte("PK\x03\x04"))
+				return
+			}
+			_ = json.NewEncoder(w).Encode(answer)
+		}))
+		t.Cleanup(srv.Close)
+		cl, err := NewClient(srv.URL, "k", "s", []string{"127.0.0.1"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		cl.HTTP = srv.Client()
+		return cl
+	}
+	good := map[string]any{"client": map[string]any{"general": map[string]any{"enabled": "1"}}}
+	for _, c := range []struct {
+		name    string
+		wrapper string
+		answer  any
+		status  Status
+	}{
+		{"named key missing, broad gap", "Client", good, StatusMismatch},
+		{"named key, answer not JSON, broad gap", "Client", nil, StatusMismatch},
+		{"named key present, content differs, broad gap", "client", map[string]any{"client": map[string]any{}}, StatusKnownGap},
+		{"named key present, content matches", "client", good, StatusOK},
+		{"no key derived", "", good, StatusSkipped},
+		{"no key derived, answer not JSON", "", nil, StatusKnownGap},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e := &ir.Endpoint{Path: "/api/freeradius/client/get", Kind: ir.KindModelGet, Wrapper: c.wrapper, Gaps: broad}
+			r := knownGap(checkModelGet(serve(t, c.answer), e, m), e)
+			if r.Status != c.status {
+				t.Errorf("status %s, want %s; findings %v", r.Status, c.status, r.Findings)
+			}
+		})
+	}
+	for _, c := range []struct {
+		name   string
+		answer any
+		status Status
+	}{
+		{"get lacks the key", good, StatusMismatch},
+		{"model without fields arrives as []", map[string]any{"Client": []any{}}, StatusSkipped},
+	} {
+		t.Run("write-back: "+c.name, func(t *testing.T) {
+			get := &ir.Endpoint{Path: "/api/freeradius/client/get", Kind: ir.KindModelGet, Wrapper: "Client"}
+			set := &ir.Endpoint{Path: "/api/freeradius/client/set", Kind: ir.KindModelSet, Wrapper: "Client"}
+			r := settingsWriteBack(serve(t, c.answer), get, set, m)
+			if r.Status != c.status {
+				t.Errorf("status %s, want %s; findings %v", r.Status, c.status, r.Findings)
+			}
+		})
+	}
+}

@@ -69,6 +69,15 @@ type Action struct {
 	ChecksPost  bool       `json:"checks_post,omitempty"`
 	ChecksGet   bool       `json:"checks_get,omitempty"`
 	Lines       int        `json:"lines"`
+	// Keys of an own get or set action, read from its code (settings.go):
+	// RespKey is the one key of the array a get action returns, ReqKey the
+	// request key a set action passes to the model's setNodes, ReqNew the
+	// class it instantiates for that (empty: $this->getModel()). Empty when
+	// the code does not show it. ModelNameRef stands for
+	// static::$internalModelName.
+	RespKey string `json:"resp_key,omitempty"`
+	ReqKey  string `json:"req_key,omitempty"`
+	ReqNew  string `json:"req_new,omitempty"`
 }
 
 // Class is one parsed PHP class.
@@ -177,6 +186,12 @@ func ParseFile(src, relFile string) []*Class {
 					bc.NoReturn = true
 				}
 				a.Calls = append(a.Calls, bc)
+			}
+			switch name {
+			case "get":
+				a.RespKey = responseKey(fbody)
+			case "set":
+				a.ReqKey, a.ReqNew = requestKey(fbody)
 			}
 			cl.Actions[strings.ToLower(name)] = a
 		}
