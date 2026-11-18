@@ -10,6 +10,10 @@
 #   tools/ci/catalog.sh changed          -> prints true/false (differs from the published one)
 #   tools/ci/catalog.sh publish [--dry-run]
 #
+# build runs the generator (the pipeline's prepare job, read-only token);
+# changed and publish need only gh and jq and the built files (publish runs
+# in the upload job, which runs nothing of the build; ADR 0015).
+#
 # build is deterministic: the same dist/ gives byte-identical assets and
 # the same data_id, so publish compares SHA256SUMS with the published one
 # and uploads only when something changed. Consumers that need a fixed
@@ -47,7 +51,7 @@ build() {
 
 notes() {
   local generator commit repo_url
-  generator=$(jq -r .generator "$DIST/index.json" 2>/dev/null || echo "?")
+  generator=$(jq -r '.generator // "?"' "$OUT/catalog.json")
   commit="${GITHUB_SHA:-$(git -C "$ROOT" rev-parse HEAD)}"
   repo_url="${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-pipiobjo/opnsense-api-spec}"
   cat <<EOF

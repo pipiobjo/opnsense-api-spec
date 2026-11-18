@@ -28,7 +28,11 @@ OPNsense project), and the behaviour of third-party code generators.
 ## How the project protects itself
 
 - No secrets: the pipeline uses only the workflow's own short-lived token,
-  with permissions set per job.
+  with permissions set per job and given only to the steps that call
+  `gh`. The generator and its dependencies run in jobs whose token can
+  only read; the job that writes releases and requests attestations runs
+  no build code and starts only in live runs
+  ([ADR 0015](docs/adr/0015-publish-without-build-code.md)).
 - Inputs are verified the way FreeBSD `pkg` does it: signed catalog,
   signing keys accepted only through OPNsense's signed key chain, every
   package checked against its catalog checksum. Test VM images are checked

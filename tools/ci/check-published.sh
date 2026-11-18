@@ -5,11 +5,15 @@
 # asset downloaded without credentials, compared with SHA256SUMS, and
 # SHA256SUMS checked against its build provenance attestation.
 #
-#   tools/ci/check-published.sh
+#   tools/ci/check-published.sh releases   the releases in .cache/ci/published.txt
+#                                          (written by tools/ci/publish.sh plan)
+#   tools/ci/check-published.sh catalog    the release "catalog", if the
+#                                          capability data was published
 #
-# Input: .cache/ci/published.txt (releases published by tools/ci/publish.sh)
-# and, if the capability data was published, the release "catalog". A
-# failure fails the run; the next scheduled run publishes again.
+# The releases are checked before the pipeline saves its state: a failure
+# fails the run without recording it, so the next scheduled run publishes
+# the same releases again (and publish.sh deletes assets that do not
+# belong).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -48,10 +52,15 @@ check_release() { # check_release TAG
 }
 
 n=0
-if [ -s "$LIST" ]; then
-  while read -r rel; do check_release "opnsense-$rel"; n=$((n + 1)); done < "$LIST"
-fi
-if [ "${CATALOG_LIVE:-}" = true ]; then
-  check_release catalog; n=$((n + 1))
-fi
+case "${1:-}" in
+  releases)
+    if [ -s "$LIST" ]; then
+      while read -r rel; do check_release "opnsense-$rel"; n=$((n + 1)); done < "$LIST"
+    fi ;;
+  catalog)
+    if [ "${CATALOG_LIVE:-}" = true ]; then
+      check_release catalog; n=$((n + 1))
+    fi ;;
+  *) echo "usage: $0 releases | catalog" >&2; exit 2 ;;
+esac
 echo "checked $n release(s) as an anonymous consumer"

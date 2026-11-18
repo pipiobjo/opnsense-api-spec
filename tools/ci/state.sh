@@ -8,7 +8,10 @@
 #
 #   tools/ci/state.sh restore   download + unpack into dist/; the previous
 #                               index goes to .cache/ci/index.prev.json
-#   tools/ci/state.sh save      pack dist/ and upload it (publish job only)
+#   tools/ci/state.sh pack      pack dist/ into .cache/ci/state/ (the job
+#                               that built it; needs no rights)
+#   tools/ci/state.sh save      upload .cache/ci/state/ (the publishing job,
+#                               which runs nothing of the build)
 #
 # Without a published state, restore starts from an empty dist/ and says so:
 # everything is rebuilt and no release counts as verified.
@@ -34,15 +37,21 @@ case "${1:-}" in
     cp "$ROOT/dist/index.json" "$CI/index.prev.json"
     echo "state restored: $(jq '.releases | length' "$CI/index.prev.json") releases, generator $(jq -r .generator "$CI/index.prev.json")"
     ;;
-  save)
+  pack)
     [ -f "$ROOT/dist/index.json" ] || { echo "error: dist/index.json missing" >&2; exit 1; }
-    tar -C "$ROOT/dist" --sort=name -cf - . | zstd -q -19 -T0 > "$CI/dist.tar.zst"
+    rm -rf "$CI/state"; mkdir -p "$CI/state"
+    tar -C "$ROOT/dist" --sort=name -cf - . | zstd -q -19 -T0 > "$CI/state/dist.tar.zst"
+    cp "$ROOT/dist/index.json" "$CI/state/index.json"
+    echo "state packed ($(du -h "$CI/state/dist.tar.zst" | cut -f1))"
+    ;;
+  save)
+    [ -f "$CI/state/dist.tar.zst" ] && [ -f "$CI/state/index.json" ] || { echo "error: nothing packed in $CI/state (run: $0 pack)" >&2; exit 1; }
     if ! gh release view "$TAG" >/dev/null 2>&1; then
       gh release create "$TAG" --latest=false --title "Pipeline state" \
         --notes "Internal: complete dist/ of the last successful pipeline run (input of the next run). Use the opnsense-<release> releases instead."
     fi
-    gh release upload "$TAG" --clobber "$CI/dist.tar.zst" "$ROOT/dist/index.json"
-    echo "state saved ($(du -h "$CI/dist.tar.zst" | cut -f1))"
+    gh release upload "$TAG" --clobber "$CI/state/dist.tar.zst" "$CI/state/index.json"
+    echo "state saved ($(du -h "$CI/state/dist.tar.zst" | cut -f1))"
     ;;
-  *) sed -n '4,15p' "$0"; exit 2 ;;
+  *) sed -n '4,17p' "$0"; exit 2 ;;
 esac

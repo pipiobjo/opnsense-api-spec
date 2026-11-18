@@ -37,8 +37,12 @@ jobs:
   dry-run:
     needs: ci
     uses: ./.github/workflows/pipeline.yml
-    # the called jobs declare these; nothing is written in a dry run
-    # (LIVE is false for every event but schedule and a manual publish)
+    # The called workflow declares these and GitHub checks the grant before
+    # any job starts, so they are granted although a dry run uses only
+    # contents: write, and only in the roundtrip job (a draft release; no Go
+    # runs there). The job with id-token and attestations (upload) has a
+    # job-level condition that is false in every dry run, so it never
+    # starts here (ADR 0015).
     permissions:
       contents: write
       id-token: write

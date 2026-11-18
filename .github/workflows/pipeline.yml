@@ -7,9 +7,14 @@
 #             series -> client smoke test -> plan of contract tests
 #   contract  per planned release: throwaway VM (KVM, else software
 #             emulation), update to the release, all API plugins, verify
-#   publish   only if every job passed: index, GitHub releases with
-#             SHA256SUMS and provenance attestation, state, then a check of
-#             what was published, downloaded without credentials
+#   prepare   only if every job passed: index, SBOMs, capability data, the
+#             publishing plan (tools/ci/publish.sh plan); read-only token
+#   upload    live runs only: GitHub releases with SHA256SUMS and provenance
+#             attestation, a check of what was published (downloaded
+#             without credentials), state, capability data. Runs gh and
+#             shell only, nothing of the build (ADR 0015)
+#   roundtrip dry runs from promote.yml: the newest release through a draft
+#             release that is deleted again (tools/ci/roundtrip.sh)
 #   report    on any failure: the findings on the run's summary page;
 #             nothing is published and nobody is notified (ADR 0012)
 #
@@ -18,8 +23,10 @@
 # watchdog.yml opens the one "needs-you" issue when publishing has been
 # stale for 7 days.
 #
-# No secrets: the only token is the workflow's own GITHUB_TOKEN. The test VM
-# is isolated as described in tools/testvm.sh (ADR 0004).
+# No secrets: the only token is the workflow's own GITHUB_TOKEN, given to
+# the steps that call gh and to no step that runs the generator or its
+# dependencies; write rights only in jobs that run no Go (ADR 0015). The
+# test VM is isolated as described in tools/testvm.sh (ADR 0004).
 name: pipeline
 
 on:
@@ -69,7 +76,6 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  GH_TOKEN: ${{ github.token }}
   # The only switch between publishing and a dry run. Spelled out so that a
   # call from promote.yml (event "push" or "workflow_dispatch" of the
   # caller, no "publish" input) is never live.
@@ -95,6 +101,8 @@ jobs:
       actions: write
     steps:
       - name: Re-enable this workflow and the watchdog
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           gh api -X PUT "repos/${{ github.repository }}/actions/workflows/pipeline.yml/enable"
           gh api -X PUT "repos/${{ github.repository }}/actions/workflows/watchdog.yml/enable"
@@ -106,6 +114,8 @@ jobs:
       plan: ${{ steps.plan.outputs.plan }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
         with:
           minimum_release_age: 7d # only mise releases at least a week old
@@ -121,10 +131,14 @@ jobs:
       # watchdog says so.
       - name: Only promoted commits publish
         if: env.LIVE == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           n=$(gh run list -w promote.yml -c "$GITHUB_SHA" -s success -L 1 --json databaseId --jq length)
           [ "$n" -gt 0 ] || { echo "::error::$GITHUB_SHA did not pass promote.yml; push to dev instead of main"; exit 1; }
       - name: Restore state
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: tools/ci/state.sh restore
       - name: Gates (format, vet, tests with golden releases, script tests)
         run: tools/ci/gates.sh
@@ -190,6 +204,8 @@ jobs:
         include: ${{ fromJSON(needs.build.outputs.plan) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
         with:
           minimum_release_age: 7d # only mise releases at least a week old
@@ -255,7 +271,9 @@ jobs:
           path: out/
           retention-days: 14
 
-  publish:
+  # Everything that runs the generator and its dependencies, with a token
+  # that can only read; the result goes to the upload job as an artifact.
+  prepare:
     needs: [build, contract]
     if: >-
       always() && needs.build.result == 'success' &&
@@ -263,20 +281,18 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
-      contents: write
-      id-token: write # attestation of the catalog (keyless, Sigstore)
-      attestations: write
+      contents: read
+    outputs:
+      catalog-changed: ${{ steps.catalog.outputs.changed }}
     env:
-      # Capability data (docs/capabilities.md) is published only when the
-      # repository variable CATALOG_PUBLISH is "true" and the run publishes;
-      # otherwise it is built, checked and kept as a workflow artifact.
-      CATALOG_LIVE: ${{ vars.CATALOG_PUBLISH == 'true' && github.event_name == 'schedule' || (vars.CATALOG_PUBLISH == 'true' && github.event_name == 'workflow_dispatch' && inputs.publish == true) }}
       # SBOMs: always in dry runs (built, checked, round trip); in a live run
       # only when the repository variable SBOM_PUBLISH is "true"
       # (job env cannot read the workflow's LIVE, so it is spelled out)
       SBOM: ${{ ((github.event_name != 'schedule' && !(github.event_name == 'workflow_dispatch' && inputs.publish == true)) || vars.SBOM_PUBLISH == 'true') && '1' || '0' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
         with:
           minimum_release_age: 7d # only mise releases at least a week old
@@ -323,52 +339,150 @@ jobs:
             jq --argjson s "$still" '.releases[] | select(.release as $r | $s | index($r)) | {release, current, verified}' dist/index.json
             exit 1
           fi
-      - name: Publish releases
-        run: tools/ci/publish.sh ${{ env.LIVE != 'true' && '--dry-run' || '' }}
-      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        if: env.LIVE == 'true' && hashFiles('.cache/ci/sums/*/SHA256SUMS') != ''
-        with:
-          subject-path: .cache/ci/sums/*/SHA256SUMS
-      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        if: env.LIVE == 'true' && hashFiles('.cache/ci/generator/SHA256SUMS') != ''
-        with:
-          subject-path: .cache/ci/generator/*
-      - name: Save state
-        if: env.LIVE == 'true'
-        run: tools/ci/state.sh save
-      # after the state: a problem with the capability data must not keep
-      # the releases from being recorded
-      - name: Build capability data
-        id: catalog
+      # Reads GitHub (which releases exist, their checksums and asset
+      # names; read-only token) and stages what upload will publish. The
+      # generator SBOM inside runs in an isolated container without the
+      # token. "upload --dry-run" checks the plan the way the upload job
+      # will read it.
+      - name: Publishing plan
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          tools/ci/catalog.sh build
-          echo "changed=$(tools/ci/catalog.sh changed)" >> "$GITHUB_OUTPUT"
+          tools/ci/publish.sh plan
+          tools/ci/publish.sh upload --dry-run
+          {
+            echo '### Publishing plan'
+            echo '```'
+            awk -F'\t' '{print $2, "opnsense-" $1, "pre-release=" $3}' .cache/ci/upload/releases.tsv
+            cat .cache/ci/upload/generator.env
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Pack state
+        run: tools/ci/state.sh pack
+      - name: Build capability data
+        run: tools/ci/catalog.sh build
+      - name: Capability data changed?
+        id: catalog
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: echo "changed=$(tools/ci/catalog.sh changed)" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: catalog
           path: .cache/ci/catalog/
           retention-days: 14
+      # one archive, so the next jobs see exactly these paths
+      - name: Hand over to the upload job
+        run: |
+          parts=(.cache/ci/upload .cache/ci/sums .cache/ci/state .cache/ci/catalog .cache/ci/published.txt)
+          [ -d .cache/ci/generator ] && parts+=(.cache/ci/generator)
+          tar -cf publish-input.tar "${parts[@]}"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: publish-input
+          path: publish-input.tar
+          retention-days: 7
+
+  # Live runs only (a job-level condition, so no dry run ever gets these
+  # rights): publishes what prepare decided, with gh and shell only; no Go,
+  # no mise, nothing of the build runs here.
+  upload:
+    needs: [prepare]
+    if: >-
+      needs.prepare.result == 'success' &&
+      (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.publish == true))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      id-token: write # provenance attestations (keyless, Sigstore)
+      attestations: write
+    env:
+      # Capability data (docs/capabilities.md) is published only when the
+      # repository variable CATALOG_PUBLISH is "true"; otherwise it is
+      # built, checked and kept as a workflow artifact.
+      CATALOG_LIVE: ${{ vars.CATALOG_PUBLISH == 'true' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: publish-input
+          path: .ci/in
+      - name: Unpack
+        run: tar -xf .ci/in/publish-input.tar
+      - name: Publish releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: tools/ci/publish.sh upload
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        if: env.CATALOG_LIVE == 'true' && steps.catalog.outputs.changed == 'true'
+        if: hashFiles('.cache/ci/sums/*/SHA256SUMS') != ''
+        with:
+          subject-path: .cache/ci/sums/*/SHA256SUMS
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        if: hashFiles('.cache/ci/generator/SHA256SUMS') != ''
+        with:
+          subject-path: .cache/ci/generator/*
+      # before the state: a failure here leaves the state as it was, so the
+      # next run publishes these releases again (and deletes stray assets)
+      - name: Check what was published
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: tools/ci/check-published.sh releases
+      - name: Save state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: tools/ci/state.sh save
+      # after the state: a problem with the capability data must not keep
+      # the releases from being recorded
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        if: env.CATALOG_LIVE == 'true' && needs.prepare.outputs.catalog-changed == 'true'
         with:
           subject-path: |
             .cache/ci/catalog/catalog.json
             .cache/ci/catalog/capabilities.tar.zst
             .cache/ci/catalog/SHA256SUMS
       - name: Publish capability data
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: tools/ci/catalog.sh publish ${{ env.CATALOG_LIVE != 'true' && '--dry-run' || '' }}
-      # dry runs from promote.yml: the real publishing round trip through a
-      # draft release that is deleted again (tools/ci/roundtrip.sh)
+      - name: Check the published capability data
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: tools/ci/check-published.sh catalog
+
+  # Dry runs from promote.yml: the real publishing round trip through a
+  # draft release that is deleted again. May write releases (drafts), has
+  # no id-token, runs nothing of the build.
+  roundtrip:
+    needs: [prepare]
+    if: >-
+      needs.prepare.result == 'success' && inputs.roundtrip == true &&
+      !(github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.publish == true))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: publish-input
+          path: .ci/in
+      - name: Unpack
+        run: |
+          tar -xf .ci/in/publish-input.tar
+          mkdir -p .ci/dist && zstd -dc .cache/ci/state/dist.tar.zst | tar -C .ci/dist -xf -
       - name: Publishing round trip (draft)
-        if: env.LIVE != 'true' && inputs.roundtrip == true
-        run: tools/ci/roundtrip.sh dist
-      # last: what consumers get, fetched without credentials
-      - name: Check what was published
-        if: env.LIVE == 'true'
-        run: tools/ci/check-published.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: tools/ci/roundtrip.sh .ci/dist
 
   report:
-    needs: [keepalive, build, contract, publish]
+    needs: [keepalive, build, contract, prepare, upload, roundtrip]
     if: always() && contains(needs.*.result, 'failure')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -376,6 +490,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         continue-on-error: true
         with:

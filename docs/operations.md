@@ -102,3 +102,14 @@ of doing it.
 The variables of `tools/ci/alerts.sh` (own workflow, watched workflows,
 promotion, stale time) are listed at the top of the script; other
 repositories of the project use the same script at a pinned commit.
+
+## Publishing rights
+
+Publishing is split by rights ([ADR 0015](adr/0015-publish-without-build-code.md)):
+the job that runs the generator and its dependencies (`prepare`) has a
+token that can only read; the job that writes releases and requests the
+provenance attestation (`upload`) runs only `gh` and shell scripts from
+the repository and starts only in live runs. A dry run therefore never
+holds a token that can sign. `publish.sh` deletes release assets that no
+longer belong to a release, and the check of what was published runs
+before the state is saved, so a failed check is repeated by the next run.

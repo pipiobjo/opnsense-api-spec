@@ -44,10 +44,10 @@ body=$(mktemp)
     echo
   done < <(find "${VERIFIED_DIR:-.ci/in/verified}" -name release -type f 2>/dev/null)
   if [ "$found" = 0 ]; then
-    echo "No contract test findings; see the failed job's log (gates, matrix, client smoke test or publish)."
+    echo "No contract test findings; see the failed job's log (gates, matrix, client smoke test, prepare, upload or roundtrip)."
   fi
   echo
-  echo "Nothing was published; the next scheduled run retries. A finding is either a generator bug (fix it), or an"
+  echo "Nothing was published, or (a failed upload job) only part of it; the next scheduled run repeats what is missing. A finding is either a generator bug (fix it), or an"
   echo "upstream behaviour to accept in \`verify/accepted.json\` with reason and evidence."
 } > "$body"
 

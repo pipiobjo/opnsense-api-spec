@@ -16,6 +16,7 @@
 | [0012](0012-quiet-operation.md) | Quiet operation: one self-closing signal after 7 stale days, `main` only through dry runs, dependencies update themselves | accepted, implemented |
 | [0013](0013-sbom.md) | Software bills of materials: per release (OPNsense packages) and per generator version | accepted; published once `SBOM_PUBLISH` is on |
 | [0014](0014-attribute-identity-and-moves.md) | Provider attribute names are fixed once; field moves are mapped in the provider's name table, `moved_from` is not generated | accepted 2026-11-18 (P8) |
+| [0015](0015-publish-without-build-code.md) | Publishing rights only in a job that runs no build code; dry runs never hold an id-token | accepted, implemented |
 
 Format: context, decision, consequences, evidence. A superseded ADR stays
 and links to its successor.
