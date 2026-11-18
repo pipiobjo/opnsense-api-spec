@@ -89,8 +89,11 @@ A combination that was never seen (a core hotfix newer than the data, a
 plugin version built after the last run) has no entry. What to do then is
 the consumer's policy. The Go client's, which we recommend:
 
-1. Same package version on the nearest **older** core of the same series:
-   used, with a note (usual after a hotfix).
+1. Another hotfix revision of the same release (`26.7.9` against data of
+   `26.7.9_1`): the nearest older revision, otherwise the nearest newer
+   one, with a note. Revisions of one release do not change the API in
+   practice, and every write is read back. The same package version seen
+   on another core of the series is used the same way.
 2. A package version the data has never seen: the newest fragment of the
    package in that series is used, with a warning that the combination is
    unverified.
@@ -99,8 +102,9 @@ the consumer's policy. The Go client's, which we recommend:
 4. A series newer than the data: no fragment. Writes are refused, because
    a new series can change the framework the API is derived from.
 
-Never take data newer than what is installed for a write, and never fall
-back silently: a consumer must show the note or warning.
+Apart from hotfix revisions of the same release, never take data newer
+than what is installed for a write, and never fall back silently: a
+consumer must show the note or warning.
 
 ## Variants and `in`
 
