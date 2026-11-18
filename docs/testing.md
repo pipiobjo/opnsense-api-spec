@@ -85,7 +85,7 @@ summary, HTML artifact) and fails below the floor in
 
 | Profile | Covered | Floor | Where |
 |---|---:|---:|---|
-| unit (all Go tests, golden releases included) | 82.3% | 82% | `gates.sh`, artifact `coverage-unit` |
+| unit (all Go tests, golden releases included) | 83.0% | 83% | `gates.sh`, artifact `coverage-unit` |
 | contract (the command and `internal/verify` against a VM with every plugin; `internal/verify` alone 84.4% to 84.9%) | 72.4% | 72% | pipeline contract job, artifact `coverage-contract-<release>` |
 
 The contract test's main loop (`internal/verify`, 66% in unit tests)
