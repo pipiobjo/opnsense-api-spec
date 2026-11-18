@@ -48,6 +48,9 @@ outputs:
   acceleration:
     description: "kvm or tcg (software emulation, several times slower)"
     value: ${{ steps.start.outputs.accel }}
+  slow:
+    description: "factor the harness stretched its waits by (1 with KVM, 6 with tcg unless TESTVM_SLOW was set); callers scale their own timeouts with it"
+    value: ${{ steps.start.outputs.slow }}
   dir:
     description: "directory with console.log and proxy.log, for upload on failure"
     value: ${{ steps.paths.outputs.vm }}

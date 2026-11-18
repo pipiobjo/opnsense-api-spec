@@ -68,6 +68,7 @@ the release from it.
 | `plugins` | comma-separated installed plugins |
 | `failed` | comma-separated plugins that could not be installed |
 | `acceleration` | `kvm`, or `tcg` (software emulation) |
+| `slow` | the factor the harness stretched its own waits by: `1` with KVM, `6` with `tcg`, or the value of `TESTVM_SLOW` when the job set it. Scale your own test timeouts with it rather than copying the number |
 | `dir` | directory with `console.log` and `proxy.log`, for an upload when something fails |
 
 ## Time and runner
@@ -92,7 +93,7 @@ The action is a thin wrapper around `tools/testvm.sh`:
 ```sh
 tools/testvm.sh prepare 26.7
 tools/testvm.sh start 26.7 --release latest --plugins "os-frr"
-cat .cache/vm/state.env      # url, keyfile, version, release, plugins, failed
+cat .cache/vm/state.env      # url, keyfile, version, release, accel, slow, plugins, failed
 tools/testvm.sh down
 ```
 

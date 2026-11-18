@@ -48,14 +48,16 @@ jobs:
           RELEASE: ${{ steps.vm.outputs.release }}
           PLUGINS: ${{ steps.vm.outputs.plugins }}
           ACCEL: ${{ steps.vm.outputs.acceleration }}
+          SLOW: ${{ steps.vm.outputs.slow }}
         run: |
           fail() { echo "::error::$*"; exit 1; }
-          echo "url=$URL version=$VERSION release=$RELEASE plugins=$PLUGINS acceleration=$ACCEL"
+          echo "url=$URL version=$VERSION release=$RELEASE plugins=$PLUGINS acceleration=$ACCEL slow=$SLOW"
           [[ "$URL" =~ ^https://127\.0\.0\.1:[0-9]+$ ]] || fail "url is not on 127.0.0.1: $URL"
           [ "$(stat -c %a "$KEYFILE")" = 600 ] || fail "key file is not 0600"
           [[ "$RELEASE" =~ ^26\.1\.[0-9]+$ ]] || fail "release: $RELEASE"
           case "$VERSION" in "$RELEASE"|"$RELEASE"_*) ;; *) fail "version $VERSION does not match release $RELEASE" ;; esac
           [ "$PLUGINS" = os-frr ] || fail "plugins: $PLUGINS"
+          case "$ACCEL:$SLOW" in kvm:1|tcg:6) ;; *) fail "slow factor '$SLOW' with acceleration $ACCEL" ;; esac
           k=$(jq -r .key "$KEYFILE"); s=$(jq -r .secret "$KEYFILE")
           got=$(curl -sk -u "$k:$s" "$URL/api/core/firmware/status" | jq -r '.product_version // .product.product_version // empty')
           [ "$got" = "$VERSION" ] || fail "firmware/status with the key: '$got'"

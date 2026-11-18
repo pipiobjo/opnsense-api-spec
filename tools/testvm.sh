@@ -17,7 +17,8 @@
 #   tools/testvm.sh start 26.7 [--release 26.7.5|latest] [--plugins all|"os-a os-b"]
 #                                  up + apikey [+ update] [+ plugins], leaves
 #                                  the VM running and writes .cache/vm/state.env
-#                                  (url, keyfile, version, plugins); used by
+#                                  (url, keyfile, version, plugins, accel,
+#                                  slow: the factor waits were stretched by); used by
 #                                  the action .github/actions/testvm
 #   tools/testvm.sh contract dist/26.7.5/opnsense-26.7.5.ir.json
 #                                  contract tests against the running VM
@@ -455,6 +456,7 @@ start() {
     echo "version=$version"
     echo "release=$(vm_version "$series")"
     echo "accel=$ACCEL"
+    echo "slow=$SLOW"
     echo "plugins=$(listfile "$VM/plugins-installed.txt")"
     echo "failed=$(listfile "$VM/plugins-failed.txt")"
   } > "$VM/state.env"
