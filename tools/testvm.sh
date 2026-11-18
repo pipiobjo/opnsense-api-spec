@@ -64,6 +64,9 @@ case "$ACCEL" in
   tcg) SLOW="${TESTVM_SLOW:-6}" ;;
   *) echo "error: TESTVM_ACCEL must be kvm or tcg" >&2; exit 1 ;;
 esac
+# the contract test (verify) stretches its request timeouts by the same
+# factor (cmd/opnsense-api-spec, TESTVM_SLOW)
+export TESTVM_SLOW="$SLOW"
 # waits N: number of wait iterations, stretched for software emulation
 waits() { echo $(($1 * SLOW)); }
 
@@ -157,30 +160,43 @@ up() {
     -daemonize -pidfile "$VM/qemu.pid"
   echo "booting (console: $VM/console.log) ..."
   for _ in $(seq 1 "$(waits 120)"); do
-    if curl -sk -m 3 -o /dev/null "$URL/"; then echo "web GUI up: $URL"; return 0; fi
+    # -f: an error page (502 while php starts) is not a working GUI
+    if curl -skf -m 3 -o /dev/null "$URL/"; then echo "web GUI up: $URL"; return 0; fi
     running || die "VM exited; see $VM/console.log"
     sleep 3
   done
   die "web GUI did not come up within $((6 * SLOW)) minutes"
 }
 
+# apikey: log in with the factory credentials and create an API key; three
+# attempts, because the GUI can answer before its login works (first boot
+# still restarting services)
 apikey() {
+  local i
+  for i in 1 2 3; do
+    apikey_once && return 0
+    [ "$i" -lt 3 ] && { echo "API key: attempt $i failed, retrying" >&2; sleep "$((10 * SLOW))"; }
+  done
+  die "could not create an API key in 3 attempts"
+}
+
+apikey_once() {
   local j="$VM/cookies.txt" page inp name val tok
   rm -f "$j"
-  page=$(curl -sk -c "$j" -b "$j" "$URL/")
+  page=$(curl -sk -m 60 -c "$j" -b "$j" "$URL/") || return 1
   inp=$(grep -oE '<input type="hidden" name="[^"]+" value="[^"]+"' <<<"$page" | head -1)
   name=$(sed -E 's/.*name="([^"]+)".*/\1/' <<<"$inp")
   val=$(sed -E 's/.*value="([^"]+)".*/\1/' <<<"$inp")
   # factory credentials of a fresh, isolated test image only
-  curl -sk -c "$j" -b "$j" -o /dev/null --data-urlencode usernamefld=root \
-    --data-urlencode passwordfld=opnsense --data-urlencode login=1 --data-urlencode "$name=$val" "$URL/"
-  tok=$(curl -sk -c "$j" -b "$j" "$URL/ui/core/dashboard" | grep -oE 'X-CSRFToken", "[^"]+"' | head -1 | sed -E 's/.*", "([^"]+)"/\1/')
-  [ -n "$tok" ] || die "login failed"
+  curl -sk -m 60 -c "$j" -b "$j" -o /dev/null --data-urlencode usernamefld=root \
+    --data-urlencode passwordfld=opnsense --data-urlencode login=1 --data-urlencode "$name=$val" "$URL/" || return 1
+  tok=$(curl -sk -m 60 -c "$j" -b "$j" "$URL/ui/core/dashboard" | grep -oE 'X-CSRFToken", "[^"]+"' | head -1 | sed -E 's/.*", "([^"]+)"/\1/')
+  [ -n "$tok" ] || { echo "login failed" >&2; return 1; }
   umask 077
-  curl -sk -b "$j" -H "X-CSRFToken: $tok" -H "Content-Type: application/json" -d '{}' \
-    -X POST "$URL/api/auth/user/add_api_key/root" > "$VM/apikey.json"
+  curl -sk -m 60 -b "$j" -H "X-CSRFToken: $tok" -H "Content-Type: application/json" -d '{}' \
+    -X POST "$URL/api/auth/user/add_api_key/root" > "$VM/apikey.json" || return 1
   rm -f "$j"
-  grep -q '"secret"' "$VM/apikey.json" || die "could not create API key: $(cat "$VM/apikey.json")"
+  grep -q '"secret"' "$VM/apikey.json" || { echo "could not create API key: $(cat "$VM/apikey.json")" >&2; return 1; }
   echo "API key: $VM/apikey.json"
 }
 
@@ -203,8 +219,9 @@ api() { # api METHOD PATH [JSON]
   local k s
   k=$(jq -r .key "$VM/apikey.json"); s=$(jq -r .secret "$VM/apikey.json")
   # Content-Type only with a body: OPNsense rejects a GET with
-  # "Content-Type: application/json" and no body (HTTP 400)
-  curl -sk -u "$k:$s" ${3:+-H "Content-Type: application/json"} -X "$1" ${3:+-d "$3"} "$URL$2"
+  # "Content-Type: application/json" and no body (HTTP 400). -m: a hung VM
+  # ends the call, not the job hours later.
+  curl -sk -m "$((120 * SLOW))" -u "$k:$s" ${3:+-H "Content-Type: application/json"} -X "$1" ${3:+-d "$3"} "$URL$2"
 }
 
 # install_plugin PKG: install one plugin and wait for exactly that job.
@@ -295,6 +312,22 @@ product_version() {
   api GET /api/core/firmware/status | jq -r '.product_version // .product.product_version // empty'
 }
 
+# update_state CURL_RC BODY LOST: what one upgradestatus poll means.
+#   done|reboot   the firmware said so
+#   lost          no connection (LOST counts the ones before this poll)
+#   unreachable   no connection for the third time in a row: the VM reboots
+#   running       anything else, also an answer that is not JSON (an error
+#                 page while the web server restarts during the update)
+update_state() {
+  local rc="$1" body="$2" lost="$3" s
+  if [ "$rc" -ne 0 ]; then
+    if [ "$lost" -ge 2 ]; then echo unreachable; else echo lost; fi
+    return
+  fi
+  s=$(jq -r '.status // empty' <<<"$body" 2>/dev/null || true)
+  case "$s" in done|reboot) echo "$s" ;; *) echo running ;; esac
+}
+
 # update TARGET: update the running VM to exactly TARGET (same series as
 # the image); waits for a reboot if the update needs one
 update() {
@@ -305,17 +338,22 @@ update() {
   echo "updating $before -> $target"
   api POST /api/core/firmware/update '{}' | grep -q '"ok"' || die "firmware update was not started"
   status=running
+  local lost=0 rc
   for _ in $(seq 1 "$(waits 600)"); do
-    st=$(api POST /api/core/firmware/upgradestatus '{}' 2>/dev/null || true)
-    status=$(jq -r '.status // "unreachable"' <<<"$st" 2>/dev/null || echo unreachable)
-    case "$status" in done|reboot|unreachable) break ;; esac
+    rc=0; st=$(api POST /api/core/firmware/upgradestatus '{}' 2>/dev/null) || rc=$?
+    status=$(update_state "$rc" "$st" "$lost")
+    case "$status" in
+      done|reboot|unreachable) break ;;
+      lost) lost=$((lost + 1)) ;;
+      *) lost=0 ;;
+    esac
     sleep 3
   done
   if [ "$status" != "done" ]; then
     # reboot (announced or already in progress): wait for the GUI to return
     echo "waiting for reboot"
     for _ in $(seq 1 "$(waits 60)"); do curl -sk -m 3 -o /dev/null "$URL/" || break; sleep 3; done
-    for _ in $(seq 1 "$(waits 200)"); do curl -sk -m 3 -o /dev/null "$URL/" && break; sleep 3; done
+    for _ in $(seq 1 "$(waits 200)"); do curl -skf -m 3 -o /dev/null "$URL/" && break; sleep 3; done
     for _ in $(seq 1 "$(waits 60)"); do [ -n "$(product_version 2>/dev/null)" ] && break; sleep 3; done
   fi
   local now; now=$(product_version)

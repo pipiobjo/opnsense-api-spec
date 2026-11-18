@@ -44,7 +44,7 @@ func settingsWriteBacks(c *Client, rel *ir.Release, models map[string]*model.Mod
 		if g == nil || g.Wrapper != e.Wrapper {
 			continue
 		}
-		out = append(out, settingsWriteBack(c, g, e, models[e.Model]))
+		out = append(out, c.noted(settingsWriteBack(c, g, e, models[e.Model])))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out

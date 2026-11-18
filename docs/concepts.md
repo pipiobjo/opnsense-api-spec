@@ -281,7 +281,10 @@ fields. See section 9.
   they are complete. It is intermittent: an 860 KB firewall log came
   through intact on 2026-11-17, `firmware/info` on 26.7.9_3 was cut the
   same day. Clients should use HTTP/2 (the Go client does). The contract
-  test uses HTTP/1.1 on purpose, so an affected check fails visibly.
+  test uses HTTP/1.1 on purpose, so the fault stays visible: a read that
+  is cut (or reset, or answered with 502/503) is repeated once after a
+  short pause and the check records the retry as a note; only a second
+  failure fails the check. Writes are never repeated.
 - Some required fields are enforced only in PHP validation, not marked
   `Required` in the model (`x-opnsense-runtime-required`).
 

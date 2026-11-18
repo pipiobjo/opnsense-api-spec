@@ -75,7 +75,7 @@ func writeCycles(c *Client, rel *ir.Release, models map[string]*model.Model, pac
 	}
 	var out []*Result
 	for _, k := range keys {
-		out = append(out, w.cycle(fams[k]))
+		out = append(out, c.noted(w.cycle(fams[k])))
 	}
 	return out
 }

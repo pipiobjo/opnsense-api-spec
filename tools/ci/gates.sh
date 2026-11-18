@@ -20,3 +20,4 @@ mkdir -p .cache/ci
 GOLDEN_REQUIRED=1 go test -count=1 -coverpkg=./... -coverprofile=.cache/ci/unit.out ./...
 tools/ci/coverage.sh unit .cache/ci/unit.out coverage
 tools/ci/alerts_test.sh
+tools/ci/testvm_test.sh

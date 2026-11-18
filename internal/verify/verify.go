@@ -68,6 +68,7 @@ type Report struct {
 func Run(c *Client, rel *ir.Release, packages map[string]bool, write bool) *Report {
 	rep := &Report{Release: rel.Version, Generator: rel.Generator.Version, Date: time.Now().UTC().Format(time.RFC3339)}
 	rep.Instance, _ = c.InstanceVersion()
+	c.retried = nil // before the first check; the version is not a check
 	for p, ok := range packages {
 		if ok {
 			rep.Packages = append(rep.Packages, p)
@@ -84,15 +85,15 @@ func Run(c *Client, rel *ir.Release, packages map[string]bool, write bool) *Repo
 		}
 		switch {
 		case e.Kind == ir.KindModelGet:
-			rep.Results = append(rep.Results, knownGap(checkModelGet(c, e, models[e.Model]), e))
+			rep.Results = append(rep.Results, c.noted(knownGap(checkModelGet(c, e, models[e.Model]), e)))
 		case e.Kind == ir.KindItemSearch:
-			rep.Results = append(rep.Results, checkSearch(c, e))
+			rep.Results = append(rep.Results, c.noted(checkSearch(c, e)))
 		case e.Kind == ir.KindItemGet && (len(e.Params) == 0 || e.Params[0].Optional):
-			rep.Results = append(rep.Results, knownGap(checkItemGet(c, e, models[e.Model]), e))
+			rep.Results = append(rep.Results, c.noted(knownGap(checkItemGet(c, e, models[e.Model]), e)))
 		case e.Kind == ir.KindServiceStatus:
-			rep.Results = append(rep.Results, checkReachable(c, e, "GET"))
+			rep.Results = append(rep.Results, c.noted(checkReachable(c, e, "GET")))
 		case e.Kind == ir.KindCustom && len(e.Params) == 0 && len(e.Methods) == 1 && e.Methods[0] == "GET":
-			rep.Results = append(rep.Results, checkReachable(c, e, "GET"))
+			rep.Results = append(rep.Results, c.noted(checkReachable(c, e, "GET")))
 		}
 	}
 	if write {

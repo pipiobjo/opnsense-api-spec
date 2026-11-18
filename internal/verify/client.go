@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -35,7 +36,17 @@ type Client struct {
 	// rendered OpenAPI document (what generated clients will decode).
 	Schema        Validator
 	schemaResults []*Result
+
+	// retryPause is the pause before the one retry of a read (doWith);
+	// retried collects what was retried until the next check takes it
+	// (noted).
+	retryPause time.Duration
+	retried    []string
 }
+
+// RequestTimeout is the time limit of one request on an instance with
+// hardware acceleration; ScaleTimeouts stretches it for software emulation.
+const RequestTimeout = 60 * time.Second
 
 // Validator checks a response body against the document's 200 response
 // schema of an operation (path template, e.g. ".../getDnsbl/{uuid}").
@@ -75,8 +86,9 @@ func NewClient(base, key, secret string, allowed []string) (*Client, error) {
 		// HTTP/1.1 on purpose: Go clients use HTTP/2, so the contract test
 		// covers the other protocol. The OPNsense web server sometimes cuts
 		// large HTTP/1.1 answers (broken chunked encoding; firmware/info on
-		// 26.7.9_3, 2026-11-17); the contract test keeps that visible
-		// (concepts.md, section 7.2).
+		// 26.7.9_3, 2026-11-17); the contract test keeps that visible: a
+		// read that is cut is repeated once and noted (doWith; concepts.md,
+		// section 7.2).
 		TLSNextProto: map[string]func(string, *tls.Conn) http.RoundTripper{},
 	}
 	tr2 := &http.Transport{
@@ -84,15 +96,75 @@ func NewClient(base, key, secret string, allowed []string) (*Client, error) {
 		ForceAttemptHTTP2: true,
 	}
 	return &Client{BaseURL: strings.TrimRight(base, "/"), Key: key, Secret: secret, AllowedHosts: allowed,
-		HTTP:    &http.Client{Timeout: 60 * time.Second, Transport: tr},
-		pkgHTTP: &http.Client{Timeout: 60 * time.Second, Transport: tr2}}, nil
+		HTTP:       &http.Client{Timeout: RequestTimeout, Transport: tr},
+		pkgHTTP:    &http.Client{Timeout: RequestTimeout, Transport: tr2},
+		retryPause: 3 * time.Second}, nil
+}
+
+// ScaleTimeouts multiplies the request time limits by factor, the
+// slowdown of the test instance (tools/testvm.sh: TESTVM_SLOW, 6 under
+// software emulation). Factors below 1 count as 1.
+func (c *Client) ScaleTimeouts(factor int) {
+	if factor < 1 {
+		factor = 1
+	}
+	for _, hc := range []*http.Client{c.HTTP, c.pkgHTTP} {
+		if hc != nil {
+			hc.Timeout = RequestTimeout * time.Duration(factor)
+		}
+	}
 }
 
 func (c *Client) do(method, path string, body any) (int, any, []byte, error) {
 	return c.doWith(c.HTTP, method, path, body)
 }
 
+// doWith sends one request. A read (GET) that fails in transport (no
+// answer, a cut answer, 502 or 503 while the web server restarts) is
+// repeated once after a short pause; the retry is recorded and ends up as
+// a note in the result of the check that made the request (noted), so an
+// intermittent fault stays visible without failing the check. A second
+// failure is returned as it is. Writes are never repeated: the first
+// attempt may have been applied.
 func (c *Client) doWith(hc *http.Client, method, path string, body any) (int, any, []byte, error) {
+	code, v, raw, err := c.doOnce(hc, method, path, body)
+	if method != http.MethodGet || !transportFault(code, err) {
+		return code, v, raw, err
+	}
+	first := err
+	if first == nil {
+		first = fmt.Errorf("HTTP %d", code)
+	}
+	time.Sleep(c.retryPause)
+	code, v, raw, err = c.doOnce(hc, method, path, body)
+	if !transportFault(code, err) {
+		c.retried = append(c.retried, fmt.Sprintf("%s %s answered only on the second attempt; the first failed in transport: %v", method, path, first))
+	}
+	return code, v, raw, err
+}
+
+// transportFault: the request got no complete answer from the
+// application (as opposed to an answer the check has to judge).
+func transportFault(code int, err error) bool {
+	if err != nil {
+		var nj *NonJSON
+		return !errors.As(err, &nj)
+	}
+	return code == http.StatusBadGateway || code == http.StatusServiceUnavailable
+}
+
+// noted moves the recorded retries into r's notes and returns r. Checks
+// run one after the other, so what was retried since the last check
+// belongs to this one.
+func (c *Client) noted(r *Result) *Result {
+	if len(c.retried) > 0 {
+		r.Notes = append(r.Notes, c.retried...)
+		c.retried = nil
+	}
+	return r
+}
+
+func (c *Client) doOnce(hc *http.Client, method, path string, body any) (int, any, []byte, error) {
 	var rd io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)

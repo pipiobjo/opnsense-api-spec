@@ -13,7 +13,9 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pipiobjo/opnsense-api-spec/internal/capability"
 	"github.com/pipiobjo/opnsense-api-spec/internal/jsonfile"
@@ -233,7 +235,21 @@ func vmClient(o opts) (*verify.Client, error) {
 	if err := json.Unmarshal(raw, &key); err != nil || key.Key == "" {
 		return nil, fmt.Errorf("%s: expected {\"key\": ..., \"secret\": ...}", o.keyfile)
 	}
-	return verify.NewClient(o.url, key.Key, key.Secret, []string{"127.0.0.1", "localhost"})
+	c, err := verify.NewClient(o.url, key.Key, key.Secret, []string{"127.0.0.1", "localhost"})
+	if err != nil {
+		return nil, err
+	}
+	// software emulation is several times slower; tools/testvm.sh exports
+	// its factor so a slow instance does not turn into failed checks
+	if s := os.Getenv("TESTVM_SLOW"); s != "" {
+		n, err := strconv.Atoi(s)
+		if err != nil || n < 1 {
+			return nil, fmt.Errorf("TESTVM_SLOW=%q: want a whole number of at least 1", s)
+		}
+		c.ScaleTimeouts(n)
+		fmt.Fprintf(os.Stderr, "request time limit %s (TESTVM_SLOW=%d)\n", verify.RequestTimeout*time.Duration(n), n)
+	}
+	return c, nil
 }
 
 // cmdInstalled prints the installed packages of the test instance, one per
