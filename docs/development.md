@@ -123,8 +123,11 @@ An entry that the run summary lists as unused is a candidate for removal.
 
 Versions are compared by `pkgrepo.CompareVersions`: dot-separated parts,
 then the revision after `_`, each numerically and then by letter suffix.
-The Go client has the same function with the same test table
-(`capability.CompareVersions` in opnsense-api-go). Change both together;
+The Go client has the same function (`capability.CompareVersions` in
+opnsense-api-go). Both test against one table,
+`internal/capability/version-order.json`, which is published with the
+capability data; the client copies it with its `tools/testdata.sh`. To
+change the order, change the table first, then both functions;
 [capabilities.md](capabilities.md#compatibility-rules) makes the order
 part of the format.
 

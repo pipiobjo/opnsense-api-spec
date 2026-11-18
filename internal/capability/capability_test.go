@@ -301,7 +301,7 @@ func TestWrite(t *testing.T) {
 	if err := Write(out, cat, docs); err != nil {
 		t.Fatal(err)
 	}
-	for _, f := range []string{"catalog.json", "capability.schema.json", "capabilities/os-demo.json", "capabilities/opnsense.json"} {
+	for _, f := range []string{"catalog.json", "capability.schema.json", VersionOrderFile, "capabilities/os-demo.json", "capabilities/opnsense.json"} {
 		if _, err := os.Stat(filepath.Join(out, f)); err != nil {
 			t.Error(err)
 		}

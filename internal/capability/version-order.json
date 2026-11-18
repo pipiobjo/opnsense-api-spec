@@ -1,0 +1,28 @@
+{
+ "description": "Test table for the version order of the capability data (docs/capabilities.md, Compatibility rules). Every reader that picks the newest or the nearest older version must agree with it: each entry of ordered compares lower than every later one, each pair in equal compares equal. The generator (pkgrepo.CompareVersions) and the Go client (capability.CompareVersions) test against this file.",
+ "ordered": [
+  "1.0",
+  "1.0_6",
+  "1.0_10",
+  "1.1",
+  "2.1",
+  "2.1a",
+  "2.1b",
+  "2.2",
+  "25.7",
+  "25.7_1",
+  "25.7.1",
+  "25.7.9",
+  "25.7.10",
+  "25.7.11_2",
+  "25.7.11_9",
+  "25.7.11_10",
+  "26.1",
+  "26.1.b",
+  "26.1.1"
+ ],
+ "equal": [
+  ["26.7", "26.7.0"],
+  ["26.7_0", "26.7"]
+ ]
+}

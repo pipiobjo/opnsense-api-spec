@@ -793,6 +793,9 @@ func contains(list []string, v string) bool {
 	return false
 }
 
+// VersionOrderFile is the published test table of the version order.
+const VersionOrderFile = "version-order.json"
+
 // Write stores catalog.json and capabilities/<package>.json below dir,
 // after validating every document against the JSON Schema.
 func Write(dir string, cat *Catalog, docs map[string]*Doc) error {
@@ -824,7 +827,7 @@ func Write(dir string, cat *Catalog, docs map[string]*Doc) error {
 // encodeAll returns the bytes of every file Write produces, with
 // catalog.json encoded without DataID.
 func encodeAll(cat *Catalog, docs map[string]*Doc) (map[string][]byte, error) {
-	files := map[string][]byte{"capability.schema.json": schemaJSON}
+	files := map[string][]byte{"capability.schema.json": schemaJSON, VersionOrderFile: versionOrderJSON}
 	c := *cat
 	c.DataID = ""
 	var err error

@@ -16,6 +16,12 @@ import (
 //go:embed capability.schema.json
 var schemaJSON []byte
 
+// versionOrderJSON is the test table of the version order, published with
+// the data so every implementation tests against the same cases.
+//
+//go:embed version-order.json
+var versionOrderJSON []byte
+
 // Schema returns the compiled JSON Schema of the format.
 func Schema() (*jsonschema.Schema, error) {
 	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(schemaJSON))

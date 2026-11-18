@@ -24,6 +24,7 @@ without any code from this repository.
 | `catalog.json` | core versions with their framework, releases with their catalog states (compositions) and test results, list of packages |
 | `capabilities/<package>.json` | one document per package (`opnsense` is the core) |
 | `capability.schema.json` | JSON Schema (draft 2020-12) for both kinds of file |
+| `version-order.json` | test table of the version order (see Compatibility rules): `ordered` ascending, `equal` pairs; every implementation of the order must pass it. Added 2026-11-18; format 1 readers ignore it |
 
 Size over 34 releases, core and 75 packages: 3.8 MB as JSON, 0.13 MB
 compressed with zstd. The core document is the largest (1.8 MB).
@@ -308,7 +309,8 @@ rather than guess:
   `1.2`). Any reader that picks "the newest" or "the nearest older" version
   must use this order; plain string order is wrong. The generator
   (`pkgrepo.CompareVersions`) and the Go client
-  (`capability.CompareVersions`) implement it with the same test table.
+  (`capability.CompareVersions`) implement it and both test against
+  `version-order.json`, which is published with the data.
 - Resource identifiers and field paths are OPNsense's own names. When
   OPNsense renames something, the old name stays with its fragments and the
   new one appears with the new fragments.

@@ -387,8 +387,9 @@ func ReadArchive(r io.Reader, keep func(name string) bool) (map[string][]byte, e
 // number, "2.1" < "2.1a" < "2.2"), then the hotfix revision numerically
 // ("_2" < "_10"). 26.7 < 26.7_1 < 26.7.1; missing parts count as 0.
 //
-// The same algorithm, with the same test table, is
-// capability.CompareVersions in opnsense-api-go; change both together.
+// The same algorithm is capability.CompareVersions in opnsense-api-go;
+// both test against internal/capability/version-order.json, which is
+// published with the capability data. Change the table first.
 func CompareVersions(a, b string) int {
 	ra, reva, _ := strings.Cut(a, "_")
 	rb, revb, _ := strings.Cut(b, "_")

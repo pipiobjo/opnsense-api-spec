@@ -12,7 +12,9 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/pem"
+	"os"
 	"strings"
 	"testing"
 
@@ -21,12 +23,23 @@ import (
 	"golang.org/x/crypto/blake2b"
 )
 
+// Claim: CompareVersions follows the version order of the capability
+// data. The table is the file published with the data
+// (internal/capability/version-order.json), which the Go client tests
+// against as well, so both implementations are checked on the same cases.
 func TestCompareVersions(t *testing.T) {
-	// the same table as in the other repository (opnsense-api-go
-	// opnsense/capability, opnsense-api-spec internal/pkgrepo): both
-	// implementations must agree
-	ordered := []string{"1.0", "1.0_6", "1.0_10", "1.1", "2.1", "2.1a", "2.2", "25.7", "25.7_1", "25.7.1", "25.7.9",
-		"25.7.10", "25.7.11_2", "25.7.11_9", "25.7.11_10", "26.1"}
+	b, err := os.ReadFile("../capability/version-order.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var table struct {
+		Ordered []string    `json:"ordered"`
+		Equal   [][2]string `json:"equal"`
+	}
+	if err := json.Unmarshal(b, &table); err != nil || len(table.Ordered) < 2 || len(table.Equal) == 0 {
+		t.Fatalf("version-order.json: %v %+v", err, table)
+	}
+	ordered := table.Ordered
 	for i := 0; i < len(ordered); i++ {
 		for j := 0; j < len(ordered); j++ {
 			got := CompareVersions(ordered[i], ordered[j])
@@ -41,8 +54,8 @@ func TestCompareVersions(t *testing.T) {
 			}
 		}
 	}
-	for _, eq := range [][2]string{{"26.7", "26.7.0"}, {"26.7_0", "26.7"}} {
-		if CompareVersions(eq[0], eq[1]) != 0 {
+	for _, eq := range table.Equal {
+		if CompareVersions(eq[0], eq[1]) != 0 || CompareVersions(eq[1], eq[0]) != 0 {
 			t.Errorf("CompareVersions(%s, %s) must be 0", eq[0], eq[1])
 		}
 	}
