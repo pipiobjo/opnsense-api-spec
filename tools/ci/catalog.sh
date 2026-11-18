@@ -41,9 +41,14 @@ build() {
   fi
   rm -rf "$work.2" "$work.bin"
   cp "$work/catalog.json" "$OUT/"
-  # reproducible archive: fixed order, owners and times
+  # reproducible archive: fixed order, owners and times. Everything the
+  # generator wrote except catalog.json (a separate asset): the data_id
+  # covers all of it, so a file left out here would be in the identity but
+  # not in the release (version-order.json was, in catalog-v1-386ea34c45d263ba)
+  local entries
+  mapfile -t entries < <(cd "$work" && LC_ALL=C ls -A | grep -vx catalog.json)
   tar -C "$work" --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner \
-    -cf - capabilities capability.schema.json | zstd -q -19 -o "$OUT/capabilities.tar.zst"
+    -cf - "${entries[@]}" | zstd -q -19 -o "$OUT/capabilities.tar.zst"
   (cd "$OUT" && sha256sum catalog.json capabilities.tar.zst > SHA256SUMS)
   rm -rf "$work"
   cat "$OUT/SHA256SUMS"
@@ -68,7 +73,8 @@ Not an official OPNsense project.
 | Data state | \`$(jq -r .data_id "$OUT/catalog.json")\`; fixed copy: release \`$(state_tag)\` |
 
 Assets: \`catalog.json\` (releases, core versions, packages, \`data_id\`),
-\`capabilities.tar.zst\` (one document per package and the JSON Schema),
+\`capabilities.tar.zst\` (one document per package, the JSON Schema and the
+version-order test table),
 \`SHA256SUMS\`. $1
 
 Pre-release: the data format may still change before the provider that
