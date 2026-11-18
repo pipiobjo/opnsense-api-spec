@@ -64,6 +64,44 @@ func TestCompareNode(t *testing.T) {
 	}
 }
 
+// Claim: the shape check reports a value of the wrong JSON type, once, at
+// its path: a string field that comes as a number, a UUID map (entry list)
+// that comes as a string, a container that comes as a string. The valid
+// answer, including the empty forms PHP sends for an empty list, has no
+// finding, so each case differs from it in exactly one value.
+func TestCompareNodeTypeErrors(t *testing.T) {
+	n := &model.Node{Kind: model.KindContainer, Children: []*model.Node{
+		{Name: "general", Kind: model.KindContainer, Children: []*model.Node{
+			{Name: "name", Kind: model.KindField, Shape: model.ShapeString},
+		}},
+		{Name: "hosts", Kind: model.KindArray},
+		{Name: "empty", Kind: model.KindArray},
+	}}
+	valid := `{"general": {"name": "a"}, "hosts": {"0b5e...": {}}, "empty": []}`
+	for _, c := range []struct {
+		name, doc, want string
+	}{
+		{"valid", valid, ""},
+		{"string field with a number", `{"general": {"name": 1}, "hosts": {}, "empty": []}`, "general.name: expected string, got float64"},
+		{"UUID map with a string", `{"general": {"name": "a"}, "hosts": "x", "empty": []}`, "hosts: expected UUID map, got string"},
+		{"container with a string", `{"general": "x", "hosts": {}, "empty": []}`, "general: expected object, got string"},
+	} {
+		var v any
+		if err := json.Unmarshal([]byte(c.doc), &v); err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		compareNode(n, v, "", &out)
+		var want []string
+		if c.want != "" {
+			want = []string{c.want}
+		}
+		if !reflect.DeepEqual(out, want) {
+			t.Errorf("%s: findings %q, want %q", c.name, out, want)
+		}
+	}
+}
+
 func TestApplyAccepted(t *testing.T) {
 	rep := &Report{Release: "26.1.6", Results: []*Result{
 		{Path: "/api/x/get", Check: "reachable", Status: "error"},
