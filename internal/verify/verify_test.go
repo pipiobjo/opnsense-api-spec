@@ -56,8 +56,9 @@ func TestCompareNode(t *testing.T) {
 	}}
 	var v any
 	_ = json.Unmarshal([]byte(`{"enabled": "1", "mode": [{"value": "a", "selected": 1}], "extra": "x", "%enabled": "Yes"}`), &v)
-	var out []string
-	compareNode(n, v, "", &out)
+	var diffs []shapeDiff
+	compareNode(n, v, "", &diffs)
+	out := messages(diffs)
 	want := []string{"missing: missing in response", "extra: not in model"}
 	if !reflect.DeepEqual(out, want) {
 		t.Errorf("findings %v, want %v", out, want)
@@ -90,8 +91,9 @@ func TestCompareNodeTypeErrors(t *testing.T) {
 		if err := json.Unmarshal([]byte(c.doc), &v); err != nil {
 			t.Fatal(err)
 		}
-		var out []string
-		compareNode(n, v, "", &out)
+		var diffs []shapeDiff
+		compareNode(n, v, "", &diffs)
+		out := messages(diffs)
 		var want []string
 		if c.want != "" {
 			want = []string{c.want}
@@ -160,7 +162,7 @@ func TestAcceptedEntriesHaveMatch(t *testing.T) {
 }
 
 func TestCompareNodeEmptyModel(t *testing.T) {
-	var out []string
+	var out []shapeDiff
 	compareNode(&model.Node{Kind: model.KindContainer}, []any{}, "", &out)
 	if len(out) != 0 {
 		t.Errorf("empty model as [] must be fine: %v", out)

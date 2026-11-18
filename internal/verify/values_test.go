@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/pipiobjo/opnsense-api-spec/internal/controller"
+	"github.com/pipiobjo/opnsense-api-spec/internal/gap"
 	"github.com/pipiobjo/opnsense-api-spec/internal/ir"
 	"github.com/pipiobjo/opnsense-api-spec/internal/model"
 )
@@ -458,6 +459,56 @@ func TestCheckModelGetShape(t *testing.T) {
 			r := checkModelGet(cl, get, m)
 			if r.Status != c.status || (c.finding != "" && !strings.Contains(strings.Join(r.Findings, " "), c.finding)) {
 				t.Errorf("status %s, findings %v", r.Status, r.Findings)
+			}
+		})
+	}
+}
+
+// Claim (TST-7): on an endpoint whose only mark is a Subset gap (the
+// action calls the generic get and leaves sections out, as kea/dhcpv4/get
+// does with subnets and reservations), a shape difference is known-gap only
+// when the gap explains it: a whole entry list or container missing, a key
+// added. A missing field (a rename), a type error or a missing root key is
+// a mismatch. Marks that explain any difference (custom-logic) keep the
+// broad tolerance, also when combined with a Subset gap.
+func TestKnownGapSubsetOnlyExplainsSections(t *testing.T) {
+	m := &model.Model{Class: `OPNsense\Kea\KeaDhcpv4`, Root: &model.Node{Kind: model.KindContainer, Children: []*model.Node{
+		{Name: "general", Kind: model.KindContainer, Children: []*model.Node{
+			{Name: "enabled", Kind: model.KindField, Shape: model.ShapeString},
+		}},
+		{Name: "subnets", Kind: model.KindContainer, Children: []*model.Node{{Name: "subnet4", Kind: model.KindArray}}},
+		{Name: "reservations", Kind: model.KindArray},
+	}}}
+	subset := []gap.Gap{gap.New(gap.OverrideCallsParent, "overrides getAction and calls the parent")}
+	broad := []gap.Gap{gap.New(gap.CustomLogic, "custom logic")}
+	for _, c := range []struct {
+		name   string
+		answer any
+		gaps   []gap.Gap
+		status Status
+	}{
+		{"sections left out, key added", map[string]any{"dhcpv4": map[string]any{"general": map[string]any{"enabled": "1", "this_hostname": "fw"}}}, subset, StatusKnownGap},
+		{"field missing", map[string]any{"dhcpv4": map[string]any{"general": map[string]any{"enable": "1"}}}, subset, StatusMismatch},
+		{"type error", map[string]any{"dhcpv4": map[string]any{"general": map[string]any{"enabled": 1}}}, subset, StatusMismatch},
+		{"section with another type", map[string]any{"dhcpv4": map[string]any{"general": map[string]any{"enabled": "1"}, "reservations": "x"}}, subset, StatusMismatch},
+		{"root key missing", map[string]any{"result": "x"}, subset, StatusMismatch},
+		{"field missing, broad mark", map[string]any{"dhcpv4": map[string]any{"general": map[string]any{}}}, broad, StatusKnownGap},
+		{"field missing, both marks", map[string]any{"dhcpv4": map[string]any{"general": map[string]any{}}}, append(append([]gap.Gap{}, subset...), broad...), StatusKnownGap},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewEncoder(w).Encode(c.answer)
+			}))
+			defer srv.Close()
+			cl, err := NewClient(srv.URL, "k", "s", []string{"127.0.0.1"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			cl.HTTP = srv.Client()
+			e := &ir.Endpoint{Path: "/api/kea/dhcpv4/get", Kind: ir.KindModelGet, Wrapper: "dhcpv4", Gaps: c.gaps}
+			r := knownGap(checkModelGet(cl, e, m), e)
+			if r.Status != c.status {
+				t.Errorf("status %s, want %s; findings %v", r.Status, c.status, r.Findings)
 			}
 		})
 	}

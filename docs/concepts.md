@@ -223,7 +223,17 @@ typed, whatever their kind.
 Codes counted as "the instance may answer with another shape"
 (`override-*`, `service-override`, `get-model-nodes-override`,
 `custom-logic`, `post-processed`) turn contract-test mismatches into
-`known-gap`. The document also carries `x-opnsense-coverage` (gaps counted
+`known-gap`, with one narrowing derived from the code itself:
+`override-calls-parent` and `get-model-nodes-override` mean the action
+returns the generic result with whole sections left out or keys added. On
+an endpoint that has only such marks, the shape check is `known-gap` only
+when every difference is a missing entry list or container or an added
+key; a missing field (for example a renamed one), a value of another type,
+a missing root key or an answer that is not JSON stays a `mismatch`. There
+is no baseline file to maintain: the rule follows from the gap code and the
+model. The other codes describe code the generator does not read, so any
+difference there is expected; such resources are marked `known-gap`, not
+`ok`, in the capability data. The document also carries `x-opnsense-coverage` (gaps counted
 by code), and each release has a `coverage.md`.
 
 Further extensions: `x-opnsense-relation` (on relation fields: the model and entry list whose UUIDs are valid values), `x-opnsense-package` (which package provides an

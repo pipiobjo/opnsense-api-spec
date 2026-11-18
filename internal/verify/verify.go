@@ -34,6 +34,9 @@ type Result struct {
 	// Generated (write-cycle only): fields that needed a generated value
 	// because the server default was rejected.
 	Generated []string `json:"generated,omitempty"`
+	// diffs (shape checks only): the structured differences behind
+	// Findings, so knownGap decides by kind, never by message text
+	diffs []shapeDiff
 	// Steps (write-cycle only): the steps that completed: add, read-back,
 	// set, read-back-set, del. A missing "set" means the update was not
 	// tested (no set endpoint, or the changed value was rejected).

@@ -85,6 +85,15 @@ func MayDiffer(c Code) bool {
 	return false
 }
 
+// Subset reports whether a MayDiffer gap still promises the model's shape
+// with whole sections (entry lists, containers) left out and keys added:
+// the action calls the generic implementation and removes or adds parts
+// of its result. A missing field or a value of another type is not
+// explained by such a gap.
+func Subset(c Code) bool {
+	return c == GetModelNodesOverride || c == OverrideCallsParent
+}
+
 // First returns the first gap of gs whose code satisfies pred.
 func First(gs []Gap, pred func(Code) bool) (Gap, bool) {
 	for _, g := range gs {

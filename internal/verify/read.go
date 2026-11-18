@@ -31,8 +31,33 @@ func checkReachable(c *Client, e *ir.Endpoint, method string) *Result {
 	return r
 }
 
+// shapeDiff is one difference between a read answer and the model.
+type shapeDiff struct {
+	kind diffKind
+	// section: the missing node is an entry list or a container, not a
+	// field (only for diffMissing)
+	section bool
+	msg     string
+}
+
+type diffKind int
+
+const (
+	diffMissing diffKind = iota // a model node is not in the answer
+	diffExtra                   // the answer has a key the model does not
+	diffType                    // a value has another JSON type
+)
+
+func messages(ds []shapeDiff) []string {
+	var out []string
+	for _, d := range ds {
+		out = append(out, d.msg)
+	}
+	return out
+}
+
 // compare the response object with the model node (Read shape)
-func compareNode(n *model.Node, v any, path string, out *[]string) {
+func compareNode(n *model.Node, v any, path string, out *[]shapeDiff) {
 	obj, ok := v.(map[string]any)
 	if arr, isArr := v.([]any); isArr && len(arr) == 0 {
 		obj, ok = map[string]any{}, true // PHP encodes an empty object as []
@@ -40,8 +65,11 @@ func compareNode(n *model.Node, v any, path string, out *[]string) {
 			return
 		}
 	}
+	typeErr := func(p, want string, val any) {
+		*out = append(*out, shapeDiff{kind: diffType, msg: fmt.Sprintf("%s: expected %s, got %T", p, want, val)})
+	}
 	if !ok {
-		*out = append(*out, fmt.Sprintf("%s: expected object, got %T", path, v))
+		typeErr(path, "object", v)
 		return
 	}
 	known := map[string]bool{}
@@ -50,7 +78,7 @@ func compareNode(n *model.Node, v any, path string, out *[]string) {
 		p := strings.TrimPrefix(path+"."+ch.Name, ".")
 		val, present := obj[ch.Name]
 		if !present {
-			*out = append(*out, p+": missing in response")
+			*out = append(*out, shapeDiff{kind: diffMissing, section: ch.Kind != model.KindField, msg: p + ": missing in response"})
 			continue
 		}
 		switch ch.Kind {
@@ -59,7 +87,7 @@ func compareNode(n *model.Node, v any, path string, out *[]string) {
 		case model.KindArray:
 			if _, ok := val.(map[string]any); !ok {
 				if arr, ok := val.([]any); !ok || len(arr) != 0 {
-					*out = append(*out, fmt.Sprintf("%s: expected UUID map, got %T", p, val))
+					typeErr(p, "UUID map", val)
 				}
 			}
 		case model.KindField:
@@ -69,21 +97,21 @@ func compareNode(n *model.Node, v any, path string, out *[]string) {
 				_, isMap := val.(map[string]any)
 				_, isList := val.([]any)
 				if !isMap && !isList {
-					*out = append(*out, fmt.Sprintf("%s: expected select map, got %T", p, val))
+					typeErr(p, "select map", val)
 				}
 			case model.ShapeString:
 				if fieldShapeUncertain(ch) {
 					break
 				}
 				if _, ok := val.(string); !ok {
-					*out = append(*out, fmt.Sprintf("%s: expected string, got %T", p, val))
+					typeErr(p, "string", val)
 				}
 			}
 		}
 	}
 	for k := range obj {
 		if !known[k] && !strings.HasPrefix(k, "%") {
-			*out = append(*out, strings.TrimPrefix(path+"."+k, ".")+": not in model")
+			*out = append(*out, shapeDiff{kind: diffExtra, msg: strings.TrimPrefix(path+"."+k, ".") + ": not in model"})
 		}
 	}
 }
@@ -121,22 +149,55 @@ func checkModelGet(c *Client, e *ir.Endpoint, m *model.Model) *Result {
 		r.Status, r.Findings = StatusSkipped, []string{"model unknown"}
 		return r
 	}
-	compareNode(m.Root, inner, "", &r.Findings)
+	compareNode(m.Root, inner, "", &r.diffs)
+	r.Findings = messages(r.diffs)
 	r.Status = status(r.Findings)
 	return r
 }
 
 // knownGap turns a mismatch into "known-gap" when the endpoint was already
 // marked as overriding the generic action (the test confirms the gap).
+// When every such mark is a Subset gap, a shape check is known-gap only if
+// each difference is one the gap explains (a whole section left out, a key
+// added); a missing field, a type error, a missing root key or an answer
+// that is not JSON stays a mismatch, so a new deviation on such an endpoint
+// is not swallowed. Other marks (custom logic, post-processing, overrides
+// that are not derived) explain any difference: the source says the shape
+// is built by code the generator does not read.
 func knownGap(r *Result, e *ir.Endpoint) *Result {
 	if r.Status != StatusMismatch {
 		return r
 	}
-	if g, ok := gap.First(e.Gaps, gap.MayDiffer); ok {
-		r.Status = StatusKnownGap
-		r.Findings = append(r.Findings, "expected ("+string(g.Code)+"): "+g.Detail)
+	g, ok := gap.First(e.Gaps, gap.MayDiffer)
+	if !ok {
+		return r
 	}
+	_, broad := gap.First(e.Gaps, func(c gap.Code) bool { return gap.MayDiffer(c) && !gap.Subset(c) })
+	if !broad && r.Check == CheckShape {
+		if bad := unexplainedBySubset(r); len(bad) > 0 {
+			r.Findings = append(r.Findings, fmt.Sprintf("not explained by %s (only whole sections left out or keys added): %s",
+				g.Code, strings.Join(bad, "; ")))
+			return r
+		}
+	}
+	r.Status = StatusKnownGap
+	r.Findings = append(r.Findings, "expected ("+string(g.Code)+"): "+g.Detail)
 	return r
+}
+
+// unexplainedBySubset returns the findings of a shape mismatch that a
+// Subset gap does not explain.
+func unexplainedBySubset(r *Result) []string {
+	if len(r.diffs) == 0 {
+		return r.Findings // root key missing, not JSON
+	}
+	var bad []string
+	for _, d := range r.diffs {
+		if d.kind == diffType || (d.kind == diffMissing && !d.section) {
+			bad = append(bad, d.msg)
+		}
+	}
+	return bad
 }
 
 func checkSearch(c *Client, e *ir.Endpoint) *Result {
@@ -177,7 +238,8 @@ func checkItemGet(c *Client, e *ir.Endpoint, m *model.Model) *Result {
 	}
 	if m != nil {
 		if n := m.Find(e.ModelPath); n != nil {
-			compareNode(&model.Node{Kind: model.KindContainer, Children: n.Children}, inner, e.ModelPath, &r.Findings)
+			compareNode(&model.Node{Kind: model.KindContainer, Children: n.Children}, inner, e.ModelPath, &r.diffs)
+			r.Findings = messages(r.diffs)
 		}
 	}
 	r.Status = status(r.Findings)
