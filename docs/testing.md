@@ -104,7 +104,10 @@ deliberate breaks above are what make the tests count.
 The newest result per release is published with each release
 (`opnsense-<release>.verified.json`) and summarised in the capability
 data. Most recent local run on fresh VMs with every plugin, generator
-0.9.3: 0 failures on 25.7.11_9, 26.1.11_10 and 26.7.9_3.
+0.9.4 (2026-11-18): 0 failures on 25.7.11_9, 26.1.11_10 and 26.7.9_3;
+known-gap results 30/29/30 with 0.9.3, 21/20/21 with 0.9.4 (the settings
+reads whose root key is now derived from the controller's own code pass
+as `ok`).
 
 ## What is not tested
 
