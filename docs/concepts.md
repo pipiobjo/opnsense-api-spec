@@ -330,9 +330,13 @@ explain its result:
 
 Accepted findings (known upstream issues or intended behaviour, e.g. the
 captive portal client API) are
-listed in `verify/accepted.json` with reason and evidence; matching
-results become `accepted` and do not count as failures. Adding an entry is
-a reviewed decision.
+listed in `verify/accepted.json` with reason, evidence and `match`, the
+text of the failure that was reviewed (for example `HTTP 500`); a result on
+the same path and check becomes `accepted` only when one of its findings
+contains that text, so a different failure there still fails. Entries that
+apply to the tested release but covered nothing are listed in the report
+(`unused_accepted`) and in the job summary as candidates for removal.
+Adding or removing an entry is a reviewed decision.
 
 ## 9. Consumers: clients and providers (data implemented; Go client in opnsense-api-go, provider planned)
 

@@ -115,6 +115,48 @@ func TestApplyAccepted(t *testing.T) {
 	if n != 1 || rep.Results[0].Status != "accepted" || rep.Results[1].Status != "mismatch" || rep.Results[2].Status != "error" {
 		t.Errorf("accepted: n=%d %+v %+v %+v", n, rep.Results[0], rep.Results[1], rep.Results[2])
 	}
+	if len(rep.UnusedAccepted) != 0 {
+		t.Errorf("an entry for another series is not unused on this one: %v", rep.UnusedAccepted)
+	}
+}
+
+// Claim (TST-6): an entry with "match" accepts only a failure whose
+// findings contain that text; another failure on the same path and check
+// stays a failure. Entries that apply to the release but covered nothing
+// are reported as unused.
+func TestApplyAcceptedMatchAndUnused(t *testing.T) {
+	rep := &Report{Release: "25.7.11", Results: []*Result{
+		{Path: "/api/u/get", Check: "shape", Status: "error", Findings: []string{"HTTP 500: {}"}},
+		{Path: "/api/v/get", Check: "shape", Status: "mismatch", Findings: []string{"general.x: missing in response"}},
+		{Path: "/api/w/get", Check: "shape", Status: "ok"},
+	}}
+	n := ApplyAccepted(rep, []Accepted{
+		{Path: "/api/u/get", Check: "shape", Releases: "25.7.*", Match: "HTTP 500", Reason: "r", Evidence: "e"},
+		{Path: "/api/v/get", Check: "shape", Releases: "25.7.*", Match: "HTTP 500", Reason: "r", Evidence: "e"},
+		{Path: "/api/w/get", Check: "shape", Releases: "*", Reason: "r", Evidence: "e"},
+		{Path: "/api/u/get", Check: "shape", Releases: "26.1.*", Reason: "r", Evidence: "e"},
+	})
+	if n != 1 || rep.Results[0].Status != StatusAccepted || rep.Results[1].Status != StatusMismatch {
+		t.Errorf("match: n=%d %s %s", n, rep.Results[0].Status, rep.Results[1].Status)
+	}
+	want := []string{`/api/v/get shape 25.7.* match "HTTP 500"`, "/api/w/get shape *"}
+	if !reflect.DeepEqual(rep.UnusedAccepted, want) {
+		t.Errorf("unused %q, want %q", rep.UnusedAccepted, want)
+	}
+}
+
+// The committed list stays narrow: every entry names the failure it was
+// reviewed for.
+func TestAcceptedEntriesHaveMatch(t *testing.T) {
+	list, err := LoadAccepted("../../verify/accepted.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range list {
+		if a.Match == "" {
+			t.Errorf("%s: no match", a.ID())
+		}
+	}
 }
 
 func TestCompareNodeEmptyModel(t *testing.T) {

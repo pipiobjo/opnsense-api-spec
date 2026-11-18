@@ -307,6 +307,9 @@ func cmdVerify(o opts, accepted *string) error {
 		if n := verify.ApplyAccepted(rep, acc); n > 0 {
 			fmt.Fprintf(os.Stderr, "%d finding(s) accepted per %s\n", n, *accepted)
 		}
+		for _, id := range rep.UnusedAccepted {
+			fmt.Fprintf(os.Stderr, "accepted entry unused on %s (candidate for removal): %s\n", rep.Release, id)
+		}
 	} else if !os.IsNotExist(err) {
 		return err
 	}

@@ -31,7 +31,8 @@ derivation rule, a gap code or a check, and how to run your own copy.
   the output also need a new generator version (`internal/ir/ir.go`).
 - **Accepted findings** (`verify/accepted.json`) declare an upstream
   behaviour as expected. Each entry needs a reason and evidence from more
-  than one run, and the narrowest release glob that covers it.
+  than one run, the narrowest release glob that covers it, and a `match`
+  text that only the reviewed failure contains.
 - **Contract tests only against the throwaway VM** on `127.0.0.1`. Never
   point tests at a real firewall.
 - **Licence.** Contributions are under the BSD 2-Clause License

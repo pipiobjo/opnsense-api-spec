@@ -55,6 +55,9 @@ type Report struct {
 	// were not tested; the index reports them as untested.
 	Packages []string  `json:"packages"`
 	Results  []*Result `json:"results"`
+	// UnusedAccepted: entries of verify/accepted.json that apply to this
+	// release but covered no failed check in this run (see ApplyAccepted).
+	UnusedAccepted []string `json:"unused_accepted,omitempty"`
 }
 
 // Run executes all checks for endpoints of the given packages (installed

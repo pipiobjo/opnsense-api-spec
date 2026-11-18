@@ -115,7 +115,9 @@ counts as a pass. Tolerances come only from the data (gaps such as
 If OPNsense behaves differently from what the derivation says and the
 behaviour is intended upstream, the first choice is a rule that derives
 it. Only when that is not possible, an entry in `verify/accepted.json`
-with reason, evidence from two runs and the narrowest release glob.
+with reason, evidence from two runs, the narrowest release glob and a
+`match` text from the failure (required, `TestAcceptedEntriesHaveMatch`).
+An entry that the run summary lists as unused is a candidate for removal.
 
 ## Version order
 

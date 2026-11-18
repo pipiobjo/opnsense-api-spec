@@ -239,6 +239,8 @@ jobs:
             echo '```'
             jq -r '[.results[] | "\(.check)/\(.status)"] | group_by(.) | map("\(.[0]) \(length)") | .[]' "$f" 2>/dev/null || echo "no results"
             echo '```'
+            # accepted entries that covered nothing (set by verify.ApplyAccepted)
+            jq -r '.unused_accepted[]? | "- accepted entry unused (candidate for removal): `\(.)`"' "$f" 2>/dev/null || true
             # what fails is decided by the generator (verify.Status), not here
             [ -f "$f" ] && go run ./cmd/opnsense-api-spec failures "$f" | tee .cache/vm/failures.md
           } >> "$GITHUB_STEP_SUMMARY"
