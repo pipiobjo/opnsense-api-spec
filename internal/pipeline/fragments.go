@@ -126,7 +126,7 @@ func (p *Pipeline) currentCatalog(r pkgrepo.Release) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
-	if _, err := pkgrepo.VerifyCatalog(cat, p.Keys, true); err != nil {
+	if _, err := pkgrepo.VerifyCatalog(cat, p.Keys); err != nil {
 		return "", "", err
 	}
 	core, _ := cat.Lookup("opnsense")

@@ -51,15 +51,15 @@ type Pipeline struct {
 const fingerprintDir = "usr/local/etc/pkg/fingerprints/OPNsense/"
 
 // learnKeys reads the key lists of a verified core package and extends
-// p.Keys (signed key chain, ADR 0005).
-func (p *Pipeline) learnKeys(coreData []byte, source string) error {
+// p.Keys (signed key chain, ADR 0005); series is the core's release series.
+func (p *Pipeline) learnKeys(coreData []byte, source, series string) error {
 	files, err := pkgrepo.ReadArchive(bytes.NewReader(coreData), func(n string) bool {
 		return strings.HasPrefix(n, fingerprintDir)
 	})
 	if err != nil {
 		return err
 	}
-	changed := pkgrepo.LearnKeys(p.Keys, files, source)
+	changed := pkgrepo.LearnKeys(p.Keys, files, source, series)
 	for _, fp := range changed {
 		p.logf("key %s (%s, %s) learned from %s\n", p.Keys[fp].Name, p.Keys[fp].Status, fp[:16], source)
 	}
@@ -91,7 +91,7 @@ func (p *Pipeline) learnChain(all []pkgrepo.Release, upTo string) error {
 		if err != nil {
 			return fmt.Errorf("key chain: %s: %w", r.Version, err)
 		}
-		if _, err := pkgrepo.VerifyCatalog(cat, p.Keys, true); err != nil {
+		if _, err := pkgrepo.VerifyCatalog(cat, p.Keys); err != nil {
 			return fmt.Errorf("key chain broken at %s: %w", r.Version, err)
 		}
 		core, ok := cat.Lookup("opnsense")
@@ -103,7 +103,7 @@ func (p *Pipeline) learnChain(all []pkgrepo.Release, upTo string) error {
 			return fmt.Errorf("key chain: %s: %w", r.Version, err)
 		}
 		sum := sha256.Sum256(cat.YAML)
-		if err := p.learnKeys(data, fmt.Sprintf("core %s (catalog %x)", core.Version, sum[:6])); err != nil {
+		if err := p.learnKeys(data, fmt.Sprintf("core %s (catalog %x)", core.Version, sum[:6]), r.Series); err != nil {
 			return err
 		}
 	}
@@ -150,13 +150,13 @@ func (p *Pipeline) Fetch(version string, plugins bool, dir string) (*Fetched, er
 	if err != nil {
 		return nil, err
 	}
-	k, err := pkgrepo.VerifyCatalog(cat, p.Keys, true)
+	k, err := pkgrepo.VerifyCatalog(cat, p.Keys)
 	if err != nil {
 		return nil, err
 	}
 	key := k.Name
 	if k.Status != "trusted" {
-		key += " (rotated key of an older series)"
+		key += " (key of an older series, revoked in " + k.RevokedIn + ")"
 	}
 	p.logf("catalog %s: %d packages, signature ok (%s)\n", r.Version, len(cat.Packages), key)
 	core, ok := cat.Lookup("opnsense")
@@ -220,7 +220,7 @@ func (p *Pipeline) Fetch(version string, plugins bool, dir string) (*Fetched, er
 			}
 		}
 		if pk.Name == "opnsense" {
-			if err := p.learnKeys(data, fmt.Sprintf("core %s (catalog %x)", pk.Version, catSum[:6])); err != nil {
+			if err := p.learnKeys(data, fmt.Sprintf("core %s (catalog %x)", pk.Version, catSum[:6]), r.Series); err != nil {
 				return nil, err
 			}
 		}

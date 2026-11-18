@@ -66,7 +66,9 @@ have no git tag.
 3. Key list: taken from the verified core package
    (`/usr/local/etc/pkg/fingerprints/OPNsense/{trusted,revoked}`).
    OPNsense rotates the key per series; older series are signed with their
-   own (now "revoked") key and are accepted and recorded as such.
+   own (now "revoked") key. A revoked key is accepted only for series older
+   than the one whose core revoked it (`revoked_in` in the key list), so a
+   retired key cannot sign a new release.
 
 **Key rotation (implemented).** OPNsense builds a signed chain: the last
 patch release of a series already trusts the next series' key (e.g. 25.7.11
@@ -75,7 +77,8 @@ catalog, every run walks the series in ascending order and reads the key
 lists of the newest release of each series; a key is added only if the
 core package listing it comes from a catalog signed by an already known
 key. Known keys may move from trusted to revoked, never back (older cores
-still list keys as trusted that newer ones revoked). The list lives in
+still list keys as trusted that newer ones revoked); a revocation records
+the series of the core that lists it (the earliest wins). The list lives in
 `internal/pkgrepo/keys.json` (built in, extended with the source of each
 key). If the chain breaks (e.g. an emergency rotation), the run stops with
 "unknown key".

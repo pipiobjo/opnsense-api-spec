@@ -28,7 +28,8 @@ MINT/<release>/packagesite  ──►  core (+ os-*) packages  ──►  IR (JS
 2. Verifies the catalog like FreeBSD `pkg` does: the signing key must be a
    known OPNsense key (`internal/pkgrepo/verify.go`, list taken from core's
    `fingerprints/OPNsense/{trusted,revoked}`; OPNsense rotates the key per
-   series, older series are signed with their rotated key and marked so),
+   series, older series are signed with their rotated key, which is accepted
+   only for series before the one that revoked it),
    the signature is RSA PKCS#1 v1.5 over the hex SHA-256 of `packagesite.yaml`.
 3. Downloads the packages (zstd or xz) and checks each against its catalog
    checksum (BLAKE2b-512 in pkg base32, or SHA-256 in older catalogs).

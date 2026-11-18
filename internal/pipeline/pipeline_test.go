@@ -513,6 +513,34 @@ func TestKeyChainAcrossSeries(t *testing.T) {
 	}
 }
 
+// SEC-4: the newest 27.1 core revokes the 26.7 key (as OPNsense does one
+// series later). 26.7 releases signed with it stay valid; a new 27.1
+// release signed with it is refused, although the key is known.
+func TestRevokedKeyRefusedForNewSeries(t *testing.T) {
+	m, p, _ := setup(t)
+	key2 := newKey(t)
+	m.publish(t, "26.7", []pkgSpec{{"opnsense", "26.7", coreFiles(t, false), keyList(map[string]*rsa.PrivateKey{
+		"pkg.test.old": m.key, "pkg.test.next": key2})}})
+	revokes := keyList(map[string]*rsa.PrivateKey{"pkg.test.next": key2})
+	revokes["/usr/local/etc/pkg/fingerprints/OPNsense/revoked/pkg.test.old"] =
+		[]byte("function: \"sha256\"\nfingerprint: \"" + pkgrepo.Fingerprint(m.pub()) + "\"\n")
+	m.publishSigned(t, "27.1", "27.1", key2, []pkgSpec{{"opnsense", "27.1", coreFiles(t, false), revokes}})
+	p.SeriesFloor = "26.7"
+	if _, err := p.Matrix([]string{"all"}, false, false); err != nil {
+		t.Fatalf("26.7 and 27.1 must be accepted: %v", err)
+	}
+	if k := p.Keys[pkgrepo.Fingerprint(m.pub())]; k.Status != "revoked" || k.RevokedIn != "27.1" {
+		t.Fatalf("old key must be revoked in 27.1: %+v", k)
+	}
+	m.publishSigned(t, "27.1", "27.1.1", m.key, []pkgSpec{{"opnsense", "27.1.1", coreFiles(t, false), nil}})
+	if _, err := p.Matrix([]string{"27.1"}, false, false); err == nil || !strings.Contains(err.Error(), "revoked in series") {
+		t.Errorf("a new release signed with a revoked key must fail: %v", err)
+	}
+	if _, err := p.Fetch("26.7", false, ""); err != nil {
+		t.Errorf("26.7 is still signed with its own key: %v", err)
+	}
+}
+
 func TestVerifyPlan(t *testing.T) {
 	idx := &Index{Releases: []IndexRelease{
 		{Release: "26.1.10", Series: "26.1", NeedsVerification: true},

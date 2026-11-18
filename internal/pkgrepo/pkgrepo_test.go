@@ -103,24 +103,77 @@ func signCatalog(t *testing.T, yaml []byte) (*Catalog, string) {
 
 func TestVerifyCatalog(t *testing.T) {
 	cat, fp := signCatalog(t, []byte(`{"name":"opnsense"}`))
-	if _, err := VerifyCatalog(cat, map[string]Key{}, true); err == nil {
+	cat.Release.Series = "26.7"
+	if _, err := VerifyCatalog(cat, map[string]Key{}); err == nil {
 		t.Error("unknown key must fail")
 	}
 	trusted := map[string]Key{fp: {Name: "test-key", Status: "trusted"}}
-	k, err := VerifyCatalog(cat, trusted, false)
+	k, err := VerifyCatalog(cat, trusted)
 	if err != nil || k.Name != "test-key" {
 		t.Errorf("trusted: %v %+v", err, k)
 	}
-	rotated := map[string]Key{fp: {Name: "old-key", Status: "revoked"}}
-	if _, err := VerifyCatalog(cat, rotated, false); err == nil {
-		t.Error("rotated key must fail unless allowed")
-	}
-	if k, err := VerifyCatalog(cat, rotated, true); err != nil || k.Status != "revoked" {
-		t.Errorf("rotated allowed: %v %+v", err, k)
-	}
 	cat.YAML = []byte(`{"name":"evil"}`)
-	if _, err := VerifyCatalog(cat, trusted, false); err == nil {
+	if _, err := VerifyCatalog(cat, trusted); err == nil {
 		t.Error("modified catalog must fail")
+	}
+}
+
+// Claim (SEC-4, ADR 0005): a revoked key signs only catalogs of series
+// older than the one whose core revoked it. Real case: 20250710 signs
+// every 25.7 release and is revoked by core 26.1.11; a new 26.1, 26.7 or
+// 27.1 release signed with it is refused, as is any revoked key whose
+// revocation series is unknown or a catalog whose series is unknown.
+func TestVerifyCatalogRevokedKeyOnlyForOlderSeries(t *testing.T) {
+	cat, fp := signCatalog(t, []byte(`{"name":"opnsense"}`))
+	revoked := map[string]Key{fp: {Name: "pkg.opnsense.org.20250710", Status: "revoked", RevokedIn: "26.1"}}
+	for _, c := range []struct {
+		series string
+		ok     bool
+	}{{"24.7", true}, {"25.7", true}, {"26.1", false}, {"26.7", false}, {"27.1", false}, {"", false}} {
+		cat.Release.Series = c.series
+		_, err := VerifyCatalog(cat, revoked)
+		if (err == nil) != c.ok {
+			t.Errorf("series %q: err=%v, want accepted=%v", c.series, err, c.ok)
+		}
+	}
+	cat.Release.Series = "25.7"
+	if _, err := VerifyCatalog(cat, map[string]Key{fp: {Name: "k", Status: "revoked"}}); err == nil {
+		t.Error("a revoked key without revocation series must fail")
+	}
+}
+
+// Every release that is published today was signed by a key valid for its
+// series under keys.json (measured 2026-11-18 on the mirror: each series is
+// signed by its own key, 24.7 20240611, 25.1 20241217, 25.7 20250710,
+// 26.1 20260120, 26.7 20260608), and the next series is refused for each.
+func TestEmbeddedKeysCoverPublishedSeries(t *testing.T) {
+	signer := map[string]string{"24.7": "20240611", "25.1": "20241217", "25.7": "20250710",
+		"26.1": "20260120", "26.7": "20260608"}
+	next := map[string]string{"24.7": "25.1", "25.1": "25.7", "25.7": "26.1", "26.1": "26.7", "26.7": ""}
+	for ser, date := range signer {
+		var key Key
+		for _, k := range Keys {
+			if k.Name == "pkg.opnsense.org."+date {
+				key = k
+			}
+		}
+		if key.Name == "" {
+			t.Fatalf("%s: key %s missing", ser, date)
+		}
+		valid := func(s string) bool {
+			return key.Status == "trusted" || (key.RevokedIn != "" && CompareVersions(s, key.RevokedIn) < 0)
+		}
+		if !valid(ser) {
+			t.Errorf("%s: %s (%+v) would refuse its own series", ser, key.Name, key)
+		}
+		if n := next[ser]; n != "" && valid(n) {
+			t.Errorf("%s: %s (%+v) would still sign series %s", ser, key.Name, key, n)
+		}
+	}
+	for fp, k := range Keys {
+		if k.Status == "revoked" && k.RevokedIn == "" {
+			t.Errorf("%s (%s): revoked without revoked_in", k.Name, fp[:12])
+		}
 	}
 }
 
@@ -192,20 +245,28 @@ func TestParseCatalog(t *testing.T) {
 func TestLearnKeysOneWay(t *testing.T) {
 	file := func(fp string) []byte { return []byte("function: \"sha256\"\nfingerprint: \"" + fp + "\"\n") }
 	a, b := strings.Repeat("a", 64), strings.Repeat("b", 64)
-	keys := map[string]Key{a: {Name: "k.a", Status: "revoked", Source: "bootstrap"}}
+	keys := map[string]Key{a: {Name: "k.a", Status: "revoked", Source: "bootstrap", RevokedIn: "26.1"}}
 	changed := LearnKeys(keys, map[string][]byte{
 		"x/fingerprints/OPNsense/trusted/k.a": file(a), // older core: outdated view
 		"x/fingerprints/OPNsense/trusted/k.b": file(b), // new key
 		"x/fingerprints/OPNsense/README":      []byte("ignored"),
-	}, "core 1")
-	if keys[a].Status != "revoked" {
+	}, "core 1", "26.7")
+	if keys[a].Status != "revoked" || keys[a].RevokedIn != "26.1" {
 		t.Error("a revoked key must never become trusted again")
 	}
-	if keys[b].Status != "trusted" || keys[b].Source != "core 1" || len(changed) != 1 {
+	if keys[b].Status != "trusted" || keys[b].Source != "core 1" || keys[b].RevokedIn != "" || len(changed) != 1 {
 		t.Errorf("new key: %+v changed=%v", keys[b], changed)
 	}
-	changed = LearnKeys(keys, map[string][]byte{"x/fingerprints/OPNsense/revoked/k.b": file(b)}, "core 2")
-	if keys[b].Status != "revoked" || len(changed) != 1 || !strings.Contains(keys[b].Source, "core 2") {
+	changed = LearnKeys(keys, map[string][]byte{"x/fingerprints/OPNsense/revoked/k.b": file(b)}, "core 2", "27.1")
+	if keys[b].Status != "revoked" || keys[b].RevokedIn != "27.1" || len(changed) != 1 || !strings.Contains(keys[b].Source, "core 2") {
 		t.Errorf("revocation: %+v", keys[b])
+	}
+	// a later series that also lists it revoked does not move the series
+	if changed = LearnKeys(keys, map[string][]byte{"x/fingerprints/OPNsense/revoked/k.b": file(b)}, "core 3", "27.7"); len(changed) != 0 || keys[b].RevokedIn != "27.1" {
+		t.Errorf("later revocation: %+v %v", keys[b], changed)
+	}
+	// an earlier series that lists it revoked moves it down (earliest wins)
+	if changed = LearnKeys(keys, map[string][]byte{"x/fingerprints/OPNsense/revoked/k.a": file(a)}, "core 0", "25.7"); len(changed) != 1 || keys[a].RevokedIn != "25.7" {
+		t.Errorf("earlier revocation: %+v %v", keys[a], changed)
 	}
 }

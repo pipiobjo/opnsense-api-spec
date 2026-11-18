@@ -48,7 +48,7 @@ func TestVerifyCatalogRefusesBadKeyMaterial(t *testing.T) {
 		{"signature of another catalog", &Catalog{YAML: []byte(`{"name":"other"}`), Signature: good.Signature, PublicKey: good.PublicKey}, trust(good.PublicKey), "signature invalid"},
 	}
 	for _, c := range cases {
-		_, err := VerifyCatalog(c.cat, c.keys, true)
+		_, err := VerifyCatalog(c.cat, c.keys)
 		if err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s: %v, want an error with %q", c.name, err, c.want)
 		}

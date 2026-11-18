@@ -30,6 +30,13 @@ type Key struct {
 	// Source says how the key became known: the bootstrap list, or the
 	// release and catalog whose (verified) core package introduced it.
 	Source string `json:"source,omitempty"`
+	// RevokedIn is the series whose core (the newest release of that
+	// series, as walked by the key chain) first lists the key as revoked.
+	// A revoked key is valid only for catalogs of older series (ADR 0005):
+	// OPNsense signs each series with its own key and revokes it in the
+	// next series. For keys that were already revoked in the oldest core
+	// walked it is an upper bound.
+	RevokedIn string `json:"revoked_in,omitempty"`
 }
 
 //go:embed keys.json
@@ -80,9 +87,10 @@ var fingerprintRe = regexp.MustCompile(`fingerprint:\s*"([0-9a-f]{64})"`)
 // the signed key chain: the last patch release of a series already lists
 // the key of the next series. Unknown keys are added; a known key may only
 // move from trusted to revoked, never back, because older cores still list
-// keys as trusted that newer ones revoked. It returns the fingerprints that
-// were added or changed.
-func LearnKeys(keys map[string]Key, files map[string][]byte, source string) []string {
+// keys as trusted that newer ones revoked. A revocation records series (the
+// core's series) as RevokedIn; the earliest series wins. It returns the
+// fingerprints that were added or changed.
+func LearnKeys(keys map[string]Key, files map[string][]byte, source, series string) []string {
 	var changed []string
 	for path, data := range files {
 		dir := filepath.Base(filepath.Dir(path))
@@ -95,14 +103,26 @@ func LearnKeys(keys map[string]Key, files map[string][]byte, source string) []st
 		}
 		fp := string(m[1])
 		old, known := keys[fp]
-		if known && (old.Status == dir || dir == "trusted") {
+		switch {
+		case !known:
+			k := Key{Name: filepath.Base(path), Status: dir, Source: source}
+			if dir == "revoked" {
+				k.RevokedIn = series
+			}
+			keys[fp] = k
+		case dir == "trusted":
 			continue // unchanged, or an older core's outdated view
+		case old.Status == "trusted":
+			old.Source += "; status trusted -> revoked per " + source
+			old.Status, old.RevokedIn = dir, series
+			keys[fp] = old
+		case old.RevokedIn == "" || CompareVersions(series, old.RevokedIn) < 0:
+			old.Source += "; revoked in " + series + " per " + source
+			old.RevokedIn = series
+			keys[fp] = old
+		default:
+			continue // already known as revoked in this or an earlier series
 		}
-		k := Key{Name: filepath.Base(path), Status: dir, Source: source}
-		if known {
-			k.Source = old.Source + "; status " + old.Status + " -> " + dir + " per " + source
-		}
-		keys[fp] = k
 		changed = append(changed, fp)
 	}
 	sort.Strings(changed)
@@ -118,9 +138,11 @@ func Fingerprint(pub []byte) string {
 // VerifyCatalog checks the catalog signature the way FreeBSD pkg does for
 // signature_type "fingerprints": the public key must be a known OPNsense
 // key, and the signature is RSA PKCS#1 v1.5 (SHA-256) over the hex SHA-256
-// digest of packagesite.yaml. Rotated keys are accepted only if
-// allowRotated is set; the returned Key tells which one signed.
-func VerifyCatalog(cat *Catalog, keys map[string]Key, allowRotated bool) (Key, error) {
+// digest of packagesite.yaml. A revoked key is accepted only for a catalog
+// of a series older than the one that revoked it (cat.Release.Series before
+// Key.RevokedIn), so a retired key cannot sign a new release; a revoked key
+// without RevokedIn is refused. The returned Key tells which one signed.
+func VerifyCatalog(cat *Catalog, keys map[string]Key) (Key, error) {
 	if len(cat.Signature) == 0 || len(cat.PublicKey) == 0 {
 		return Key{}, errors.New("catalog is not signed (no .sig/.pub)")
 	}
@@ -129,8 +151,11 @@ func VerifyCatalog(cat *Catalog, keys map[string]Key, allowRotated bool) (Key, e
 	if !ok {
 		return Key{}, fmt.Errorf("catalog signed by unknown key %s", fp)
 	}
-	if key.Status != "trusted" && !allowRotated {
-		return Key{}, fmt.Errorf("catalog signed by rotated key %s (%s)", key.Name, fp)
+	if key.Status != "trusted" {
+		ser := cat.Release.Series
+		if key.RevokedIn == "" || ser == "" || CompareVersions(ser, key.RevokedIn) >= 0 {
+			return Key{}, fmt.Errorf("catalog of series %q signed by key %s (%s), revoked in series %q", ser, key.Name, fp, key.RevokedIn)
+		}
 	}
 	blk, _ := pem.Decode(cat.PublicKey)
 	if blk == nil {
