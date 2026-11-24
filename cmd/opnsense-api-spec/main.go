@@ -31,7 +31,8 @@ func usage() {
 	fmt.Fprintln(os.Stderr, `usage: opnsense-api-spec <command> [flags]
 
 commands:
-  releases                 list release snapshots on the mirror
+  releases [-series S]     list release snapshots on the mirror, in version
+                           order (the last line is the newest)
   fetch  -release X        download, verify and unpack MVC sources
   build  -release X        fetch + build IR, OpenAPI and coverage into -out
   matrix -series A,B       build every release of the series (with plugins),
@@ -145,7 +146,7 @@ func main() {
 	var err error
 	switch cmd {
 	case "releases":
-		err = cmdReleases(c, o.arch)
+		err = cmdReleases(c, o.arch, o.series)
 	case "fetch":
 		if o.release == "" {
 			usage()
@@ -228,12 +229,18 @@ func main() {
 	}
 }
 
-func cmdReleases(c *pkgrepo.Client, arch string) error {
+// cmdReleases lists the releases on the mirror in version order
+// (pkgrepo.CompareVersions), optionally of one series; scripts take the
+// last line as the newest instead of sorting themselves.
+func cmdReleases(c *pkgrepo.Client, arch, series string) error {
 	rs, err := c.Discover(arch)
 	if err != nil {
 		return err
 	}
 	for _, r := range rs {
+		if series != "" && r.Series != series {
+			continue
+		}
 		fmt.Printf("%-10s %-6s %s\n", r.Version, r.Series, r.ABI)
 	}
 	return nil

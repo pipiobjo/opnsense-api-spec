@@ -398,9 +398,10 @@ plugins() {
 # listfile FILE: non-empty lines of FILE, comma-separated
 listfile() { grep -v '^$' "$1" 2>/dev/null | paste -sd, - || true; }
 
-# latest_release SERIES: newest release of a series on the mirror
+# latest_release SERIES: newest release of a series on the mirror (the
+# generator lists them in its version order; no second sort here)
 latest_release() {
-  (cd "$ROOT" && go run ./cmd/opnsense-api-spec releases) | awk -v s="$1" '$2 == s {print $1}' | sort -V | tail -1
+  (cd "$ROOT" && go run ./cmd/opnsense-api-spec releases -series "$1") | tail -1 | awk '{print $1}'
 }
 
 # ensure_ir REL: the IR of REL, from dist/ or from the published release
