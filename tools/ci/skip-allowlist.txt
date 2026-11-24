@@ -1,0 +1,5 @@
+# SPDX-FileCopyrightText: 2026 opnsense-api-spec contributors
+# SPDX-License-Identifier: BSD-2-Clause
+# Tests that may skip (tools/ci/skips.sh): the full test name, then why.
+# Empty on purpose: gates.sh runs every Go test with the golden releases
+# fetched (GOLDEN_REQUIRED=1), so no test has a reason to skip there.

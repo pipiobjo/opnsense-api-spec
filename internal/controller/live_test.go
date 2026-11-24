@@ -8,10 +8,14 @@ import (
 	"testing"
 )
 
-const liveApp = "../../.cache/src/26.7.5/core"
+// a golden release: tools/ci/golden-fetch.sh extracts it before the tests
+const liveApp = "../../.cache/src/26.7.7/core+plugins"
 
 func TestLiveSummary(t *testing.T) {
 	if _, err := os.Stat(liveApp); err != nil {
+		if os.Getenv("GOLDEN_REQUIRED") == "1" {
+			t.Fatalf("%s not extracted (GOLDEN_REQUIRED=1; run tools/ci/golden-fetch.sh)", liveApp)
+		}
 		t.Skip("no fetched release in .cache")
 	}
 	cs, err := LoadAll(liveApp)

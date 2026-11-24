@@ -7,7 +7,8 @@
 #   tools/ci/gates.sh
 #
 # Formatting, vet, all Go tests with the real golden releases (fetched,
-# GOLDEN_REQUIRED=1 so a missing input fails instead of skipping), and the
+# GOLDEN_REQUIRED=1 so a missing input fails instead of skipping; any skip
+# not on tools/ci/skip-allowlist.txt fails, tools/ci/skips.sh), and the
 # script tests. Coverage of the Go tests per package, with the floor in
 # tools/ci/coverage-floor.txt (report in coverage/).
 set -euo pipefail
@@ -17,7 +18,12 @@ unformatted=$(gofmt -l cmd internal)
 [ -z "$unformatted" ] || { echo "$unformatted"; echo "::error::gofmt"; exit 1; }
 go vet ./...
 mkdir -p .cache/ci
-GOLDEN_REQUIRED=1 go test -count=1 -coverpkg=./... -coverprofile=.cache/ci/unit.out ./...
+# -v for the skip check: a skipped test proves nothing and is invisible in
+# the short output (tools/ci/skips.sh, allowlist empty)
+GOLDEN_REQUIRED=1 go test -count=1 -v -coverpkg=./... -coverprofile=.cache/ci/unit.out ./... > .cache/ci/unit.log 2>&1 \
+  || { grep -E '^(\s*--- FAIL|FAIL|panic|\s+\S+_test\.go:[0-9]+:)' .cache/ci/unit.log; echo "::error::go test failed (log: .cache/ci/unit.log)"; exit 1; }
+grep -E '^(ok|FAIL)\s' .cache/ci/unit.log
+tools/ci/skips.sh .cache/ci/unit.log
 tools/ci/coverage.sh unit .cache/ci/unit.out coverage
 tools/ci/alerts_test.sh
 tools/ci/testvm_test.sh
