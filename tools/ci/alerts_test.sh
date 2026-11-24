@@ -191,6 +191,37 @@ out=$(run WD_INDEX="${TMPDIR:-/tmp}/alerts-missing.json" WD_COVERAGE_CHECK=0)
 check "missing: not checked without the coverage check" "$out" "gh " absent
 rm -f "${TMPDIR:-/tmp}/alerts-missing.json"
 
+# a state that cannot be read is an unread input, not "nothing missing"
+# (finding OPS-4); here without WD_COVERAGE, so the typing-loss condition
+# reads the index too
+out=$(env WD_STATE=active WD_LAST_SUCCESS="$(hours_ago 10)" WD_RUNS='[]' ALERTS_ISSUES='[]' WD_CREATED="$(hours_ago 2000)" \
+  WD_INDEX="${TMPDIR:-/tmp}/alerts-no-such-index.json" "$A" check 2>&1 || echo "alerts.sh exited $?")
+check "index unreadable: missing data not judged" "$out" "::warning::could not read the published state; missing data not judged"
+check "index unreadable: typing loss not judged" "$out" "::warning::could not read the releases' quality reports"
+check "index unreadable: fails the check" "$out" "alerts.sh exited 1"
+check "index unreadable: no issue written" "$out" "gh issue" absent
+
+# accepted entries that no newest contract test needed (index.json
+# unused_accepted, computed by the generator)
+cat > "${TMPDIR:-/tmp}/alerts-unused.json" <<'JSON'
+{"releases":[],"unused_accepted":["/api/u/get shape 25.7.* match \"HTTP 500\""]}
+JSON
+out=$(run WD_INDEX="${TMPDIR:-/tmp}/alerts-unused.json")
+check "unused: opens the issue" "$out" "gh issue create"
+check "unused: names the entry" "$out" '- `/api/u/get shape 25.7.* match "HTTP 500"`'
+check "unused: says what to do" "$out" "remove them"
+rm -f "${TMPDIR:-/tmp}/alerts-unused.json"
+
+# a stale threshold per watched entry (a weekly workflow is not stale after 8 days)
+weekly='{"example/client:spec-update.yml":{"state":"active","last_success":"'"$(hours_ago 200)"'","runs":[]}}'
+out=$(run WD_WATCH="example/client:spec-update.yml:840" WD_WATCH_DATA="$weekly")
+check "watch hours: under its own threshold, no message" "$out" "gh " absent
+check "watch hours: the check succeeds" "$out" "alerts.sh exited" absent
+out=$(run WD_WATCH="example/client:spec-update.yml:190" WD_WATCH_DATA="$weekly")
+check "watch hours: over its own threshold, reported" "$out" '## `spec-update.yml` in [example/client]'
+out=$(run WD_WATCH="example/client:spec-update.yml:7d")
+check "watch hours: not a number is a malformed entry" "$out" "is not owner/repo:workflow.yml[:hours]"
+
 # which releases count as new for the typing-loss condition: first_seen of
 # the current catalog state within 14 days; no first_seen never counts
 cat > "${TMPDIR:-/tmp}/alerts-index.json" <<'JSON'

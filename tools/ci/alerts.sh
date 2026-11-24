@@ -34,6 +34,17 @@
 #             is the important case), or kept on an old build because a
 #             rebuild could not get its packages (index.json "unavailable"
 #             and "source_unavailable")
+#   unused    an entry of verify/accepted.json covered no failure in the
+#             newest contract test of any series (index.json
+#             "unused_accepted", set by the generator's index command):
+#             the upstream fault it was written for is gone, so the entry
+#             would only hide a later, different one; removing it is the
+#             fix, and the next pipeline run clears the condition
+#
+# The coverage, missing and unused conditions read the published state
+# (release "state", index.json) and the releases' *.quality.json; a read
+# failure other than "no state published yet" (HTTP 404) counts as an
+# unread input like a watched workflow (below), never as "nothing found".
 #
 # A person never closes the issue; the next check after the cause is gone
 # does. Nothing here is urgent: consumers keep working with the last
@@ -47,16 +58,21 @@
 #                       to re-enable WD_WORKFLOW), reads of public
 #                       repositories for WD_WATCH
 #   WD_WORKFLOW         own scheduled workflow file (default pipeline.yml)
-#   WD_COVERAGE_CHECK   1 (default): the coverage and missing conditions,
-#                       which read this repository's releases; 0: off
-#   WD_WATCH            space-separated owner/repo:workflow.yml pairs to
-#                       watch (default none), e.g.
-#                       "pipiobjo/opnsense-api-go:spec-update.yml
-#                        pipiobjo/opnsense-api-go:watchdog.yml"
+#   WD_COVERAGE_CHECK   1 (default): the coverage, missing and unused
+#                       conditions, which read this repository's releases;
+#                       0: off
+#   WD_WATCH            space-separated owner/repo:workflow.yml[:hours]
+#                       entries to watch (default none), e.g.
+#                       "pipiobjo/opnsense-api-go:spec-update.yml:840
+#                        pipiobjo/opnsense-api-go:watchdog.yml"; hours is
+#                       the stale threshold of that entry (default
+#                       WD_STALE_HOURS): a weekly workflow needs more than
+#                       7 days, or its normal gap would be reported
 #   WD_PROMOTE          promotion workflow file in GITHUB_REPOSITORY
 #                       (default none: no promotion condition), with
 #                       WD_PROMOTE_FROM (dev) and WD_PROMOTE_TO (main)
-#   WD_STALE_HOURS      168 (7 days), for every condition above
+#   WD_STALE_HOURS      168 (7 days), for every condition above unless a
+#                       WD_WATCH entry names its own
 #
 # A watched workflow that cannot be read (deleted, renamed, private, API
 # fault) is not a condition: the check prints a warning and fails at the
@@ -75,10 +91,13 @@
 # GitHub; the field "error" simulates a read failure); promotion:
 # WD_PROMOTE_COMPARE ({ahead_by, status, oldest, head}), WD_PROMOTE_RUN
 # (newest promotion run, {databaseId, status, conclusion, headSha, url,
-# createdAt} or null), WD_PROMOTE_VIEW; releases: WD_COVERAGE, WD_INDEX.
+# createdAt} or null), WD_PROMOTE_VIEW; releases: WD_COVERAGE, WD_INDEX (a
+# file; one that cannot be read simulates a read failure).
 set -euo pipefail
 
 REPO="${GITHUB_REPOSITORY:-pipiobjo/opnsense-api-spec}"
+# shellcheck source=tools/ci/gh-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/gh-lib.sh"
 WORKFLOW="${WD_WORKFLOW:-pipeline.yml}"
 COVERAGE="${WD_COVERAGE_CHECK:-1}"
 WATCH="${WD_WATCH:-}"
@@ -209,12 +228,16 @@ why_md() {
 # ever.
 coverage() {
   if [ -n "${WD_COVERAGE+x}" ]; then echo "$WD_COVERAGE"; return; fi
-  local tags tag dir out="[]" f
-  tags=$(recent_releases)
+  local tags tag dir out="[]" f names
+  tags=$(recent_releases) || return 1
   dir=$(mktemp -d)
   for tag in $tags; do
     rm -f "$dir"/*.quality.json
-    gh release download "opnsense-$tag" -R "$REPO" -p '*.quality.json' -D "$dir" >/dev/null 2>&1 || continue
+    # a release without a quality report (the first of a series) is fine;
+    # a release that cannot be read is not
+    names=$(gh release view "opnsense-$tag" -R "$REPO" --json assets --jq '.assets[].name') || { rm -rf "$dir"; return 1; }
+    grep -q '\.quality\.json$' <<<"$names" || continue
+    gh release download "opnsense-$tag" -R "$REPO" -p '*.quality.json' -D "$dir" >/dev/null || { rm -rf "$dir"; return 1; }
     for f in "$dir"/*.quality.json; do
       [ -f "$f" ] || continue
       out=$(jq -c --slurpfile q "$f" --arg r "$tag" \
@@ -229,29 +252,44 @@ coverage() {
 # built in the last COVERAGE_DAYS days (first_seen in the published
 # index.json of the release "state"; WD_INDEX replaces it in tests).
 # States built before first_seen existed have none and never count.
+# Fails when the state cannot be read; only a state that does not exist
+# yet (HTTP 404, a new repository) reads as empty.
 index_json() {
   if [ -n "${WD_INDEX:-}" ]; then
     cat "$WD_INDEX"
-  else
-    gh release download state -R "$REPO" -p index.json -O - 2>/dev/null || echo '{"releases":[]}'
+    return
   fi
+  case "$(release_status "$REPO" state)" in
+    404) echo '{"releases":[]}' ;;
+    200) gh release download state -R "$REPO" -p index.json -O - ;;
+    *) return 1 ;;
+  esac
 }
 
 # missing: releases without current data for STALE_HOURS, as
 # [{release, kind, reason, since}]
 missing() {
-  local cutoff
+  local cutoff index
   cutoff=$(date -u -d "@$((NOW - STALE_HOURS * 3600))" +%FT%TZ)
-  index_json | jq -c --arg cut "$cutoff" '
+  index=$(index_json) || return 1
+  jq -c --arg cut "$cutoff" '
     [(.unavailable // [])[] | {release, kind: "never built", reason, since}]
     + [.releases[] | select(.source_unavailable) | {release, kind: "kept on an old build", reason: .source_unavailable.reason, since: .source_unavailable.since}]
-    | map(select(.since != null and .since <= $cut))'
+    | map(select(.since != null and .since <= $cut))' <<<"$index"
+}
+
+# unused: the accepted entries no newest contract test needed, as a JSON
+# list (computed by the generator, Index.SetUnusedAccepted)
+unused() {
+  local index
+  index=$(index_json) || return 1
+  jq -c '.unused_accepted // []' <<<"$index"
 }
 
 recent_releases() {
   local since index
   since=$(date -u -d "@$((NOW - ${COVERAGE_DAYS:-14} * 86400))" +%F)
-  index=$(index_json)
+  index=$(index_json) || return 1
   jq -r --arg since "$since" '.releases[] | select((.first_seen // "") >= $since and .first_seen != null) | .release' <<<"$index"
 }
 
@@ -261,8 +299,9 @@ recent_releases() {
 # workflow is stale or disabled, nothing when it is fine; fails when
 # GitHub cannot be read. OWN=1: the own workflow (re-enabled after GitHub
 # disabled it for inactivity; section title "Publishing has stopped").
+# HOURS: the stale threshold (default STALE_HOURS).
 workflow_problem() {
-  local r="$1" w="$2" own="$3" state last stale="" state_msg="" failed created age
+  local r="$1" w="$2" own="$3" hours="${4:-$STALE_HOURS}" state last stale="" state_msg="" failed created age
   state=$(wf_state "$r" "$w") || return 1
   last=$(last_success "$r" "$w") || return 1
   case "$state" in
@@ -278,12 +317,12 @@ workflow_problem() {
   esac
   if [ -z "$last" ]; then
     created=$(wf_created "$r" "$w") || return 1
-    if [ -z "$created" ] || [ "$(hours_since "$created")" -ge "$STALE_HOURS" ]; then
+    if [ -z "$created" ] || [ "$(hours_since "$created")" -ge "$hours" ]; then
       stale="No successful scheduled run of \`$w\` was found."
     fi
   else
     age=$(hours_since "$last")
-    if [ "$age" -ge "$STALE_HOURS" ]; then
+    if [ "$age" -ge "$hours" ]; then
       stale="The last successful scheduled run of \`$w\` ended $last, $((age / 24)) days ago."
     fi
   fi
@@ -365,9 +404,14 @@ promotion_problem() {
 # ------------------------------------------------------------ check
 
 check() {
-  local cov miss open body sec problems=0 unread=0 pair r w last
-  cov="[]" miss="[]"
-  [ "$COVERAGE" = 1 ] && cov=$(coverage) && miss=$(missing)
+  local cov miss unu open body sec problems=0 unread=0 pair r w h rest last
+  cov="[]" miss="[]" unu="[]"
+  if [ "$COVERAGE" = 1 ]; then
+    # a read failure is an unread input, not an empty result (finding OPS-4)
+    cov=$(coverage) || { echo "::warning::could not read the releases' quality reports; typing loss not judged"; cov="[]"; unread=$((unread + 1)); }
+    miss=$(missing) || { echo "::warning::could not read the published state; missing data not judged"; miss="[]"; unread=$((unread + 1)); }
+    unu=$(unused) || { echo "::warning::could not read the published state; unused accepted entries not judged"; unu="[]"; unread=$((unread + 1)); }
+  fi
   open=$(open_issue)
   body=$(mktemp)
 
@@ -382,9 +426,10 @@ check() {
   [ -z "$sec" ] || { problems=$((problems + 1)); echo "$sec" >> "$body"; echo >> "$body"; }
 
   for pair in $WATCH; do
-    r="${pair%%:*}"; w="${pair#*:}"
-    [ "$r" != "$pair" ] && [ -n "$w" ] || { echo "::warning::WD_WATCH entry '$pair' is not owner/repo:workflow.yml"; unread=$((unread + 1)); continue; }
-    if ! sec=$(workflow_problem "$r" "$w" 0); then
+    r="${pair%%:*}"; rest="${pair#*:}"; w="${rest%%:*}"; h="$STALE_HOURS"
+    [ "$w" = "$rest" ] || h="${rest#*:}"
+    [ "$r" != "$pair" ] && [ -n "$w" ] && [[ "$h" =~ ^[1-9][0-9]*$ ]] || { echo "::warning::WD_WATCH entry '$pair' is not owner/repo:workflow.yml[:hours]"; unread=$((unread + 1)); continue; }
+    if ! sec=$(workflow_problem "$r" "$w" 0 "$h"); then
       echo "::warning::could not read $w in $r; not judged"
       unread=$((unread + 1)); continue
     fi
@@ -427,6 +472,20 @@ check() {
       echo "new series they refuse to write until data for it exists."
       echo
     fi
+    if [ "$(jq length <<<"$unu")" -gt 0 ]; then
+      echo "## Accepted findings that no longer occur"
+      echo
+      jq -r '.[] | "- `\(.)`"' <<<"$unu"
+      echo
+      echo "**Why.** The newest contract test of every series had no failure these"
+      echo "entries of \`verify/accepted.json\` cover: the upstream fault they were"
+      echo "written for is gone (or the plugin was not installed)."
+      echo
+      echo "**If you do nothing.** Nothing breaks. The entries stay and would hide a"
+      echo "later failure of the same kind on the same path; remove them (one commit"
+      echo "to \`dev\`), and this section disappears on the next check."
+      echo
+    fi
     echo "## To fix"
     echo
     echo "Start a Claude Code session in this repository with the link to this issue"
@@ -434,6 +493,7 @@ check() {
   } >> "$body"
   [ "$(jq length <<<"$cov")" -gt 0 ] && problems=$((problems + 1))
   [ "$(jq length <<<"$miss")" -gt 0 ] && problems=$((problems + 1))
+  [ "$(jq length <<<"$unu")" -gt 0 ] && problems=$((problems + 1))
 
   last=$(last_success "$REPO" "$WORKFLOW")
   if [ "$problems" -gt 0 ]; then

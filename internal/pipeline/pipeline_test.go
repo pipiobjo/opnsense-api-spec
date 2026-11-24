@@ -20,6 +20,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -28,6 +29,7 @@ import (
 	"github.com/pipiobjo/opnsense-api-spec/internal/fragment"
 	"github.com/pipiobjo/opnsense-api-spec/internal/ir"
 	"github.com/pipiobjo/opnsense-api-spec/internal/pkgrepo"
+	"github.com/pipiobjo/opnsense-api-spec/internal/verify"
 )
 
 // --- fake mirror -----------------------------------------------------------
@@ -538,6 +540,35 @@ func TestRevokedKeyRefusedForNewSeries(t *testing.T) {
 	}
 	if _, err := p.Fetch("26.7", false, ""); err != nil {
 		t.Errorf("26.7 is still signed with its own key: %v", err)
+	}
+}
+
+// Claim (watchdog "unused"): an accepted entry is reported only when the
+// newest tested release of every series lists it as unused and none as
+// used, and only while it is still in the list.
+func TestSetUnusedAccepted(t *testing.T) {
+	a := verify.Accepted{Path: "/a", Check: "shape", Releases: "*", Match: "HTTP 500"}
+	b := verify.Accepted{Path: "/b", Check: "shape", Releases: "*", Match: "HTTP 500"}
+	c := verify.Accepted{Path: "/c", Check: "shape", Releases: "*", Match: "HTTP 500"}
+	idx := &Index{Releases: []IndexRelease{
+		// older release of 26.1: its "used" does not count any more
+		{Release: "26.1.9", Series: "26.1", Verified: &IndexVerification{UsedAccepted: []string{a.ID()}}},
+		{Release: "26.1.10", Series: "26.1", Verified: &IndexVerification{UnusedAccepted: []string{a.ID(), b.ID()}}},
+		{Release: "26.1.11", Series: "26.1"}, // not tested
+		{Release: "26.7.9", Series: "26.7", Verified: &IndexVerification{UnusedAccepted: []string{a.ID()}, UsedAccepted: []string{b.ID()}}},
+		{Release: "26.7.10", Series: "26.7", Verified: &IndexVerification{UnusedAccepted: []string{a.ID(), c.ID()}}},
+	}}
+	idx.SetUnusedAccepted([]verify.Accepted{a, b})
+	// a: unused on both newest (26.1.10, 26.7.10); b: unused on 26.1.10 but
+	// 26.7.10 does not list it at all, and 26.7.9 is not the newest -> also
+	// unused; c: removed from the list
+	if want := []string{a.ID(), b.ID()}; !reflect.DeepEqual(idx.UnusedAccepted, want) {
+		t.Errorf("unused %q, want %q", idx.UnusedAccepted, want)
+	}
+	idx.Releases[4].Verified.UsedAccepted = []string{b.ID()}
+	idx.SetUnusedAccepted([]verify.Accepted{a, b})
+	if want := []string{a.ID()}; !reflect.DeepEqual(idx.UnusedAccepted, want) {
+		t.Errorf("used on one series must not be reported: %q, want %q", idx.UnusedAccepted, want)
 	}
 }
 

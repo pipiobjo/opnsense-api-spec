@@ -41,8 +41,10 @@ func LoadAccepted(file string) ([]Accepted, error) {
 		return nil, fmt.Errorf("%s: %w", file, err)
 	}
 	for i, f := range a.Findings {
-		if f.Path == "" || f.Check == "" || f.Reason == "" || f.Evidence == "" {
-			return nil, fmt.Errorf("%s: entry %d needs path, check, reason and evidence", file, i)
+		// match is required: an entry for a path and check alone would hide
+		// any other failure there (finding REQ-9)
+		if f.Path == "" || f.Check == "" || f.Match == "" || f.Reason == "" || f.Evidence == "" {
+			return nil, fmt.Errorf("%s: entry %d needs path, check, match, reason and evidence", file, i)
 		}
 	}
 	return a.Findings, nil
@@ -102,9 +104,12 @@ func ApplyAccepted(rep *Report, list []Accepted) int {
 			}
 		}
 	}
-	rep.UnusedAccepted = nil
+	rep.UnusedAccepted, rep.UsedAccepted = nil, nil
 	for i, a := range list {
-		if ok, _ := path.Match(a.releases(), rep.Release); ok && !used[i] {
+		switch ok, _ := path.Match(a.releases(), rep.Release); {
+		case used[i]:
+			rep.UsedAccepted = append(rep.UsedAccepted, a.ID())
+		case ok:
 			rep.UnusedAccepted = append(rep.UnusedAccepted, a.ID())
 		}
 	}

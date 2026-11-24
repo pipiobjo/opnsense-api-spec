@@ -32,7 +32,12 @@ below).
 | A release whose catalog state the pipeline first built in the last 14 days lost typing against the release before it (`first_seen` in the index) | 14 days later |
 | A release on the mirror has had no current data for 7 days: never built (packages not served; the important case is a new series) or kept on an old build (a rebuild could not get its packages) | data for it is built |
 | `dev` has had commits that `main` lacks for 7 days and no `promote.yml` run is in progress (a failed promotion, an automatic dependency merge whose dry run broke, a push that started no run, or `dev` diverged from `main`) | `main` reaches `dev` |
-| A watched workflow of another repository of the project (`spec-update.yml` and `watchdog.yml` of the Go client) has had no successful scheduled run for 7 days, or is disabled (never re-enabled from here) | it succeeds, or is enabled, in its own repository |
+| A watched workflow of another repository of the project (`spec-update.yml` and `watchdog.yml` of the Go client) has had no successful scheduled run for 7 days (or the entry's own threshold, `owner/repo:file.yml:hours`, for a workflow that runs weekly or monthly), or is disabled (never re-enabled from here) | it succeeds, or is enabled, in its own repository |
+| An entry of `verify/accepted.json` covered no failure in the newest contract test of any series (the upstream fault is gone; the entry would only hide a later one) | the entry is removed and the next pipeline run rebuilt the index |
+
+A condition that cannot be read (the published state, a release, a watched
+workflow) is not "nothing found": the check prints a warning and fails, so
+the other repository's watchdog sees a stale `watchdog.yml`.
 
 The issue is edited while the condition lasts and closed by the watchdog
 when it is over. Nobody closes it by hand. Its text has four parts: what

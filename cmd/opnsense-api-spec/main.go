@@ -183,7 +183,7 @@ func main() {
 		}
 		err = cmdInstalled(o)
 	case "index":
-		err = pipeline.BuildIndex(pl.Dist)
+		err = cmdIndex(pl.Dist, *accepted)
 	case "capabilities":
 		dir := o.out
 		if dir == "" {
@@ -360,6 +360,27 @@ func cmdVerify(o opts, accepted *string) error {
 		return fmt.Errorf("%d contract check(s) failed; see %s.verified.json", n, base)
 	}
 	return nil
+}
+
+// cmdIndex rebuilds dist/index.json and records the accepted entries that
+// no newest contract test needed (the watchdog's "unused" condition).
+func cmdIndex(dist, accepted string) error {
+	if err := pipeline.BuildIndex(dist); err != nil {
+		return err
+	}
+	list, err := verify.LoadAccepted(accepted)
+	if os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	path := filepath.Join(dist, "index.json")
+	idx, err := pipeline.ReadIndex(path)
+	if err != nil {
+		return err
+	}
+	idx.SetUnusedAccepted(list)
+	return jsonfile.Write(path, idx)
 }
 
 func failures(rep *verify.Report) int { return len(rep.Failures()) }

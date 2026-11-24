@@ -142,6 +142,10 @@ type Index struct {
 	// Unavailable: releases on the mirror that were never built because
 	// their packages are not available (catalog listed, files refused).
 	Unavailable []UnavailableRelease `json:"unavailable,omitempty"`
+	// UnusedAccepted: entries of verify/accepted.json that the newest
+	// contract test of every series lists as unused and none as used (set
+	// by SetUnusedAccepted; the watchdog reports them, tools/ci/alerts.sh).
+	UnusedAccepted []string `json:"unused_accepted,omitempty"`
 }
 
 // UnavailableRelease is a release that could not be built.
@@ -183,6 +187,10 @@ type IndexVerification struct {
 	// did not test (plugin not installed, core-only run). A release with
 	// untested packages is not verified.
 	Untested []string `json:"untested_packages,omitempty"`
+	// UnusedAccepted and UsedAccepted: the accepted entries of the run
+	// (verify.Report).
+	UnusedAccepted []string `json:"unused_accepted,omitempty"`
+	UsedAccepted   []string `json:"used_accepted,omitempty"`
 }
 
 // IndexFragmentUse tells where a fragment occurs.
@@ -254,7 +262,8 @@ func BuildIndex(dist string) error {
 			var rep verify.Report
 			if err := json.Unmarshal(raw, &rep); err == nil {
 				v := &IndexVerification{Composition: rep.Composition, Instance: rep.Instance, Date: rep.Date,
-					Generator: rep.Generator, Results: map[string]int{}}
+					Generator: rep.Generator, Results: map[string]int{},
+					UnusedAccepted: rep.UnusedAccepted, UsedAccepted: rep.UsedAccepted}
 				for _, r := range rep.Results {
 					v.Results[r.Key()]++
 					if r.Status.Failed() {
@@ -351,6 +360,38 @@ func ReadIndex(path string) (*Index, error) {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	return &idx, nil
+}
+
+// SetUnusedAccepted sets idx.UnusedAccepted: the entries of list (the
+// current verify/accepted.json) that the newest contract-tested release of
+// every series lists as unused and none of them as used. Only the newest
+// release of a series is re-tested, so older results do not count; an
+// entry removed from the list is gone with the next index.
+func (idx *Index) SetUnusedAccepted(list []verify.Accepted) {
+	newest := map[string]IndexRelease{}
+	for _, r := range idx.Releases {
+		if r.Verified == nil {
+			continue
+		}
+		if cur, ok := newest[r.Series]; !ok || pkgrepo.CompareVersions(r.Release, cur.Release) > 0 {
+			newest[r.Series] = r
+		}
+	}
+	unused, used := map[string]bool{}, map[string]bool{}
+	for _, r := range newest {
+		for _, id := range r.Verified.UnusedAccepted {
+			unused[id] = true
+		}
+		for _, id := range r.Verified.UsedAccepted {
+			used[id] = true
+		}
+	}
+	idx.UnusedAccepted = nil
+	for _, a := range list {
+		if id := a.ID(); unused[id] && !used[id] {
+			idx.UnusedAccepted = append(idx.UnusedAccepted, id)
+		}
+	}
 }
 
 // VerifyPlan returns the releases a scheduled run contract-tests, in

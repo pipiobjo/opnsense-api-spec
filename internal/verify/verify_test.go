@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"sync"
 	"testing"
@@ -167,6 +169,20 @@ func TestApplyAcceptedMatchAndUnused(t *testing.T) {
 	want := []string{`/api/v/get shape 25.7.* match "HTTP 500"`, "/api/w/get shape *"}
 	if !reflect.DeepEqual(rep.UnusedAccepted, want) {
 		t.Errorf("unused %q, want %q", rep.UnusedAccepted, want)
+	}
+	if want := []string{`/api/u/get shape 25.7.* match "HTTP 500"`}; !reflect.DeepEqual(rep.UsedAccepted, want) {
+		t.Errorf("used %q, want %q", rep.UsedAccepted, want)
+	}
+}
+
+// An entry without match would hide every failure of its path and check.
+func TestLoadAcceptedNeedsMatch(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "accepted.json")
+	if err := os.WriteFile(f, []byte(`{"findings":[{"path":"/api/u/get","check":"shape","releases":"*","reason":"r","evidence":"e"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadAccepted(f); err == nil {
+		t.Error("an entry without match must be refused")
 	}
 }
 

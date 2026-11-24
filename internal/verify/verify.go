@@ -65,6 +65,8 @@ type Report struct {
 	// UnusedAccepted: entries of verify/accepted.json that apply to this
 	// release but covered no failed check in this run (see ApplyAccepted).
 	UnusedAccepted []string `json:"unused_accepted,omitempty"`
+	// UsedAccepted: entries that covered at least one failed check.
+	UsedAccepted []string `json:"used_accepted,omitempty"`
 }
 
 // Run executes all checks for endpoints of the given packages (installed
