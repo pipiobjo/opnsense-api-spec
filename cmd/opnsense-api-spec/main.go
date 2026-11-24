@@ -51,9 +51,13 @@ commands:
   capabilities [-out DIR]  build the capability data (catalog.json and one
                            document per package) from dist/ into DIR
                            (default dist/capabilities)
-  plan                     print the releases to contract-test as a JSON list
+  plan [-verify A,B] [-only-requested] [-matrix]
+                           print the releases to contract-test as a JSON list
                            (newest release per series, current composition
-                           not verified with this generator)
+                           not verified with this generator), plus the built
+                           releases in -verify (-only-requested: only those);
+                           -matrix: as the workflow matrix
+                           [{"release":..,"series":..}]
   sbom                     write the SBOM (CycloneDX 1.6) of every release in
                            -dist: the packages its description was derived
                            from (dist/<release>/opnsense-<release>.sbom.cdx.json)
@@ -113,10 +117,14 @@ func main() {
 	floor := fs.String("series-floor", "25.7", "")
 	accepted := fs.String("accepted", "verify/accepted.json", "")
 	distDir := fs.String("dist", "dist", "")
+	extra := fs.String("verify", "", "")
+	matrix := fs.Bool("matrix", false, "")
+	onlyRequested := fs.Bool("only-requested", false, "")
 	fs.Usage = usage
 	_ = fs.Parse(args)
 	c := pkgrepo.NewClient(o.base, o.cache)
 	c.Offline = *offline
+	c.Warn = os.Stderr
 	keys := pkgrepo.Keys
 	if *keysPath != "" {
 		if k, err := pkgrepo.LoadKeys(*keysPath); err == nil {
@@ -195,10 +203,7 @@ func main() {
 	case "sbom":
 		err = cmdSBOM(pl.Dist)
 	case "plan":
-		var idx *pipeline.Index
-		if idx, err = pipeline.ReadIndex(filepath.Join(pl.Dist, "index.json")); err == nil {
-			err = json.NewEncoder(os.Stdout).Encode(idx.VerifyPlan())
-		}
+		err = cmdPlan(pl.Dist, *extra, *matrix, *onlyRequested)
 	case "proxy":
 		if o.release == "" {
 			usage()
@@ -360,6 +365,26 @@ func cmdVerify(o opts, accepted *string) error {
 		return fmt.Errorf("%d contract check(s) failed; see %s.verified.json", n, base)
 	}
 	return nil
+}
+
+// cmdPlan prints the contract test plan (pipeline.Index.Plan).
+func cmdPlan(dist, extra string, matrix, onlyRequested bool) error {
+	idx, err := pipeline.ReadIndex(filepath.Join(dist, "index.json"))
+	if err != nil {
+		return err
+	}
+	legs, err := idx.Plan(strings.Split(extra, ","), onlyRequested)
+	if err != nil {
+		return err
+	}
+	if matrix {
+		return json.NewEncoder(os.Stdout).Encode(legs)
+	}
+	plan := []string{}
+	for _, l := range legs {
+		plan = append(plan, l.Release)
+	}
+	return json.NewEncoder(os.Stdout).Encode(plan)
 }
 
 // cmdIndex rebuilds dist/index.json and records the accepted entries that

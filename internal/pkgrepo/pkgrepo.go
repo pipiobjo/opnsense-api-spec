@@ -65,12 +65,19 @@ type Client struct {
 	// catalogs are always fetched: a snapshot can change under the same
 	// release number (hotfix revisions, plugin updates).
 	Offline bool
+	// Warn receives warnings ("warning: ..." lines); nil: none.
+	Warn io.Writer
+	// Retries of a GET after a server error (5xx) or a connection fault,
+	// with a growing pause (Backoff, Backoff*2, ...). Safe: every package
+	// and catalog is checked against the signed catalog afterwards.
+	Retries int
+	Backoff time.Duration
 }
 
 // NewClient returns a client for baseURL with a download cache in cacheDir.
 func NewClient(baseURL, cacheDir string) *Client {
 	return &Client{BaseURL: strings.TrimRight(baseURL, "/"), CacheDir: cacheDir,
-		HTTP: &http.Client{Timeout: 5 * time.Minute}}
+		HTTP: &http.Client{Timeout: 5 * time.Minute}, Retries: 3, Backoff: 5 * time.Second}
 }
 
 // SnapshotURL is the repository root of a release snapshot.
@@ -87,15 +94,40 @@ func (c *Client) listDirs(url string) ([]string, error) {
 	}
 	var out []string
 	for _, m := range hrefRe.FindAllSubmatch(body, -1) {
-		out = append(out, strings.TrimPrefix(string(m[1]), "./"))
+		d := strings.TrimPrefix(string(m[1]), "./")
+		if d == ".." || d == "." {
+			continue // the parent link of a directory listing
+		}
+		out = append(out, d)
 	}
 	return out, nil
 }
 
 var seriesRe = regexp.MustCompile(`^\d+\.\d+$`)
 
+// releaseRe is the only shape of a release name the project accepts: the
+// directory names under MINT/ come from an unsigned listing and end up in
+// file paths, tags and workflow matrices. tools/ci/publish.sh checks tags
+// against the same shape (TAG_RE) in the job that runs no Go.
+var releaseRe = regexp.MustCompile(`^\d+\.\d+(\.\d+)?(_\d+)?$`)
+
+// ValidRelease reports whether v is a release name of series: the shape
+// of releaseRe, and the series itself or below it ("26.7", "26.7.5").
+func ValidRelease(series, v string) bool {
+	return releaseRe.MatchString(v) && (v == series || strings.HasPrefix(v, series+".") || strings.HasPrefix(v, series+"_"))
+}
+
+// CoreMatchesRelease reports whether the signed core package version
+// belongs to the release name the (unsigned) directory listing gave:
+// equal, or the same release with a hotfix revision ("26.7.9_1").
+func CoreMatchesRelease(core, release string) bool {
+	return core == release || strings.HasPrefix(core, release+"_")
+}
+
 // Discover lists all release snapshots for the given architecture
-// (e.g. "amd64"), across all FreeBSD ABIs present on the mirror.
+// (e.g. "amd64"), across all FreeBSD ABIs present on the mirror. A
+// directory under MINT/ that is not a release name of its series
+// (ValidRelease) is skipped with a warning to Warn, never used.
 func (c *Client) Discover(arch string) ([]Release, error) {
 	abis, err := c.listDirs(c.BaseURL)
 	if err != nil {
@@ -119,6 +151,12 @@ func (c *Client) Discover(arch string) ([]Release, error) {
 				continue // series without snapshots
 			}
 			for _, v := range mints {
+				if !ValidRelease(s, v) {
+					if c.Warn != nil {
+						fmt.Fprintf(c.Warn, "warning: mirror lists %q under %s/%s/MINT, not a release name of the series; ignored\n", v, abi, s)
+					}
+					continue
+				}
 				out = append(out, Release{ABI: abi, Series: s, Version: v})
 			}
 		}
@@ -306,19 +344,41 @@ func (c *Client) cached(r Release, name, url string) ([]byte, error) {
 	return data, nil
 }
 
+// get fetches url. A server error (5xx) or a connection fault is retried
+// (Retries, Backoff); 403/404/410 are ErrUnavailable at once, any other
+// status is an error at once.
 func (c *Client) get(url string) ([]byte, error) {
+	var err error
+	for attempt := 0; ; attempt++ {
+		var data []byte
+		var retry bool
+		data, retry, err = c.getOnce(url)
+		if err == nil || !retry || attempt >= c.Retries {
+			return data, err
+		}
+		if c.Warn != nil {
+			fmt.Fprintf(c.Warn, "retrying (%d of %d): %v\n", attempt+1, c.Retries, err)
+		}
+		time.Sleep(c.Backoff << attempt)
+	}
+}
+
+func (c *Client) getOnce(url string) (data []byte, retry bool, err error) {
 	resp, err := c.HTTP.Get(url)
 	if err != nil {
-		return nil, err
+		return nil, true, err
 	}
 	defer resp.Body.Close()
-	switch resp.StatusCode {
-	case http.StatusOK:
-		return io.ReadAll(resp.Body)
-	case http.StatusForbidden, http.StatusNotFound, http.StatusGone:
-		return nil, fmt.Errorf("GET %s: %s: %w", url, resp.Status, ErrUnavailable)
+	switch {
+	case resp.StatusCode == http.StatusOK:
+		data, err = io.ReadAll(resp.Body)
+		return data, err != nil, err
+	case resp.StatusCode == http.StatusForbidden, resp.StatusCode == http.StatusNotFound, resp.StatusCode == http.StatusGone:
+		return nil, false, fmt.Errorf("GET %s: %s: %w", url, resp.Status, ErrUnavailable)
+	case resp.StatusCode >= 500:
+		return nil, true, fmt.Errorf("GET %s: %s", url, resp.Status)
 	default:
-		return nil, fmt.Errorf("GET %s: %s", url, resp.Status)
+		return nil, false, fmt.Errorf("GET %s: %s", url, resp.Status)
 	}
 }
 

@@ -174,15 +174,12 @@ jobs:
         env:
           EXTRA: ${{ inputs.verify }}
           SKIP: ${{ inputs.skip-contract }}
+        # the generator checks every name (pkgrepo.ValidRelease) and that a
+        # requested release is built; nothing else reaches the matrix
         run: |
-          planned=$(go run ./cmd/opnsense-api-spec plan)
-          [ "$SKIP" = true ] && planned='[]' && echo "contract tests skipped on request"
-          extra=$(jq -cn --arg e "${EXTRA:-}" '$e | split(",") | map(gsub("\\s"; "")) | map(select(. != ""))')
-          for r in $(jq -r '.[]' <<<"$extra"); do
-            [ -d "dist/$r" ] || { echo "::error::requested release $r is not built"; exit 1; }
-          done
-          plan=$(jq -cn --argjson a "$planned" --argjson b "$extra" \
-            '$a + $b | unique | map({release: ., series: (split(".")[0:2] | join("."))})')
+          only=false
+          [ "$SKIP" = true ] && only=true && echo "contract tests skipped on request"
+          plan=$(go run ./cmd/opnsense-api-spec plan -matrix -verify "${EXTRA:-}" -only-requested="$only")
           echo "plan=$plan" >> "$GITHUB_OUTPUT"
           echo "### Contract tests planned" >> "$GITHUB_STEP_SUMMARY"
           jq -r 'if length == 0 then "none (all newest releases verified)" else .[] | "- \(.release)" end' <<<"$plan" >> "$GITHUB_STEP_SUMMARY"
@@ -229,8 +226,10 @@ jobs:
           # reported, not fatal
           require-plugins: "false"
       - name: Contract test ${{ matrix.release }}
+        env:
+          RELEASE: ${{ matrix.release }}
         run: |
-          tools/testvm.sh contract "dist/${{ matrix.release }}/opnsense-${{ matrix.release }}.ir.json" 2>&1 | tee .cache/vm/verify.log
+          tools/testvm.sh contract "dist/$RELEASE/opnsense-$RELEASE.ir.json" 2>&1 | tee .cache/vm/verify.log
       # which code of the contract test ran against the instance; floor in
       # tools/ci/coverage-floor.txt
       - name: Contract test coverage
@@ -250,11 +249,13 @@ jobs:
         env:
           PLUGINS: ${{ steps.vm.outputs.plugins }}
           FAILED: ${{ steps.vm.outputs.failed }}
+          RELEASE: ${{ matrix.release }}
+          ACCEL: ${{ steps.vm.outputs.acceleration || '-' }}
         run: |
-          f="dist/${{ matrix.release }}/opnsense-${{ matrix.release }}.verified.json"
+          f="dist/$RELEASE/opnsense-$RELEASE.verified.json"
           {
-            echo "### ${{ matrix.release }} (instance $(jq -r '.instance_version // "-"' "$f" 2>/dev/null))"
-            echo "acceleration: ${{ steps.vm.outputs.acceleration || '-' }}"
+            echo "### $RELEASE (instance $(jq -r '.instance_version // "-"' "$f" 2>/dev/null))"
+            echo "acceleration: $ACCEL"
             echo "plugins: $(tr ',' '\n' <<<"$PLUGINS" | grep -c .) installed, failed: ${FAILED:-none}"
             echo '```'
             jq -r '[.results[] | "\(.check)/\(.status)"] | group_by(.) | map("\(.[0]) \(length)") | .[]' "$f" 2>/dev/null || echo "no results"
@@ -265,8 +266,8 @@ jobs:
             [ -f "$f" ] && go run ./cmd/opnsense-api-spec failures "$f" | tee .cache/vm/failures.md
           } >> "$GITHUB_STEP_SUMMARY"
           mkdir -p out
-          echo "${{ matrix.release }}" > out/release
-          cp "$f" "dist/${{ matrix.release }}/opnsense-${{ matrix.release }}.openapi.json" out/ 2>/dev/null || true
+          echo "$RELEASE" > out/release
+          cp "$f" "dist/$RELEASE/opnsense-$RELEASE.openapi.json" out/ 2>/dev/null || true
           cp .cache/vm/verify.log .cache/vm/console.log .cache/vm/proxy.log .cache/vm/failures.md .cache/vm/install-*.log out/ 2>/dev/null || true
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()

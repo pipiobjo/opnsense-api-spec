@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -392,6 +393,48 @@ func (idx *Index) SetUnusedAccepted(list []verify.Accepted) {
 			idx.UnusedAccepted = append(idx.UnusedAccepted, id)
 		}
 	}
+}
+
+// PlanLeg is one contract test of the workflow matrix.
+type PlanLeg struct {
+	Release string `json:"release"`
+	Series  string `json:"series"`
+}
+
+// Plan returns the contract tests of a run in version order: VerifyPlan
+// (none with onlyRequested) plus the requested releases. A requested
+// release must be built (in the index) and every name must be a release
+// name of its series (pkgrepo.ValidRelease), so nothing else reaches the
+// workflow matrix; blank entries are ignored.
+func (idx *Index) Plan(requested []string, onlyRequested bool) ([]PlanLeg, error) {
+	series := map[string]string{}
+	for _, r := range idx.Releases {
+		series[r.Release] = r.Series
+	}
+	plan := idx.VerifyPlan()
+	if onlyRequested {
+		plan = []string{}
+	}
+	for _, r := range requested {
+		if r = strings.TrimSpace(r); r == "" {
+			continue
+		}
+		if _, ok := series[r]; !ok {
+			return nil, fmt.Errorf("requested release %q is not built", r)
+		}
+		if !slices.Contains(plan, r) {
+			plan = append(plan, r)
+		}
+	}
+	slices.SortFunc(plan, pkgrepo.CompareVersions)
+	legs := []PlanLeg{}
+	for _, r := range plan {
+		if !pkgrepo.ValidRelease(series[r], r) {
+			return nil, fmt.Errorf("index lists %q, not a release name of series %q", r, series[r])
+		}
+		legs = append(legs, PlanLeg{r, series[r]})
+	}
+	return legs, nil
 }
 
 // VerifyPlan returns the releases a scheduled run contract-tests, in

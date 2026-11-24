@@ -25,6 +25,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/pipiobjo/opnsense-api-spec/internal/fragment"
 	"github.com/pipiobjo/opnsense-api-spec/internal/ir"
@@ -254,7 +255,7 @@ func setup(t *testing.T) (*mirror, *Pipeline, string) {
 	t.Cleanup(srv.Close)
 	tmp := t.TempDir()
 	p := &Pipeline{
-		Client:  pkgrepo.NewClient(srv.URL, filepath.Join(tmp, "cache")),
+		Client:  fastRetry(pkgrepo.NewClient(srv.URL, filepath.Join(tmp, "cache"))),
 		Keys:    map[string]pkgrepo.Key{pkgrepo.Fingerprint(m.pub()): {Name: "test-key", Status: "trusted"}},
 		Arch:    "amd64",
 		Dist:    filepath.Join(tmp, "dist"),
@@ -572,6 +573,36 @@ func TestSetUnusedAccepted(t *testing.T) {
 	}
 }
 
+// Claim (SEC-5): the workflow matrix holds only built releases with
+// release names; a requested release is added once, in version order.
+func TestPlan(t *testing.T) {
+	idx := &Index{Releases: []IndexRelease{
+		{Release: "26.1.11", Series: "26.1", NeedsVerification: true},
+		{Release: "26.7.9", Series: "26.7"},
+		{Release: "26.7.10", Series: "26.7", NeedsVerification: true},
+	}}
+	legs, err := idx.Plan([]string{" 26.7.9", "", "26.1.11"}, false)
+	want := []PlanLeg{{"26.1.11", "26.1"}, {"26.7.9", "26.7"}, {"26.7.10", "26.7"}}
+	if err != nil || !reflect.DeepEqual(legs, want) {
+		t.Errorf("plan %v %v, want %v", legs, err, want)
+	}
+	if legs, err = idx.Plan([]string{"26.7.9"}, true); err != nil || !reflect.DeepEqual(legs, []PlanLeg{{"26.7.9", "26.7"}}) {
+		t.Errorf("only requested: %v %v", legs, err)
+	}
+	if legs, err = idx.Plan(nil, true); err != nil || len(legs) != 0 || legs == nil {
+		t.Errorf("nothing: %#v %v (want an empty list, printed as [])", legs, err)
+	}
+	for _, bad := range []string{"..", "26.7.8", "$(id)"} {
+		if _, err := idx.Plan([]string{bad}, false); err == nil {
+			t.Errorf("%q must be refused", bad)
+		}
+	}
+	idx.Releases = append(idx.Releases, IndexRelease{Release: "26.7.99/../x", Series: "26.7", NeedsVerification: true})
+	if _, err := idx.Plan(nil, false); err == nil {
+		t.Error("an index entry that is no release name must not reach the matrix")
+	}
+}
+
 func TestVerifyPlan(t *testing.T) {
 	idx := &Index{Releases: []IndexRelease{
 		{Release: "26.1.10", Series: "26.1", NeedsVerification: true},
@@ -720,4 +751,10 @@ func TestUnavailablePackages(t *testing.T) {
 	if o := outcome(t, outs, "26.7.2"); o.Action != ActionBuild {
 		t.Errorf("26.7.2 must still be built after the failure: %+v", o)
 	}
+}
+
+// fastRetry keeps the retries of server errors but without the pauses.
+func fastRetry(c *pkgrepo.Client) *pkgrepo.Client {
+	c.Backoff = time.Millisecond
+	return c
 }

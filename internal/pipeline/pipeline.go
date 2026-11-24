@@ -163,6 +163,11 @@ func (p *Pipeline) Fetch(version string, plugins bool, dir string) (*Fetched, er
 	if !ok {
 		return nil, fmt.Errorf("no core package in catalog")
 	}
+	// the release name comes from an unsigned directory listing; the
+	// signed core version must belong to it
+	if !pkgrepo.CoreMatchesRelease(core.Version, r.Version) {
+		return nil, fmt.Errorf("release %s: the signed catalog has core %s, not this release", r.Version, core.Version)
+	}
 	pkgs := []pkgrepo.Package{core}
 	if plugins {
 		for _, pk := range cat.Plugins() {
