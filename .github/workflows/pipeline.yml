@@ -68,6 +68,16 @@ on:
         description: Dry run only - upload the newest release to a draft, check it as published, delete it
         type: boolean
         default: false
+      # the two overrides of the state checks (tools/ci/state.sh); each is
+      # for one run a person decided on, never for the schedule
+      accept-unattested-state:
+        description: Build on a state without provenance attestation (once, after a repair by hand)
+        type: boolean
+        default: false
+      allow-fewer-verified:
+        description: Save a state with fewer contract test records than the previous one
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -114,6 +124,9 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 180
+    permissions:
+      contents: read
+      attestations: read # the provenance of the state (tools/ci/state.sh restore)
     outputs:
       plan: ${{ steps.plan.outputs.plan }}
     steps:
@@ -143,6 +156,7 @@ jobs:
       - name: Restore state
         env:
           GH_TOKEN: ${{ github.token }}
+          STATE_ACCEPT_UNATTESTED: ${{ inputs.accept-unattested-state == true && '1' || '' }}
         run: tools/ci/state.sh restore
       - name: Gates (format, vet, tests with golden releases, script tests)
         run: tools/ci/gates.sh
@@ -363,6 +377,8 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Pack state
+        env:
+          STATE_ALLOW_FEWER_VERIFIED: ${{ inputs.allow-fewer-verified == true && '1' || '' }}
         run: tools/ci/state.sh pack
       - name: Build capability data
         run: tools/ci/catalog.sh build
@@ -440,6 +456,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: tools/ci/check-published.sh releases
+      # the next run builds on the state only with this attestation
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            .cache/ci/state/dist.tar.zst
+            .cache/ci/state/index.json
       - name: Save state
         env:
           GH_TOKEN: ${{ github.token }}

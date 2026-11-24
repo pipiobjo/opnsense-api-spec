@@ -22,3 +22,4 @@ tools/ci/coverage.sh unit .cache/ci/unit.out coverage
 tools/ci/alerts_test.sh
 tools/ci/testvm_test.sh
 tools/ci/publish_test.sh
+tools/ci/state_test.sh

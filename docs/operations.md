@@ -118,3 +118,31 @@ the repository and starts only in live runs. A dry run therefore never
 holds a token that can sign. `publish.sh` deletes release assets that no
 longer belong to a release, and the check of what was published runs
 before the state is saved, so a failed check is repeated by the next run.
+
+## State
+
+The pipeline's memory is the release `state` (`dist.tar.zst`, `index.json`;
+ADR 0008): every contract test result of every release lives there. Three
+checks keep it from being lost or replaced unnoticed (`tools/ci/state.sh`):
+
+- Only a `state` release that does not exist (HTTP 404) starts a run from
+  scratch. Any other read failure fails the run; the next day retries.
+- The upload job attests `dist.tar.zst` and `index.json` before saving
+  them, and a live run builds only on a state with that attestation
+  (`pipeline.yml` on `main`). Dry runs warn and go on; they publish
+  nothing.
+- A run that would save fewer releases with a contract test record than
+  it restored fails before publishing anything.
+
+Each save keeps the state it replaces as `previous-dist.tar.zst` and
+`previous-index.json`. To roll back one run, download those two and upload
+them as `dist.tar.zst` and `index.json` (`gh release upload state
+--clobber`); their attestations still match. A state that was changed in
+any other way, or one from before attestations existed (until the first
+live run after 2026-11-24), needs one manual run with
+`accept-unattested-state` on; a deliberate loss of contract test history
+(for example a reset) one with `allow-fewer-verified` on. Both are inputs
+of a manual `pipeline.yml` run and never apply to the schedule. Do not
+delete the `state` release once Immutable Releases are on: a release
+created afterwards can never replace its assets again, and the tag name
+cannot be reused.
