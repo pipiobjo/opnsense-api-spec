@@ -201,8 +201,15 @@
         "multiple": {"type": "boolean"},
         "required": {"type": "boolean"},
         "volatile": {"type": "boolean"},
-        "server_set": {"type": "boolean", "description": "the firewall fills the field itself and ignores a value sent"},
-        "write_only": {"type": "boolean", "description": "stored but never returned (passwords)"},
+        "list": {
+          "type": "object",
+          "required": ["separator", "ordered"],
+          "description": "the value is a list of elements joined by separator; ordered: the firewall keeps the order written",
+          "properties": {"separator": {"type": "string", "minLength": 1}, "ordered": {"type": "boolean"}}
+        },
+        "server_set": {"type": "boolean", "description": "the firewall fills the field itself or discards every value written"},
+        "write_only": {"type": "boolean", "description": "get returns it empty; search may return the stored value (OPNsense 26.1.8 and later)"},
+        "empty_ignored": {"type": "boolean", "description": "writing the empty value leaves the stored value unchanged"},
         "default": {"type": "string"},
         "options": {
           "type": "array",
@@ -247,7 +254,9 @@
         "date": {"type": "string"},
         "read": {"$ref": "#/$defs/status"},
         "write": {"$ref": "#/$defs/status"},
-        "steps": {"type": "array", "items": {"enum": ["add", "read-back", "set", "read-back-set", "del"]}},
+        "steps": {"type": "array", "items": {"enum": ["add", "read-back", "set", "read-back-set", "list-order", "del", "restore", "read-back-restore"]}},
+        "same_definition_as": {"$ref": "#/$defs/hash", "description": "not tested in this fragment; copied from the tested fragment that defines the resource identically"},
+        "returned_by_search": {"$ref": "#/$defs/strings", "description": "write_only fields whose stored value search returned"},
         "sample": {"type": "object"},
         "generated": {"$ref": "#/$defs/strings"},
         "runtime_required": {"$ref": "#/$defs/strings"},

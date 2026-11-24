@@ -194,10 +194,12 @@ documents keep them.
 |---|---|
 | `type` | field class as written in the model XML (`OptionField`, `NetworkField`, a plugin's own class) |
 | `base` | the core base class it resolves to; decides validation and shape |
-| `read_shape` | `string`, or `select` (a read returns `{key: {value, selected}}`, a write takes the keys comma-separated); `unknown` when the class could not be resolved |
+| `read_shape` | `string`, or `select` (a read returns `{key: {value, selected}}`, a write takes the keys joined by the list separator); `unknown` when the class could not be resolved |
 | `multiple`, `required`, `volatile` | as in the model; `volatile` fields are not stored |
-| `server_set` | the firewall fills the field itself (base `UniqueIdField`, `AutoNumberField`, `JsonAuditField`) and ignores a value sent |
-| `write_only` | stored but never returned on read (`UpdateOnlyTextField`, for example passwords); a reader always sees it empty |
+| `list` | the value is a list of elements (see [List fields](#list-fields)): `separator` joins the elements on the wire, `ordered` says whether the firewall keeps the order written. Absent for single values |
+| `server_set` | the firewall fills the field itself (base `UniqueIdField`, `AutoNumberField`, `JsonAuditField`) or its type discards every value written (`LegacyLinkField`, whose value comes from the legacy configuration); a value sent has no effect |
+| `write_only` | `get` returns it empty, because the type's `__toString` returns an empty string (`UpdateOnlyTextField`, `ApiKeyField`: passwords, API keys). Not a secrecy guarantee: from OPNsense 26.1.8 on, `search` returns the stored value (a password hash, the API key blob), and a raw API call sees it. A consumer that must hide it drops it from search rows itself |
+| `empty_ignored` | a write of the empty value leaves the stored value unchanged (the type's `setValue` stores only non-empty values; with PHP's `empty()`, `"0"` counts as empty too). Such a field cannot be cleared through the API; a consumer should refuse the attempt instead of reporting success |
 | `default` | the model default; absent means empty |
 | `options` | static options from the model; dynamic options (interfaces, certificates) only exist on the instance |
 | `relations` | entry lists a relation field points to: `source` is the model class as written in the model, with dots and in any case (`OPNsense.quagga.ospf` for `OPNsense\Quagga\OSPF`; PHP class names are case-insensitive), `items` the list path |
@@ -206,6 +208,27 @@ documents keep them.
 
 An enum value's availability follows from the variants: an option exists
 in the fragments of the variants that list it.
+
+### List fields
+
+A field with `list` holds several elements in one wire string, joined by
+`list.separator`. Three kinds of field have it:
+
+| Field | Write | Read (`get`) | `ordered` |
+|---|---|---|---|
+| `multiple` option or relation field (`base` `BaseListField`) | selected keys, `,` | every option as `{key: {value, selected}}`, in the option order | `false`; `true` only for a relation field with `Sorted` `Y`, which lists the selected keys first in the stored order |
+| set field with `AsList` (`base` `BaseSetField`: `CSVListField`, a `NetworkField` or `HostnameField` with `<AsList>Y</AsList>`) | elements joined by `FieldSeparator` (default `,`) | `{element: {value, selected: 1}}`, one per stored element, in the stored order | `true` |
+| a type whose own `getNodeData` splits the value the same way (`AliasContentField`, separator newline) | elements joined by the separator | as above; the alias `getItem` also lists other aliases with `selected: 0` | `true` |
+
+A reader takes the keys with `selected` 1 in the order of the answer
+(JSON object member order; PHP keeps it). When the keys are `0`, `1`, ...
+PHP sends a JSON list instead of an object, and the index is the key. An
+empty value reads as one key `""`, which is the empty list. Because the
+keys of a JSON object are unique, a read returns each element once even if
+it was written twice. An element must not contain the separator.
+
+A set field without `AsList` (a `HostnameField` that takes one name) is a
+single value and has no `list`.
 
 ### Operations and actions
 
@@ -300,24 +323,41 @@ os-frr on 26.7.9:
 - `read`: the worst result of the read checks of `get` and `search`.
 - `write`: for entry lists the write cycle: `ok` with `set` in `steps`
   means add, update and delete were each read back; without `set`, the
-  update was not tested. For settings one field written back with its
-  current value and read back (`steps`: set, read-back); nothing changes
-  on the instance. `skipped` means not written, and is not a pass; the
-  finding says why: for settings "model not valid in its default state"
-  (a plugin needs required settings first), "set does not save
-  configuration" (a job or action under the name `set`, such as
-  `core/firmware`), "not a configuration resource", or "no plain field".
+  update was not tested. `list-order` in `steps` means a list field
+  (`list.ordered`) was written with two elements out of sorted order and
+  read back in that order. Write-only fields the cycle sent are checked
+  to come back empty from `get`. For settings one field is set to a value
+  different from its current one, read back, set back to the original
+  value and read back again (`steps`: set, read-back, restore,
+  read-back-restore), so a `set` that answers "saved" but stores nothing
+  is a `mismatch`. `ok` covers the fields in `sample` (entries) or the one
+  changed field (settings), not every field. `skipped` means not written,
+  and is not a pass; the finding says why: for settings "model not valid in its
+  default state" (a plugin needs required settings first), "set does not
+  save configuration" (a job or action under the name `set`, such as
+  `core/firmware`), "not a configuration resource", "no plain field" or
+  "no other value accepted".
+- `returned_by_search`: `write_only` fields whose stored value the
+  `search` answer contained in this run (entry lists; see `write_only`).
 - `runtime_required`: fields the instance required although the model does
   not mark them as required; `findings` say why a test did not pass.
 - `sample`: an entry the instance accepted. Option values in it may only
   exist on the test instance.
-- No entry for a fragment: not tested. Only the newest release per series
-  is tested on each run; older fragments keep their last result, or none.
+- `same_definition_as`: this fragment was not tested itself. The resource
+  has the same definition here (every `api` and `fields` variant that
+  applies) as in the named fragment, which was tested in a release of the
+  same series; `release`, `composition` and the results are that test's.
+  Without the key, the result is from this fragment itself.
+- No entry for a fragment: not tested, and no tested fragment of the
+  series defines the resource the same way. Only the newest release per
+  series is tested on each run; older fragments keep their last result, or
+  none.
 - Entry lists with several families (bind domains) get one write cycle
   per family.
 
 Consumers should show this to users ("written and read back on 26.7.9",
-"not tested") rather than treat everything as equally reliable.
+"same definition as tested on 26.7.9", "not tested") rather than treat
+everything as equally reliable.
 
 ## What a consumer still decides
 
@@ -326,14 +366,15 @@ provider needs cannot be derived from it, and the format says nothing
 rather than guess:
 
 - **Secrets.** OPNsense models do not mark a field as secret. Only
-  `write_only` fields are recognisable. Fields such as a `password` or
+  `write_only` fields are recognisable, and even those are returned by
+  `search` on newer releases. Fields such as a `password` or
   `secret` of type `TextField` (more than 200 over all packages) look like
   any other text. A provider has to decide which fields to treat as
   sensitive, for example by name, and should err towards hiding.
 - **Value types.** Every value is a string on the wire. `base` and
   `multiple` decide how to present it: `BooleanField` is `"0"`/`"1"`,
-  `IntegerField` and `NumericField` are numbers as strings, `multiple`
-  fields are comma-separated lists, `server_set` fields are set by the
+  `IntegerField` and `NumericField` are numbers as strings, fields with
+  `list` are lists joined by `list.separator`, `server_set` fields are set by the
   firewall. `base` is the nearest class of the core, not
   the root of the hierarchy (`StrictTextField` and `TextField` are both
   bases), so a consumer keeps a small table from base to its own type. A
@@ -346,7 +387,12 @@ rather than guess:
 
 - `format` changes only for changes that break readers: renamed or removed
   keys, changed meaning. Adding keys does not change it; readers must
-  ignore unknown keys.
+  ignore unknown keys. Added so far: `version-order.json` (2026-11-18);
+  `list`, `empty_ignored`, `same_definition_as`, `returned_by_search` and
+  the steps `restore`, `read-back-restore`, `list-order` (generator
+  0.10.0). With 0.10.0 settings `write` changed from writing back the
+  current value to writing a different one; older results of settings
+  have `steps` [set, read-back] only.
 - Fragment hashes are content addresses and do not change. A new generator
   version can produce new fragments for the same package version; the
   older ones stay in the data as long as a catalog state refers to them.

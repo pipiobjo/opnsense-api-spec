@@ -52,6 +52,7 @@ type Node struct {
 	BaseType string            `json:"base_type,omitempty"` // resolved core base class, e.g. "BaseListField"
 	Shape    Shape             `json:"read_shape,omitempty"`
 	Multiple bool              `json:"multiple,omitempty"`
+	List     *List             `json:"list,omitempty"`
 	Required bool              `json:"required,omitempty"`
 	Volatile bool              `json:"volatile,omitempty"`
 	Default  *string           `json:"default,omitempty"`
@@ -62,6 +63,14 @@ type Node struct {
 	Relations []Relation `json:"relations,omitempty"`
 	Children  []*Node    `json:"children,omitempty"`
 	Gaps      []gap.Gap  `json:"gaps,omitempty"`
+}
+
+// List describes a field whose value is a list of elements: the
+// separator that joins them on the wire and whether the firewall keeps the
+// order written (a read returns the elements in that order).
+type List struct {
+	Separator string `json:"separator"`
+	Ordered   bool   `json:"ordered"`
 }
 
 // Relation is one target of a ModelRelationField: model class (dotted, as

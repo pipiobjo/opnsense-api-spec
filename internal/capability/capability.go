@@ -176,16 +176,21 @@ type Field struct {
 	Multiple  bool   `json:"multiple,omitempty"`
 	Required  bool   `json:"required,omitempty"`
 	Volatile  bool   `json:"volatile,omitempty"`
-	// ServerSet: the firewall fills the field itself and ignores a value
-	// sent; WriteOnly: stored but never returned (passwords). Consumers
-	// use these flags instead of a list of field types.
-	ServerSet bool              `json:"server_set,omitempty"`
-	WriteOnly bool              `json:"write_only,omitempty"`
-	Default   *string           `json:"default,omitempty"`
-	Options   []model.Option    `json:"options,omitempty"`
-	Relations []model.Relation  `json:"relations,omitempty"`
-	Props     map[string]string `json:"constraints,omitempty"`
-	Gaps      []string          `json:"gaps,omitempty"`
+	// List: the value is a list of elements (multiple, AsList, a type
+	// that splits its value on read); nil for single values.
+	List *model.List `json:"list,omitempty"`
+	// ServerSet: the firewall fills the field itself or discards a value
+	// sent; WriteOnly: get returns it empty (search may not); EmptyIgnored:
+	// writing "" does not clear it. Consumers use these flags instead of a
+	// list of field types.
+	ServerSet    bool              `json:"server_set,omitempty"`
+	WriteOnly    bool              `json:"write_only,omitempty"`
+	EmptyIgnored bool              `json:"empty_ignored,omitempty"`
+	Default      *string           `json:"default,omitempty"`
+	Options      []model.Option    `json:"options,omitempty"`
+	Relations    []model.Relation  `json:"relations,omitempty"`
+	Props        map[string]string `json:"constraints,omitempty"`
+	Gaps         []string          `json:"gaps,omitempty"`
 }
 
 // Action is an endpoint that is not a resource operation (service
@@ -216,6 +221,12 @@ type ResVerify struct {
 	Generated       []string       `json:"generated,omitempty"`
 	RuntimeRequired []string       `json:"runtime_required,omitempty"`
 	Findings        []string       `json:"findings,omitempty"`
+	// ReturnedBySearch: write-only fields whose stored value the search
+	// answer contained.
+	ReturnedBySearch []string `json:"returned_by_search,omitempty"`
+	// SameDefinitionAs: this fragment was not tested; the result is the
+	// one of the named fragment, where the resource is defined identically.
+	SameDefinitionAs string `json:"same_definition_as,omitempty"`
 }
 
 // Build reads dist/ (compositions, fragments, verification reports) and
