@@ -13,6 +13,9 @@
 #             attestation, a check of what was published (downloaded
 #             without credentials), state, capability data. Runs gh and
 #             shell only, nothing of the build (ADR 0015)
+#   check-catalog
+#             every run: the published capability data as a consumer gets
+#             it, data_id recomputed (read-only token; runs the generator)
 #   roundtrip dry runs from promote.yml: the newest release through a draft
 #             release that is deleted again (tools/ci/roundtrip.sh)
 #   report    on any failure: the findings on the run's summary page;
@@ -479,6 +482,28 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: tools/ci/catalog.sh publish ${{ env.CATALOG_LIVE != 'true' && '--dry-run' || '' }}
+
+  # The capability data as a consumer gets it, with its data_id recomputed
+  # from the content by the generator: after a live upload the new state,
+  # in a dry run what is public now. Runs Go, so not in the upload job
+  # (ADR 0015); its token can only read.
+  check-catalog:
+    needs: [prepare, upload]
+    if: >-
+      !cancelled() && needs.prepare.result == 'success' &&
+      (needs.upload.result == 'success' || needs.upload.result == 'skipped')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      attestations: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
+        with:
+          minimum_release_age: 7d # only mise releases at least a week old
       - name: Check the published capability data
         env:
           GH_TOKEN: ${{ github.token }}
@@ -540,7 +565,7 @@ jobs:
           fi
 
   report:
-    needs: [keepalive, build, contract, prepare, upload, roundtrip, complete]
+    needs: [keepalive, build, contract, prepare, upload, check-catalog, roundtrip, complete]
     if: always() && contains(needs.*.result, 'failure')
     runs-on: ubuntu-24.04
     timeout-minutes: 10

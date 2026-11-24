@@ -1,8 +1,10 @@
 # 0010: Capability data per package instead of an OpenAPI superset
 
-Status: accepted 2026-11-15. Publication was switched off again the same
-day (`CATALOG_PUBLISH=false`) until a consumer had used the format;
-amended 2026-11-18: immutable release per data state (see Decision).
+Status: accepted 2026-11-15; amended 2026-11-18 (a release per data
+state) and 2026-11-24 (the pointer `catalog-v1`, the `data_id` checked
+after publishing; see Decision). Published as pre-releases since
+2026-11-18 (`CATALOG_PUBLISH=true`); it was off from 2026-11-15 until
+then.
 
 ## Context
 
@@ -56,9 +58,22 @@ Measured on the published data (34 releases, core and 75 packages):
   that is never changed. The review also found the build was not
   deterministic (map order in the verification results); fixed and
   guarded.
+- Amendment 2026-11-24 (architecture review): the fixed release
+  `catalog-v1-386ea34c45d263ba` named a `data_id` over a file its archive
+  lacked, and nothing recomputed the `data_id` of what was published. Now
+  `tools/ci/check-published.sh catalog` recomputes it after every run
+  (generator command `data-id`, in a read-only job after the upload, ADR
+  0015), and `catalog.sh publish` compares an existing fixed release with
+  the build instead of skipping it. The rolling `catalog` carried no
+  format and its files are replaced one by one; the pointer `catalog-v1`
+  (release notes `data_id: <id>`, no files, the tag never moves) names
+  the newest format-1 state and moves only after the fixed release is
+  complete. A new format gets its own pointer; the old one stays at its
+  last state (docs/capabilities.md, Identity and releases).
 - Publishing is controlled by the repository variable `CATALOG_PUBLISH`
-  (off since 2026-11-15 20:48 UTC); every run builds and validates the
-  data and keeps it as a workflow artifact either way.
+  (on since 2026-11-18; off from 2026-11-15 20:48 UTC until then); every
+  run builds and validates the data and keeps it as a workflow artifact
+  either way.
 
 ## Consequences
 

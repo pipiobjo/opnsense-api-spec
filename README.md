@@ -68,11 +68,10 @@ data**: every resource, field and action over all versions, with the
 package versions they exist in and the contract test results, as plain
 JSON ([docs/capabilities.md](docs/capabilities.md)). It is built and
 checked on every pipeline run (`go run ./cmd/opnsense-api-spec
-capabilities`) and kept as a workflow artifact. Publication as the
-release `catalog` is switched off (repository variable
-`CATALOG_PUBLISH`) until the planned OpenTofu provider has used the
-format; until then consumers build it from the published pipeline state
-(see opnsense-api-go's `tools/ci/catalog.sh`).
+capabilities`) and published as GitHub pre-releases: one release
+`catalog-v1-<data_id>` per data state that never changes, and the release
+`catalog-v1`, whose notes name the newest state. How to find, download and
+verify it: [docs/capabilities.md, Identity and releases](docs/capabilities.md#identity-and-releases).
 
 ## Usage
 

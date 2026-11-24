@@ -38,6 +38,7 @@
 # and previous-index.json (still attested: an attestation is bound to the
 # content). Uploading them as dist.tar.zst and index.json rolls back one run.
 set -euo pipefail
+shopt -s inherit_errexit # a failure inside $(...) ends the script too
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TAG="state"

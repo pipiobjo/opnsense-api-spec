@@ -23,3 +23,4 @@ tools/ci/alerts_test.sh
 tools/ci/testvm_test.sh
 tools/ci/publish_test.sh
 tools/ci/state_test.sh
+tools/ci/catalog_test.sh

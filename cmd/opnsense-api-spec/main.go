@@ -61,6 +61,9 @@ commands:
   sbom                     write the SBOM (CycloneDX 1.6) of every release in
                            -dist: the packages its description was derived
                            from (dist/<release>/opnsense-<release>.sbom.cdx.json)
+  data-id DIR              recompute the data_id of unpacked capability data
+                           (catalog.json and the files of capabilities.tar.zst)
+                           and fail unless catalog.json names it
   failures FILE...         print the failing checks of *.verified.json files
                            as Markdown lines (what the run summary and the
                            failure report show; the rule is verify.Status)
@@ -200,6 +203,11 @@ func main() {
 		err = cmdCapabilities(pl.Dist, dir)
 	case "failures":
 		err = cmdFailures(fs.Args())
+	case "data-id":
+		if fs.NArg() != 1 {
+			usage()
+		}
+		err = cmdDataID(fs.Arg(0))
 	case "sbom":
 		err = cmdSBOM(pl.Dist)
 	case "plan":
@@ -363,6 +371,25 @@ func cmdVerify(o opts, accepted *string) error {
 	// show up in the counts; accepted findings are no longer mismatch/error
 	if n := failures(rep); n > 0 {
 		return fmt.Errorf("%d contract check(s) failed; see %s.verified.json", n, base)
+	}
+	return nil
+}
+
+// cmdDataID checks that unpacked capability data is what its catalog.json
+// claims: the recomputed data_id equals the declared one (the identity of
+// a published catalog-v1-<data_id> release; tools/ci/check-published.sh).
+func cmdDataID(dir string) error {
+	var c capability.Catalog
+	if err := jsonfile.Read(filepath.Join(dir, "catalog.json"), &c); err != nil {
+		return err
+	}
+	id, err := capability.DataIDOf(dir)
+	if err != nil {
+		return err
+	}
+	fmt.Println(id)
+	if id != c.DataID {
+		return fmt.Errorf("catalog.json claims data_id %s, the content is %s", c.DataID, id)
 	}
 	return nil
 }

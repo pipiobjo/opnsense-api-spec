@@ -42,7 +42,13 @@ permissions) as in scope.
    its own job (`roundtrip`) with `contents: write` (a draft release) and
    no `id-token`. `promote.yml` still grants the rights to the called
    workflow, because GitHub checks the grant before any job starts.
-4. **The token only where `gh` runs.** No workflow-level `GH_TOKEN`; each
+4. **Checks that need the generator run after `upload`, read-only.** The
+   check of the published capability data recomputes its `data_id` with
+   the generator (`data-id`); it runs in its own job, `check-catalog`,
+   with `contents: read` and `attestations: read`, after `upload` (in a
+   dry run: against what is public). The checks inside `upload` use only
+   `gh`, `curl` and shell (`check-published.sh releases`).
+5. **The token only where `gh` runs.** No workflow-level `GH_TOKEN`; each
    step that calls `gh` gets it. Checkouts keep no credentials
    (`persist-credentials: false`). In `prepare` the token can only read.
 

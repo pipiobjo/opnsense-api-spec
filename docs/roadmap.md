@@ -89,8 +89,10 @@ generator changes.
    built and validated on every run, release `catalog` with `SHA256SUMS`
    and attestations. Format 1 accepted 2026-11-15; additions found by the
    client: `shared_with`, `forced`/`computed`/`transformed`, resource
-   families (`@<family>`), gap `magic-call`. Publication paused until the
-   provider has used the format (`CATALOG_PUBLISH=false`). `moved_from`
+   families (`@<family>`), gap `magic-call`. Published as pre-releases
+   since 2026-11-18: `catalog-v1-<data_id>` per state, the pointer
+   `catalog-v1` (2026-11-24) and the rolling `catalog` until the client
+   reads the pointer. `moved_from`
    decided against (ADR 0014, 2026-11-18).
 10. **Retention and size.** `dist/` is ~540 MB for 34 releases (10 MB
     compressed); the Actions caches about 2.6 GB. Open: keeping the packages

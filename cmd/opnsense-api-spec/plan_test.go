@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pipiobjo/opnsense-api-spec/internal/capability"
 	"github.com/pipiobjo/opnsense-api-spec/internal/pipeline"
 )
 
@@ -58,5 +59,34 @@ func TestIndexAndPlanCommands(t *testing.T) {
 	}
 	if err := cmdPlan(dist, "26.7.5", true, false); err == nil {
 		t.Error("a release that is not built must be refused")
+	}
+}
+
+// Claim (REQ-1): data-id fails when catalog.json names another data_id
+// than its content has (catalog-v1-386ea34c45d263ba did).
+func TestDataIDCommand(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "catalog.json"), []byte(`{"format":1}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "version-order.json"), []byte(`{}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	id, err := capability.DataIDOf(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "catalog.json"), []byte(`{"format":1,"data_id":"`+id+`"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := stdout(t, func() error { return cmdDataID(dir) }); got != id {
+		t.Errorf("data-id printed %q, want %q", got, id)
+	}
+	// the file the identity covers is missing from the published archive
+	if err := os.Remove(filepath.Join(dir, "version-order.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmdDataID(dir); err == nil || !strings.Contains(err.Error(), "claims data_id "+id) {
+		t.Errorf("a missing file must fail: %v", err)
 	}
 }

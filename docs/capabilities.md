@@ -38,21 +38,56 @@ removed). The same data gives the same ID; any change in any file gives a
 new one. The build is deterministic and checks that itself: it builds
 twice and fails if the results differ.
 
-Each state is published twice, with identical assets (`catalog.json`,
-`capabilities.tar.zst`, `SHA256SUMS`) and build provenance attestations:
+Each state is published as its own release, and two rolling releases
+point to the newest one:
 
 | Release | Changes | Use it for |
 |---|---|---|
-| `catalog-v1-<data_id>` | never; created once per state | anything that must reproduce a state: a provider that embeds the data, a bug report |
-| `catalog` | replaced when the data changes | finding the newest state; its `catalog.json` names the fixed release |
+| `catalog-v1-<data_id>` | never: created as a draft, filled, then published once; an existing one is only compared with a new build, never changed | anything that must reproduce a state: a provider that embeds the data, a bug report |
+| `catalog-v1` | only its release notes: the line `data_id: <data_id>` of the newest state in format 1; no files, the tag never moves | finding the newest state, then downloading `catalog-v1-<data_id>` |
+| `catalog` | its files are replaced when the data changes | older consumers; kept until they read `catalog-v1`, then frozen |
 
-Both are GitHub pre-releases: format 1 may still change before the first
-provider release that uses it. A consumer verifies `SHA256SUMS`, then the
+The pipeline publishes the fixed release first and moves the pointer only
+when it is complete, so a consumer that follows the pointer never sees a
+mixed set of files (the files of `catalog` are replaced one by one and
+can). After every run, `tools/ci/check-published.sh catalog` downloads the
+state the pointer names as an anonymous consumer and checks it: file list,
+`SHA256SUMS`, attestation, and the `data_id` recomputed from the content
+(`opnsense-api-spec data-id DIR`). "Never changed" rests on that check and
+on the attestation, not on GitHub alone: while GitHub's Immutable Releases
+setting is off, the owner of the repository could still replace files;
+the attestation of the original files would then no longer match.
+
+Reading the pointer, then the state (anonymous; the API allows 60 such
+reads per hour and address):
+
+```sh
+id=$(curl -fsSL https://api.github.com/repos/pipiobjo/opnsense-api-spec/releases/tags/catalog-v1 \
+  | jq -r .body | sed -n 's/^data_id: \([0-9a-f]\{16\}\)\r\{0,1\}$/\1/p')
+gh release download "catalog-v1-$id" -R pipiobjo/opnsense-api-spec
+```
+
+A new format (a breaking change, see Compatibility rules) gets a new
+pointer, `catalog-v2`, and new fixed releases `catalog-v2-<data_id>`. The
+format-1 pointer and its fixed releases stay as they are: a reader of
+format 1 keeps working with the last format-1 state; it does not receive
+newer data until it reads format 2. No format is produced twice in
+parallel.
+
+`catalog-v1-386ea34c45d263ba` (2026-11-18) is defective: its
+`catalog.json` names a `data_id` over a file the archive lacks
+(`version-order.json`); its content is that of
+`catalog-v1-f79a4c510ffefa42`. The build has since packed every file it
+hashes, and the check above recomputes the `data_id` of what is published.
+
+All of them are GitHub pre-releases: format 1 may still change before the
+first provider release that uses it. A consumer verifies `SHA256SUMS`, then the
 attestation (`gh attestation verify <file> -R pipiobjo/opnsense-api-spec
 --signer-workflow pipiobjo/opnsense-api-spec/.github/workflows/pipeline.yml
 --source-ref refs/heads/main`: only the publishing pipeline on `main`
 counts, not a dry run from another branch),
-and reports the `data_id` it uses.
+and reports the `data_id` it uses; a consumer that embeds the data also
+recomputes the `data_id` from the content (the rule above).
 
 ## Identifiers
 
