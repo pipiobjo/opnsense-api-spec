@@ -22,7 +22,8 @@ is derived from where and why. This page explains how.
 | `internal/gap` | gap codes; every code has a row in concepts.md (a test checks) |
 | `internal/mutation` | targeted mutants of the key checks; each must make its test fail (add a case for a new security or verdict check) |
 | `tools/testvm.sh` | the throwaway OPNsense VM |
-| `tools/ci/` | scripts the workflows run; each also runs locally |
+| `tools/ci/` | scripts the workflows run; each also runs locally; `gh-lib.sh` decides "release absent" (HTTP 404 only) for all of them |
+| `tools/pins.env` | pins Dependabot cannot see (the `golang` image, CI tools); `tools/ci/pins.sh` reports outdated ones to the watchdog |
 | `verify/accepted.json` | upstream behaviour declared as expected, with evidence |
 
 What each test shows: [testing.md](testing.md). A new test is named there

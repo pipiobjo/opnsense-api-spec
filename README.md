@@ -224,7 +224,8 @@ internal/jsonfile/       reading and writing the JSON files in one format
 verify/accepted.json     reviewed upstream findings that do not count as failures
 tools/testvm.sh          throwaway OPNsense VM (QEMU/KVM, software emulation fallback)
 .github/actions/testvm/  the VM as a GitHub Action for other repositories
-tools/ci/                pipeline helpers (gates, state, publish, round trip, published-file check, failure report, needs-you check)
+tools/ci/                pipeline helpers (gates, state, publish, capability data, round trip, published-file check, failure report, needs-you check, pins)
+tools/pins.env           pins Dependabot cannot see
 test/consumer-go/        consumer scenario for the generated Go client
 ```
 
