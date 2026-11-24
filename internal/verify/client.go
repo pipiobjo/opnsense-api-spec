@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -68,18 +70,26 @@ func (c *Client) schema(e *ir.Endpoint, method, pathTemplate string, body any) {
 	c.schemaResults = append(c.schemaResults, knownGap(r, e))
 }
 
+// TestInstance accepts base only when it is https on exactly one of the
+// allowed hosts: parsed, not compared as text, so userinfo
+// ("https://127.0.0.1:1@192.0.2.1" has the host 192.0.2.1), a path, a
+// query or a fragment cannot hide another host (requirement C1: tests run
+// only against the throwaway VM).
+func TestInstance(base string, allowed []string) error {
+	u, err := url.Parse(base)
+	if err == nil && u.Scheme == "https" && u.User == nil && u.Opaque == "" && u.RawQuery == "" && u.Fragment == "" &&
+		strings.TrimRight(u.Path, "/") == "" && slices.Contains(allowed, u.Hostname()) {
+		return nil
+	}
+	return fmt.Errorf("refusing %s: only https on %v is allowed as a test instance", base, allowed)
+}
+
 // NewClient creates a client for a local test instance. The instance uses
 // a self-signed certificate; certificate checks are skipped only for hosts
 // in allowed (normally 127.0.0.1 port forwards to the throwaway VM).
 func NewClient(base, key, secret string, allowed []string) (*Client, error) {
-	ok := false
-	for _, h := range allowed {
-		if strings.HasPrefix(base, "https://"+h+":") || base == "https://"+h {
-			ok = true
-		}
-	}
-	if !ok {
-		return nil, fmt.Errorf("refusing %s: only %v are allowed as test instances", base, allowed)
+	if err := TestInstance(base, allowed); err != nil {
+		return nil, err
 	}
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // #nosec G402 -- throwaway local VM only

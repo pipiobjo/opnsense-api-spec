@@ -17,13 +17,18 @@ import (
 
 func TestNewClientRefusesOtherHosts(t *testing.T) {
 	allowed := []string{"127.0.0.1", "localhost"}
-	for _, u := range []string{"https://192.0.2.1", "https://192.0.2.1:443", "https://127.0.0.1.evil:1", "http://127.0.0.1:18443"} {
+	for _, u := range []string{"https://192.0.2.1", "https://192.0.2.1:443", "https://127.0.0.1.evil:1", "http://127.0.0.1:18443",
+		// userinfo that looks like an allowed host: the real host is 192.0.2.1
+		"https://127.0.0.1:18443@192.0.2.1", "https://127.0.0.1:x@192.0.2.1/", "https://localhost@fw.example.com:443",
+		"https://127.0.0.1:18443/@192.0.2.1", "https://127.0.0.1:18443?x=@192.0.2.1", "https://127.0.0.1:18443#@192.0.2.1"} {
 		if _, err := NewClient(u, "k", "s", allowed); err == nil {
 			t.Errorf("%s must be refused", u)
 		}
 	}
-	if _, err := NewClient("https://127.0.0.1:18443", "k", "s", allowed); err != nil {
-		t.Error(err)
+	for _, u := range []string{"https://127.0.0.1:18443", "https://127.0.0.1:18443/", "https://localhost", "https://localhost:8443"} {
+		if _, err := NewClient(u, "k", "s", allowed); err != nil {
+			t.Error(err)
+		}
 	}
 }
 

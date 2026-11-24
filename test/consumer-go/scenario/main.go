@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"strings"
 
@@ -38,7 +39,10 @@ func short(b []byte) string {
 
 func main() {
 	url, key, secret := os.Getenv("OPN_URL"), os.Getenv("OPN_KEY"), os.Getenv("OPN_SECRET")
-	if !strings.HasPrefix(url, "https://127.0.0.1:") {
+	// parsed, not compared as text: "https://127.0.0.1:1@192.0.2.1" has the
+	// host 192.0.2.1 (the same rule as verify.TestInstance in the
+	// generator, which this separate module cannot import)
+	if u, err := neturl.Parse(url); err != nil || u.Scheme != "https" || u.User != nil || u.Hostname() != "127.0.0.1" {
 		fmt.Println("refusing: only the local test VM is allowed")
 		os.Exit(2)
 	}
