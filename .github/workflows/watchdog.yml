@@ -49,8 +49,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           # interface: tools/ci/alerts.sh
-          WD_WATCH: >-
-            pipiobjo/opnsense-api-go:spec-update.yml
-            pipiobjo/opnsense-api-go:watchdog.yml
+          # a copy sets the repository variable WD_WATCH (development.md,
+          # "Running your own copy"); upstream's pairs only in this repository
+          WD_WATCH: ${{ vars.WD_WATCH || (github.repository == 'pipiobjo/opnsense-api-spec' && 'pipiobjo/opnsense-api-go:spec-update.yml pipiobjo/opnsense-api-go:watchdog.yml' || '') }}
           WD_PROMOTE: promote.yml
         run: tools/ci/alerts.sh check

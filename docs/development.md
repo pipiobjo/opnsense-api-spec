@@ -153,7 +153,11 @@ refuses a commit that did not pass `promote.yml`.
 ## Running your own copy
 
 Nothing in the repository depends on its name or owner when it runs in
-GitHub Actions; scripts take the name from `GITHUB_REPOSITORY`. The
+GitHub Actions; scripts take the name from `GITHUB_REPOSITORY`. The one
+exception is what the watchdog watches in other repositories: the
+repository variable `WD_WATCH` (space-separated `owner/repo:workflow.yml`
+pairs, for example your copy of opnsense-api-go's `spec-update.yml` and
+`watchdog.yml`); without it a copy watches only itself. The
 default `pipiobjo/opnsense-api-spec` in the scripts is only for local
 runs, and `TESTVM_SPEC_REPO` overrides the source of release files in
 `tools/testvm.sh`. No secret is needed: everything uses the workflow
