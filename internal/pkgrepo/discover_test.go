@@ -50,7 +50,9 @@ func TestDiscoverIgnoresBadNames(t *testing.T) {
 		case "/":
 			fmt.Fprint(w, `<a href="FreeBSD:15:amd64/">x</a>`)
 		case "/FreeBSD:15:amd64/":
-			fmt.Fprint(w, `<a href="26.7/">x</a>`)
+			fmt.Fprint(w, `<a href="21.1/">x</a><a href="26.7/">x</a>`)
+		case "/FreeBSD:15:amd64/21.1/MINT/":
+			fmt.Fprint(w, `<a href="21.1.9_dev/">x</a>`)
 		case "/FreeBSD:15:amd64/26.7/MINT/":
 			fmt.Fprint(w, `<a href="26.7.5/">x</a><a href="../">x</a><a href="26.7.5-rc1/">x</a><a href="26.1.3/">x</a>`)
 		default:
@@ -61,6 +63,7 @@ func TestDiscoverIgnoresBadNames(t *testing.T) {
 	var warn bytes.Buffer
 	c := NewClient(srv.URL, "")
 	c.Warn = &warn
+	c.WarnFrom = "25.7" // 21.1.9_dev is skipped without a word
 	got, err := c.Discover("amd64")
 	if err != nil {
 		t.Fatal(err)

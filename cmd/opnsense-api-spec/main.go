@@ -131,6 +131,7 @@ func main() {
 	c := pkgrepo.NewClient(o.base, o.cache)
 	c.Offline = *offline
 	c.Warn = os.Stderr
+	c.WarnFrom = *floor
 	keys := pkgrepo.Keys
 	if *keysPath != "" {
 		if k, err := pkgrepo.LoadKeys(*keysPath); err == nil {

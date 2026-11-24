@@ -67,6 +67,10 @@ type Client struct {
 	Offline bool
 	// Warn receives warnings ("warning: ..." lines); nil: none.
 	Warn io.Writer
+	// WarnFrom: names that are no release are reported only in this series
+	// and newer (old series on the mirror have test directories such as
+	// "21.1.9_dev" that would be noise in every run); empty: all.
+	WarnFrom string
 	// Retries of a GET after a server error (5xx) or a connection fault,
 	// with a growing pause (Backoff, Backoff*2, ...). Safe: every package
 	// and catalog is checked against the signed catalog afterwards.
@@ -152,7 +156,7 @@ func (c *Client) Discover(arch string) ([]Release, error) {
 			}
 			for _, v := range mints {
 				if !ValidRelease(s, v) {
-					if c.Warn != nil {
+					if c.Warn != nil && (c.WarnFrom == "" || CompareVersions(s, c.WarnFrom) >= 0) {
 						fmt.Fprintf(c.Warn, "warning: mirror lists %q under %s/%s/MINT, not a release name of the series; ignored\n", v, abi, s)
 					}
 					continue
