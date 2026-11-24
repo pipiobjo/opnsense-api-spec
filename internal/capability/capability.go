@@ -236,6 +236,8 @@ func Build(dist string) (*Catalog, map[string]*Doc, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	comps = dropStale(comps)
+	seriesOf := map[string]string{} // release -> series
 	cat := &Catalog{Format: Format, Generator: ir.GeneratorVersion, Cores: map[string]*Core{}, Packages: map[string]*PkgEntry{}}
 	docs := map[string]*Doc{}
 	byRelease := map[string]*Release{}
@@ -243,6 +245,7 @@ func Build(dist string) (*Catalog, map[string]*Doc, error) {
 	selGen := map[string]string{}            // select key -> generator of the chosen fragment
 	for i, c := range comps {
 		cat.Cores[c.CoreVersion] = &Core{Release: c.Release, Series: c.Series, Framework: c.FrameworkHash}
+		seriesOf[c.Release] = c.Series
 		r := byRelease[c.Release]
 		if r == nil {
 			r = &Release{Release: c.Release, Series: c.Series}
@@ -322,9 +325,32 @@ func Build(dist string) (*Catalog, map[string]*Doc, error) {
 				}
 			}
 		}
+		d.carryVerification(seriesOf)
 		cat.Packages[pkg] = &PkgEntry{File: "capabilities/" + pkg + ".json", Fragments: order}
 	}
 	return cat, docs, nil
+}
+
+// dropStale leaves out the compositions of a release that were built by an
+// older generator when the release has one built by this generator. The
+// pipeline rebuilds only a release's current catalog state, so older
+// hotfix revisions keep fragments of older derivations; a client would
+// otherwise pick them for those revisions. Without them it falls back to
+// the same release's current state (capabilities.md, selection rule 1).
+func dropStale(comps []*fragment.Composition) []*fragment.Composition {
+	current := map[string]bool{}
+	for _, c := range comps {
+		if c.Generator == ir.GeneratorVersion {
+			current[c.Release] = true
+		}
+	}
+	var out []*fragment.Composition
+	for _, c := range comps {
+		if !current[c.Release] || c.Generator == ir.GeneratorVersion {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // readCompositions returns all compositions in version order (by core
@@ -606,7 +632,7 @@ var uiText = map[string]bool{"ValidationMessage": true, "BlankDesc": true}
 func field(n *model.Node) *Field {
 	f := &Field{Type: strings.TrimPrefix(n.Type, ".\\"), Base: n.BaseType, ReadShape: string(n.Shape),
 		Multiple: n.Multiple, Required: n.Required, Volatile: n.Volatile, Default: n.Default,
-		ServerSet: n.ServerSet(), WriteOnly: n.WriteOnly(),
+		List: n.List, ServerSet: n.ServerSet(), WriteOnly: n.WriteOnly(), EmptyIgnored: n.EmptyIgnored,
 		Options: n.Options, Relations: n.Relations, Gaps: gapCodes(n.Gaps)}
 	// an empty default and no default both leave the field empty
 	if f.Default != nil && *f.Default == "" {
@@ -761,6 +787,7 @@ func (d *Doc) addVerification(hash string, c *fragment.Composition, rep *verify.
 				switch {
 				case r.Check == verify.CheckWriteCycle:
 					v.Write, v.Steps, v.Sample, v.Generated, v.RuntimeRequired = r.Status, r.Steps, r.Sample, r.Generated, r.RuntimeRequired
+					v.ReturnedBySearch = r.ReturnedBySearch
 					if r.Status != verify.StatusOK {
 						v.Findings = append(v.Findings, r.Findings...)
 					}
@@ -787,6 +814,93 @@ func (d *Doc) addVerification(hash string, c *fragment.Composition, rep *verify.
 		}
 		res.Verify[hash] = v
 	}
+}
+
+// carryVerification gives a fragment without its own test result the
+// result of a tested fragment of the same series in which the resource is
+// defined identically (every API and field variant that applies), marked
+// with SameDefinitionAs. A resource that is the same in 26.7.8 and the
+// tested 26.7.9 is then not reported as untested on 26.7.8, while one that
+// differs still is. Only own results are carried, never carried ones.
+func (d *Doc) carryVerification(seriesOf map[string]string) {
+	for _, id := range slices.Sorted(maps.Keys(d.Resources)) {
+		res := d.Resources[id]
+		if len(res.Verify) == 0 {
+			continue
+		}
+		tested := slices.Sorted(maps.Keys(res.Verify))
+		keys := map[string]string{}
+		for _, h := range res.In {
+			keys[h] = res.definition(h)
+		}
+		for _, h := range res.In {
+			if res.Verify[h] != nil {
+				continue
+			}
+			series := map[string]bool{}
+			for _, r := range d.Fragments[h].Releases {
+				series[seriesOf[r]] = true
+			}
+			var best string
+			for _, g := range tested {
+				v := res.Verify[g]
+				if v.SameDefinitionAs != "" || keys[g] != keys[h] || !series[seriesOf[v.Release]] {
+					continue
+				}
+				if best == "" || newerResult(v, res.Verify[best]) {
+					best = g
+				}
+			}
+			if best != "" {
+				v := *res.Verify[best]
+				v.SameDefinitionAs = best
+				res.Verify[h] = &v
+			}
+		}
+	}
+}
+
+// newerResult: the newer generator, then the newer run, then the newer
+// release.
+func newerResult(a, b *ResVerify) bool {
+	if c := pkgrepo.CompareVersions(a.Generator, b.Generator); c != 0 {
+		return c > 0
+	}
+	if a.Date != b.Date {
+		return a.Date > b.Date
+	}
+	return pkgrepo.CompareVersions(a.Release, b.Release) > 0
+}
+
+// definition is the content hash of what the resource is in fragment h:
+// its kind, family, the API variant and every field variant that applies
+// there (without "in").
+func (r *Resource) definition(h string) string {
+	applies := func(in any) bool { l, ok := in.([]string); return in == All || ok && contains(l, h) }
+	def := struct {
+		Kind, Family string
+		API          *API
+		Fields       map[string]*Field
+	}{Kind: r.Kind, Family: r.Family, Fields: map[string]*Field{}}
+	for _, a := range r.API {
+		if applies(a.In) {
+			c := *a
+			c.In = nil
+			def.API = &c
+		}
+	}
+	for name, vs := range r.Fields {
+		for _, f := range vs {
+			if applies(f.In) {
+				c := *f
+				c.In = nil
+				def.Fields[name] = &c
+			}
+		}
+	}
+	b, _ := json.Marshal(def)
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
 }
 
 func sortedByFirstSeen(m map[string]int) []string {

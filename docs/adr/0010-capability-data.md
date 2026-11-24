@@ -38,11 +38,18 @@ Measured on the published data (34 releases, core and 75 packages):
   `(framework, package version)` -> fragment (`select`). The build fails if
   that key is ever ambiguous. A key collision caused only by an older
   generator (older catalog states are not rebuilt) resolves to the newer
-  generator.
+  generator. Amended 2026-11-24 (generator 0.10.0): a catalog state built
+  by an older generator is left out of the data when its release has one
+  built by the current generator, so no hotfix revision selects fragments
+  of an older derivation (review finding GEN-2).
 - **Verification results travel with the data**, per resource and fragment
   (read, write, steps, accepted sample), so consumers can show how well
   something is tested. A report that does not say which packages it tested
-  does not count.
+  does not count. Amended 2026-11-24: a fragment that was not tested
+  carries the result of a tested fragment of the same series in which the
+  resource is defined identically, marked `same_definition_as` (only the
+  newest release per series is tested, so otherwise every older release
+  would read as untested; review findings DEV-2, REQ-4).
 - UI texts (`ValidationMessage`, `BlankDesc`) are not part of the format;
   an empty default equals no default.
 - Published per data state as the never-replaced pre-release

@@ -260,7 +260,8 @@ func TestVerification(t *testing.T) {
 			{Path: "/api/demo/settings/getNetwork", Check: "shape", Status: "ok"},
 			{Path: "/api/demo/settings/getNetwork", Check: "schema", Status: "known-gap", Findings: []string{"area differs"}},
 			{Path: "/api/demo/settings/addNetwork", Check: "write-cycle", Status: "ok",
-				Steps: []string{"add", "read-back", "set", "read-back-set", "del"}, Sample: map[string]any{"area": "0.0.0.0"}},
+				Steps: []string{"add", "read-back", "set", "read-back-set", "del"}, Sample: map[string]any{"area": "0.0.0.0"},
+				ReturnedBySearch: []string{"area"}},
 			{Path: "/api/demo/settings/get", Check: "shape", Status: "ok"},
 		}}
 	d.write(filepath.Join("26.1.2", "opnsense-26.1.2.verified.json"), rep)
@@ -277,7 +278,8 @@ func TestVerification(t *testing.T) {
 	}
 	r := docs["os-demo"].Resources["demo/settings#networks.network"]
 	v := r.Verify[v2.Hash()]
-	if v == nil || v.Read != "known-gap" || v.Write != "ok" || len(v.Steps) != 5 || v.Sample["area"] != "0.0.0.0" || v.Composition != c2.ID() {
+	if v == nil || v.Read != "known-gap" || v.Write != "ok" || len(v.Steps) != 5 || v.Sample["area"] != "0.0.0.0" || v.Composition != c2.ID() ||
+		len(v.ReturnedBySearch) != 1 {
 		t.Fatalf("entry verification: %s", js(r.Verify))
 	}
 	if len(r.Verify) != 1 {
@@ -498,15 +500,103 @@ func TestWriteSideGapsInData(t *testing.T) {
 // The flags reach the data, so consumers need no list of field types.
 func TestServerSetWriteOnlyInData(t *testing.T) {
 	uid := &model.Node{Name: "uid", Kind: model.KindField, Type: "UniqueIdField", BaseType: "UniqueIdField"}
-	pw := &model.Node{Name: "pw", Kind: model.KindField, Type: "UpdateOnlyTextField", BaseType: "UpdateOnlyTextField"}
+	pw := &model.Node{Name: "pw", Kind: model.KindField, Type: "UpdateOnlyTextField", BaseType: "TextField", GetEmpty: true, EmptyIgnored: true}
+	link := &model.Node{Name: "l", Kind: model.KindField, Type: "LegacyLinkField", BaseType: "LegacyLinkField", Discards: true}
+	list := &model.Node{Name: "c", Kind: model.KindField, Type: "AliasContentField", BaseType: "BaseField", List: &model.List{Separator: "\n", Ordered: true}}
 	plain := &model.Node{Name: "x", Kind: model.KindField, Type: "TextField", BaseType: "TextField"}
 	if f := field(uid); !f.ServerSet || f.WriteOnly {
 		t.Errorf("uid: %+v", f)
 	}
-	if f := field(pw); f.ServerSet || !f.WriteOnly {
+	if f := field(pw); f.ServerSet || !f.WriteOnly || !f.EmptyIgnored {
 		t.Errorf("pw: %+v", f)
 	}
-	if f := field(plain); f.ServerSet || f.WriteOnly {
+	if f := field(link); !f.ServerSet {
+		t.Errorf("link: %+v", f)
+	}
+	if f := field(list); f.List == nil || f.List.Separator != "\n" || !f.List.Ordered {
+		t.Errorf("list: %+v", f)
+	}
+	if f := field(plain); f.ServerSet || f.WriteOnly || f.EmptyIgnored || f.List != nil {
 		t.Errorf("plain: %+v", f)
+	}
+}
+
+// GEN-2 of the review of 2026-11-24: a hotfix revision that was built by an
+// older generator is left out when its release has a state built by this
+// one, so no client selects a fragment of an older derivation for it. A
+// release that has only older states keeps them.
+func TestDropStaleCompositions(t *testing.T) {
+	d := newDist(t)
+	core := coreFragment()
+	old, cur := demoFragment("TextField", ""), demoFragment("OptionField", "")
+	d.gen = "0.1.0"
+	d.compose("26.1.1", "26.1.1", fw1, map[string]*fragment.Fragment{"opnsense": core, "os-demo": old}, map[string]string{"opnsense": "26.1.1", "os-demo": "0.9"})
+	stale := d.compose("26.1.2", "26.1.2_1", fw2, map[string]*fragment.Fragment{"opnsense": core, "os-demo": old}, map[string]string{"opnsense": "26.1.2_1", "os-demo": "1.0"})
+	d.gen = ir.GeneratorVersion
+	d.compose("26.1.2", "26.1.2_3", fw2, map[string]*fragment.Fragment{"opnsense": core, "os-demo": cur}, map[string]string{"opnsense": "26.1.2_3", "os-demo": "1.1"})
+	cat, docs, err := Build(d.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cat.Cores["26.1.2_1"] != nil {
+		t.Errorf("stale state %s still selectable: %s", stale.ID(), js(cat.Cores))
+	}
+	if cat.Cores["26.1.1"] == nil {
+		t.Error("a release with only older states must keep them")
+	}
+	for _, r := range cat.Releases {
+		for _, c := range r.Compositions {
+			if r.Release == "26.1.2" && c.Generator != ir.GeneratorVersion {
+				t.Errorf("26.1.2 keeps composition %s of generator %s", c.ID, c.Generator)
+			}
+		}
+	}
+	if h := docs["os-demo"].Select[fw2]["1.0"]; h != "" {
+		t.Errorf("select still maps the stale package version to %s", h)
+	}
+	if fr := docs["os-demo"].Fragments[old.Hash()]; fr == nil || len(fr.Releases) != 1 || fr.Releases[0] != "26.1.1" {
+		t.Errorf("old fragment must only be seen in 26.1.1: %s", js(fr))
+	}
+}
+
+// DEV-2/REQ-4 of the review of 2026-11-24: a fragment that was not tested
+// gets the result of a tested fragment of the same series where the
+// resource is defined identically, marked same_definition_as; a resource
+// that differs, or a fragment of another series, does not.
+func TestCarryVerification(t *testing.T) {
+	d, v1, v2, c2 := buildDemo(t)
+	v3 := demoFragment("OptionField", "other UI text") // other hash, same data
+	core := coreFragment()
+	d.compose("26.7.1", "26.7.1", fw2, map[string]*fragment.Fragment{"opnsense": core, "os-demo": v3}, map[string]string{"opnsense": "26.7.1", "os-demo": "1.2"})
+	d.write(filepath.Join("26.1.2", "opnsense-26.1.2.verified.json"), &verify.Report{Release: "26.1.2", Composition: c2.ID(),
+		Instance: "26.1.2_1", Generator: ir.GeneratorVersion, Date: "2026-11-15T10:00:00Z", Packages: []string{"opnsense", "os-demo"},
+		Results: []*verify.Result{
+			{Path: "/api/demo/settings/get", Check: "shape", Status: "ok"},
+			{Path: "/api/demo/settings/getNetwork", Check: "shape", Status: "ok"},
+		}})
+	cat, docs, err := Build(d.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Validate(cat, docs); err != nil {
+		t.Fatal(err)
+	}
+	h1, h2, h3 := v1.Hash(), v2.Hash(), v3.Hash()
+	if h3 == h2 {
+		t.Fatal("fixture: v3 must be another fragment")
+	}
+	set := docs["os-demo"].Resources["demo/settings"].Verify
+	if v := set[h1]; v == nil || v.SameDefinitionAs != h2 || v.Release != "26.1.2" || v.Read != "ok" {
+		t.Errorf("settings in 26.1.1 (same definition, same series): %s", js(set))
+	}
+	if v := set[h2]; v == nil || v.SameDefinitionAs != "" {
+		t.Errorf("the tested fragment keeps its own result: %s", js(set[h2]))
+	}
+	if set[h3] != nil {
+		t.Errorf("another series must not inherit: %s", js(set[h3]))
+	}
+	ent := docs["os-demo"].Resources["demo/settings#networks.network"].Verify
+	if ent[h1] != nil {
+		t.Errorf("entries differ in 26.1.1 (area is text there): %s", js(ent[h1]))
 	}
 }
