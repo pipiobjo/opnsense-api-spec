@@ -30,3 +30,4 @@ tools/ci/testvm_test.sh
 tools/ci/publish_test.sh
 tools/ci/state_test.sh
 tools/ci/catalog_test.sh
+tools/ci/pins_test.sh

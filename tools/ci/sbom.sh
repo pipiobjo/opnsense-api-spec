@@ -22,8 +22,10 @@ OUT="${1:?usage: sbom.sh OUT [cyclonedx-gomod arguments]}"
 shift
 ARGS=("$@")
 [ ${#ARGS[@]} -gt 0 ] || ARGS=(app -main cmd/opnsense-api-spec)
-GOMOD_TOOL="github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.12.0"
-GO_IMAGE="docker.io/library/golang:1.27.4-bookworm@sha256:fb7cceb528b47141eccd9b60bf3cbd27d5ef5f8cf5b7d338bec866da495b50dc"
+# CYCLONEDX_GOMOD, GO_IMAGE: tools/pins.env
+# shellcheck source=tools/pins.env
+. "$(dirname "${BASH_SOURCE[0]}")/../pins.env"
+GOMOD_TOOL="$CYCLONEDX_GOMOD"
 
 ROOT="$(git rev-parse --show-toplevel)"
 MODULE=$(cd "$ROOT" && go list -m)

@@ -40,6 +40,10 @@
 #             the upstream fault it was written for is gone, so the entry
 #             would only hide a later, different one; removing it is the
 #             fix, and the next pipeline run clears the condition
+#   pins      a pin outside Dependabot (WD_PINS_FILE, default tools/pins.env,
+#             if it exists) is outdated: tools/ci/pins.sh check (Go image
+#             minor differs from mise.toml or is unsupported, a Go patch
+#             release 7 days old, a tool release 30 days old)
 #
 # The coverage, missing and unused conditions read the published state
 # (release "state", index.json) and the releases' *.quality.json; a read
@@ -92,7 +96,8 @@
 # WD_PROMOTE_COMPARE ({ahead_by, status, oldest, head}), WD_PROMOTE_RUN
 # (newest promotion run, {databaseId, status, conclusion, headSha, url,
 # createdAt} or null), WD_PROMOTE_VIEW; releases: WD_COVERAGE, WD_INDEX (a
-# file; one that cannot be read simulates a read failure).
+# file; one that cannot be read simulates a read failure); pins: WD_PINS
+# (the output of pins.sh check).
 set -euo pipefail
 
 REPO="${GITHUB_REPOSITORY:-pipiobjo/opnsense-api-spec}"
@@ -278,6 +283,14 @@ missing() {
     | map(select(.since != null and .since <= $cut))' <<<"$index"
 }
 
+# pins: outdated pins as a JSON list (tools/ci/pins.sh), [] without a pin file
+pins() {
+  if [ -n "${WD_PINS+x}" ]; then echo "$WD_PINS"; return; fi
+  local f="${WD_PINS_FILE:-tools/pins.env}"
+  [ -f "$f" ] || { echo "[]"; return; }
+  "$(dirname "${BASH_SOURCE[0]}")/pins.sh" check "$f" "${WD_MISE_FILE:-mise.toml}"
+}
+
 # unused: the accepted entries no newest contract test needed, as a JSON
 # list (computed by the generator, Index.SetUnusedAccepted)
 unused() {
@@ -404,8 +417,9 @@ promotion_problem() {
 # ------------------------------------------------------------ check
 
 check() {
-  local cov miss unu open body sec problems=0 unread=0 pair r w h rest last
-  cov="[]" miss="[]" unu="[]"
+  local cov miss unu pin open body sec problems=0 unread=0 pair r w h rest last
+  cov="[]" miss="[]" unu="[]" pin="[]"
+  pin=$(pins) || { echo "::warning::could not check the pins (tools/ci/pins.sh)"; pin="[]"; unread=$((unread + 1)); }
   if [ "$COVERAGE" = 1 ]; then
     # a read failure is an unread input, not an empty result (finding OPS-4)
     cov=$(coverage) || { echo "::warning::could not read the releases' quality reports; typing loss not judged"; cov="[]"; unread=$((unread + 1)); }
@@ -486,6 +500,19 @@ check() {
       echo "to \`dev\`), and this section disappears on the next check."
       echo
     fi
+    if [ "$(jq length <<<"$pin")" -gt 0 ]; then
+      echo "## Pins outdated"
+      echo
+      jq -r '.[] | "- `\(.pin)`: \(.have) -> \(.want)\(if .since != "" then " (since \(.since[0:10]))" else "" end): \(.why)"' <<<"$pin"
+      echo
+      echo "**Why.** These pins are outside Dependabot's reach (\`tools/pins.env\`,"
+      echo "\`mise.toml\`); nothing else updates them."
+      echo
+      echo "**If you do nothing.** Builds keep using the old version; for Go, the"
+      echo "vulnerability check reports standard library fixes that only the newer"
+      echo "release has. Update the line (by digest for the image) on \`dev\`."
+      echo
+    fi
     echo "## To fix"
     echo
     echo "Start a Claude Code session in this repository with the link to this issue"
@@ -494,6 +521,7 @@ check() {
   [ "$(jq length <<<"$cov")" -gt 0 ] && problems=$((problems + 1))
   [ "$(jq length <<<"$miss")" -gt 0 ] && problems=$((problems + 1))
   [ "$(jq length <<<"$unu")" -gt 0 ] && problems=$((problems + 1))
+  [ "$(jq length <<<"$pin")" -gt 0 ] && problems=$((problems + 1))
 
   last=$(last_success "$REPO" "$WORKFLOW")
   if [ "$problems" -gt 0 ]; then

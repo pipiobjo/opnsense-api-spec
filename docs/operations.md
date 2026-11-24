@@ -33,6 +33,7 @@ below).
 | A release on the mirror has had no current data for 7 days: never built (packages not served; the important case is a new series) or kept on an old build (a rebuild could not get its packages) | data for it is built |
 | `dev` has had commits that `main` lacks for 7 days and no `promote.yml` run is in progress (a failed promotion, an automatic dependency merge whose dry run broke, a push that started no run, or `dev` diverged from `main`) | `main` reaches `dev` |
 | A watched workflow of another repository of the project (`spec-update.yml` and `watchdog.yml` of the Go client) has had no successful scheduled run for 7 days (or the entry's own threshold, `owner/repo:file.yml:hours`, for a workflow that runs weekly or monthly), or is disabled (never re-enabled from here) | it succeeds, or is enabled, in its own repository |
+| A pin of `tools/pins.env` is outdated: the image's Go minor differs from `mise.toml` or is unsupported, a newer Go patch release is 7 days old, a newer tool release 30 days old (`tools/ci/pins.sh`) | the pin is updated on `dev` and promoted |
 | An entry of `verify/accepted.json` covered no failure in the newest contract test of any series (the upstream fault is gone; the entry would only hide a later one) | the entry is removed and the next pipeline run rebuilt the index |
 
 A condition that cannot be read (the published state, a release, a watched
@@ -75,7 +76,9 @@ scheduled run closes the issue.
   for actions, against `dev`, for versions at least 7 days old.
   `automerge.yml` merges it when `ci.yml` passed and starts `promote.yml`.
 - The Go toolchain is the newest patch release of the minor version in
-  `mise.toml`.
+  `mise.toml`. Pins Dependabot cannot see (the `golang` image, CI tools)
+  are in `tools/pins.env`; the watchdog reports an outdated one (see the
+  conditions above), so nobody has to remember them.
 
 ## Keeping the schedules alive
 

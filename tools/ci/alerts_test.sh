@@ -34,7 +34,7 @@ failed_view='{"9":{"url":"https://example/run/9","createdAt":"2026-11-19T05:17:0
 cov='[{"release":"26.7.10","from":"26.7.9","regressions":["/api/firewall/source_nat/get: typed (base) -> untyped"]}]'
 
 run() { # run [VAR=value ...]: alerts.sh check with healthy defaults (output and messages)
-  env WD_STATE=active WD_LAST_SUCCESS="$(hours_ago 10)" WD_RUNS='[]' WD_COVERAGE='[]' ALERTS_ISSUES='[]' WD_CREATED="$(hours_ago 2000)" WD_INDEX="$empty_index" "$@" "$A" check 2>&1 || echo "alerts.sh exited $?"
+  env WD_STATE=active WD_LAST_SUCCESS="$(hours_ago 10)" WD_RUNS='[]' WD_COVERAGE='[]' ALERTS_ISSUES='[]' WD_CREATED="$(hours_ago 2000)" WD_INDEX="$empty_index" WD_PINS='[]' "$@" "$A" check 2>&1 || echo "alerts.sh exited $?"
 }
 
 out=$(run)
@@ -173,7 +173,7 @@ check "other workflow: re-enables that one" "$out" "gh api -X PUT repos/example/
 out=$(run WD_WORKFLOW=spec-update.yml WD_LAST_SUCCESS="" GITHUB_REPOSITORY=example/client)
 check "other workflow: named in the issue" "$out" 'No successful scheduled run of `spec-update.yml`'
 check "other workflow: title names the repository" "$out" "--title Needs you: client"
-out=$(env WD_STATE=active WD_LAST_SUCCESS="$(hours_ago 10)" WD_RUNS='[]' ALERTS_ISSUES='[]' WD_COVERAGE_CHECK=0 GITHUB_REPOSITORY=example/client "$A" check)
+out=$(env WD_STATE=active WD_LAST_SUCCESS="$(hours_ago 10)" WD_RUNS='[]' ALERTS_ISSUES='[]' WD_COVERAGE_CHECK=0 WD_PINS_FILE=/nonexistent GITHUB_REPOSITORY=example/client "$A" check)
 check "no coverage check: healthy without reading releases" "$out" "nothing needs a person"
 
 # missing data: unavailable for 7 days opens the issue, younger does not
@@ -194,7 +194,7 @@ rm -f "${TMPDIR:-/tmp}/alerts-missing.json"
 # a state that cannot be read is an unread input, not "nothing missing"
 # (finding OPS-4); here without WD_COVERAGE, so the typing-loss condition
 # reads the index too
-out=$(env WD_STATE=active WD_LAST_SUCCESS="$(hours_ago 10)" WD_RUNS='[]' ALERTS_ISSUES='[]' WD_CREATED="$(hours_ago 2000)" \
+out=$(env WD_STATE=active WD_LAST_SUCCESS="$(hours_ago 10)" WD_RUNS='[]' ALERTS_ISSUES='[]' WD_CREATED="$(hours_ago 2000)" WD_PINS='[]' \
   WD_INDEX="${TMPDIR:-/tmp}/alerts-no-such-index.json" "$A" check 2>&1 || echo "alerts.sh exited $?")
 check "index unreadable: missing data not judged" "$out" "::warning::could not read the published state; missing data not judged"
 check "index unreadable: typing loss not judged" "$out" "::warning::could not read the releases' quality reports"
@@ -211,6 +211,20 @@ check "unused: opens the issue" "$out" "gh issue create"
 check "unused: names the entry" "$out" '- `/api/u/get shape 25.7.* match "HTTP 500"`'
 check "unused: says what to do" "$out" "remove them"
 rm -f "${TMPDIR:-/tmp}/alerts-unused.json"
+
+# outdated pins (tools/ci/pins.sh check)
+out=$(run WD_PINS='[{"pin":"GO_IMAGE","have":"1.27.4","want":"1.27.5","since":"2026-11-10T00:00:00Z","why":"a newer Go patch release (security fixes) is 7 days or more old"}]')
+check "pins: opens the issue" "$out" "gh issue create"
+check "pins: names the pin" "$out" '- `GO_IMAGE`: 1.27.4 -> 1.27.5 (since 2026-11-10)'
+# without WD_PINS: the pin file is checked by pins.sh; none: nothing to judge,
+# an unreachable source: unread, never "up to date"
+direct() { env WD_STATE=active WD_LAST_SUCCESS="$(hours_ago 10)" WD_RUNS='[]' WD_COVERAGE='[]' ALERTS_ISSUES='[]' WD_CREATED="$(hours_ago 2000)" WD_INDEX="$empty_index" "$@" "$A" check 2>&1 || echo "alerts.sh exited $?"; }
+out=$(direct WD_PINS_FILE=/nonexistent)
+check "pins: no pin file, nothing to judge" "$out" "gh " absent
+check "pins: no pin file, the check succeeds" "$out" "alerts.sh exited" absent
+out=$(direct WD_PINS_FILE="$HERE/../pins.env" WD_MISE_FILE="$HERE/../../mise.toml" PINS_GODL=http://127.0.0.1:1/ PINS_PROXY=http://127.0.0.1:1 PINS_RETRIES=0)
+check "pins: unreachable source is unread" "$out" "::warning::could not check the pins"
+check "pins: and fails the check" "$out" "alerts.sh exited 1"
 
 # a stale threshold per watched entry (a weekly workflow is not stale after 8 days)
 weekly='{"example/client:spec-update.yml":{"state":"active","last_success":"'"$(hours_ago 200)"'","runs":[]}}'

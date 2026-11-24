@@ -5,8 +5,9 @@
 # days ago; automerge.yml merges them when ci.yml passes (ADR 0012).
 version: 2
 updates:
+  # the generator and the module of the client smoke test
   - package-ecosystem: gomod
-    directory: /
+    directories: ["/", "/test/consumer-go"]
     target-branch: dev
     schedule:
       interval: monthly
@@ -15,8 +16,11 @@ updates:
     groups:
       go:
         patterns: ["*"]
+  # workflows and the composite action (a directory of its own for
+  # Dependabot); pins it cannot see are in tools/pins.env, checked by the
+  # watchdog (tools/ci/pins.sh)
   - package-ecosystem: github-actions
-    directory: /
+    directories: ["/", "/.github/actions/testvm"]
     target-branch: dev
     schedule:
       interval: monthly

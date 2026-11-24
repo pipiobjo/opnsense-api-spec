@@ -21,8 +21,10 @@
 set -euo pipefail
 export LC_ALL=C
 
-GOVULN="golang.org/x/vuln/cmd/govulncheck@v1.9.0"
-GO_IMAGE="docker.io/library/golang:1.27.4-bookworm@sha256:fb7cceb528b47141eccd9b60bf3cbd27d5ef5f8cf5b7d338bec866da495b50dc"
+# GOVULNCHECK, GO_IMAGE: tools/pins.env
+# shellcheck source=tools/pins.env
+. "$(dirname "${BASH_SOURCE[0]}")/../pins.env"
+GOVULN="$GOVULNCHECK"
 
 ROOT="$(git rev-parse --show-toplevel)"
 GOV=$(cd "$ROOT" && go env GOVERSION)

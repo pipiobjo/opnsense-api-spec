@@ -52,15 +52,19 @@ OPNsense project), and the behaviour of third-party code generators.
 | `github.com/santhosh-tekuri/jsonschema/v6` | schema checks of the generated documents | Apache-2.0 |
 | `golang.org/x/crypto` (`blake2b` only) | package checksums | BSD-3-Clause |
 | `golang.org/x/text` | text normalisation | BSD-3-Clause |
-| Tools in CI, isolated in rootless Podman: `oapi-codegen` (consumer gate), `cyclonedx-gomod` (SBOM), the official `golang` image pinned by digest | | |
+| Tools in CI, isolated in rootless Podman: `oapi-codegen` (consumer gate), `cyclonedx-gomod` (SBOM), `govulncheck`, the official `golang` image pinned by digest; all pinned in `tools/pins.env` | | |
 | GitHub Actions: GitHub's own and `jdx/mise-action`, pinned by commit hash | | |
 
 How they are watched: `tools/ci/vulncheck.sh` (govulncheck, in CI and every promotion) fails on a vulnerability that the generator's code reaches and that has a fix, and warns about one without a fix yet; Dependabot alerts are on; Dependabot proposes
 updates monthly (grouped, versions at least 7 days old) against `dev`,
 and they reach `main` only through promotion. The Go toolchain is the
-newest patch release of the minor version in `mise.toml`. The container
-images are pinned by digest, which Dependabot does not update: a Go
-security release needs a new pin by hand.
+newest patch release of the minor version in `mise.toml`. Pins that
+Dependabot does not update (the `golang` image by digest, the CI tools)
+are in `tools/pins.env`; the watchdog checks them daily
+(`tools/ci/pins.sh`) and opens the needs-you issue when the image's Go
+minor differs from `mise.toml` or is no longer supported, a newer Go patch
+release is 7 days old, or a newer tool release 30 days old. The update
+itself is still a commit to `dev`.
 
 Build tools: `jdx/mise-action` installs mise only from releases at least
 7 days old and verifies the binary against mise's signed checksums; mise
