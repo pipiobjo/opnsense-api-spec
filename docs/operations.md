@@ -143,9 +143,9 @@ Each save keeps the state it replaces as `previous-dist.tar.zst` and
 `previous-index.json`. To roll back one run, download those two and upload
 them as `dist.tar.zst` and `index.json` (`gh release upload state
 --clobber`); their attestations still match. A state that was changed in
-any other way, or one from before attestations existed (until the first
-live run after 2026-11-24), needs one manual run with
-`accept-unattested-state` on; a deliberate loss of contract test history
+any other way needs one manual run with `accept-unattested-state` on (a
+state from before attestations existed is accepted with a warning until
+2026-12-02, so the first live run attests it without a person); a deliberate loss of contract test history
 (for example a reset) one with `allow-fewer-verified` on. Both are inputs
 of a manual `pipeline.yml` run and never apply to the schedule. Do not
 delete the `state` release once Immutable Releases are on: a release

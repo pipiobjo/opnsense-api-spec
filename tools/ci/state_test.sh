@@ -52,7 +52,7 @@ setup() {
   cp "$T/src/index.json" "$T/fake/assets/index.json"
   echo 200 > "$T/fake/status"; touch "$T/fake/attested" "$T/fake/calls"
 }
-st() { (cd "$T/root" && env PATH="$T/bin:$PATH" FAKE="$T/fake" GITHUB_REPOSITORY=example/spec "$@" 2>&1) || echo "state.sh exited $?"; }
+st() { (cd "$T/root" && env PATH="$T/bin:$PATH" FAKE="$T/fake" GITHUB_REPOSITORY=example/spec STATE_GRACE_UNTIL=2000-01-01 "$@" 2>&1) || echo "state.sh exited $?"; }
 
 setup
 out=$(st tools/ci/state.sh restore)
@@ -77,6 +77,10 @@ check "unattested, live: fails" "$out" "state.sh exited 1"
 check "unattested, live: dist untouched" "$(ls "$T/root")" "dist" absent
 out=$(st env LIVE=true STATE_ACCEPT_UNATTESTED=1 tools/ci/state.sh restore)
 check "unattested, live, accepted on request: used" "$out" "accepted on request"
+setup; rm "$T/fake/attested"
+out=$(st env LIVE=true STATE_GRACE_UNTIL=2999-01-01 tools/ci/state.sh restore)
+check "unattested, live, within the grace period: used" "$out" "accepted until 2999-01-01"
+check "unattested, live, within the grace period: restored" "$out" "state restored"
 setup; rm "$T/fake/attested"
 out=$(st tools/ci/state.sh restore)
 check "unattested, dry run: warning only" "$out" "used anyway because this run publishes nothing"

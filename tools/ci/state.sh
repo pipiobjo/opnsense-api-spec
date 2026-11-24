@@ -26,7 +26,10 @@
 # pipeline.yml on main. Without one, a live run (LIVE=true) fails unless
 # STATE_ACCEPT_UNATTESTED=1 (workflow_dispatch input, once, for a state
 # saved before attestation existed or repaired by hand); other runs warn,
-# they publish nothing.
+# they publish nothing. Until GRACE_UNTIL a live run also accepts it with
+# a warning: the state published before this check existed has no
+# attestation, and the first live run with it attests the one it saves;
+# without the grace that run would need a person.
 #
 # Shrinking guard: pack fails when dist/ has fewer releases with a contract
 # test record (index.json "verified") than the restored state, unless
@@ -44,6 +47,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TAG="state"
 CI="$ROOT/.cache/ci"
 REPO="${GITHUB_REPOSITORY:-pipiobjo/opnsense-api-spec}"
+GRACE_UNTIL="${STATE_GRACE_UNTIL:-2026-12-02}"
 mkdir -p "$CI"
 # shellcheck source=tools/ci/gh-lib.sh
 . "$ROOT/tools/ci/gh-lib.sh"
@@ -73,6 +77,8 @@ case "${1:-}" in
       echo "state provenance: attested by pipeline.yml on main"
     elif [ "${STATE_ACCEPT_UNATTESTED:-}" = 1 ]; then
       echo "::warning::state has no attestation of pipeline.yml on main; accepted on request (STATE_ACCEPT_UNATTESTED)"
+    elif [ "$(date -u +%F)" \< "$GRACE_UNTIL" ]; then
+      echo "::warning::state has no attestation of pipeline.yml on main; accepted until $GRACE_UNTIL (states saved before the check existed)"
     elif [ "${LIVE:-}" = true ]; then
       echo "error: the state (release '$TAG', dist.tar.zst) has no attestation of pipeline.yml on main; a live run does not build on it (docs/operations.md, 'State')" >&2
       exit 1
