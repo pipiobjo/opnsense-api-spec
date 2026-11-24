@@ -142,9 +142,9 @@ ln -s /etc/passwd "$U/src/.cache/ci/sums/link"; (cd "$U/src" && tar -cf ../link.
 (cd "$U/src" && tar -cf ../other.tar --transform 's,^\.cache/ci/upload,.cache/ci/other,' .cache/ci/upload)
 unpack() { rm -rf "$U/out"; mkdir -p "$U/out"; (cd "$U/out" && "$HERE/unpack-input.sh" "$U/$1.tar" 2>&1) || echo "unpack exited $?"; }
 out=$(unpack good); check "unpack: hand-over files" "$out" "exited" absent
-[ -f "$U/out/.cache/ci/upload/26.7.9/a" ] && echo "ok   unpack: file is there" || { echo "FAIL unpack: file missing"; fails=$((fails + 1)); }
+if [ -f "$U/out/.cache/ci/upload/26.7.9/a" ]; then echo "ok   unpack: file is there"; else echo "FAIL unpack: file missing"; fails=$((fails + 1)); fi
 out=$(unpack script); check "unpack: a script is refused" "$out" "'tools/ci/publish.sh' is outside the hand-over paths"
-[ ! -e "$U/out/tools" ] && echo "ok   unpack: nothing written when refused" || { echo "FAIL unpack: wrote despite refusal"; fails=$((fails + 1)); }
+if [ ! -e "$U/out/tools" ]; then echo "ok   unpack: nothing written when refused"; else echo "FAIL unpack: wrote despite refusal"; fails=$((fails + 1)); fi
 out=$(unpack link); check "unpack: a link is refused" "$out" "is not a plain file or directory"
 out=$(unpack dots); check "unpack: .. is refused" "$out" "outside the hand-over paths"
 out=$(unpack other); check "unpack: another .cache/ci path is refused" "$out" "'.cache/ci/other/' is outside the hand-over paths"
