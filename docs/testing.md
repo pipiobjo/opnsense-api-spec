@@ -81,12 +81,17 @@ each name the claim they break.
 
 `tools/ci/coverage.sh` reports statements covered per package (CI
 summary, HTML artifact) and fails below the floor in
-`tools/ci/coverage-floor.txt`. Measured with `-coverpkg=./...`.
+`tools/ci/coverage-floor.txt`. Measured with `-coverpkg=./...`. A floor
+is the lowest measurement minus a margin (decision of 2026-11-24): one
+point for unit profiles, which measure code and are enforced everywhere;
+three points for the contract profile, which depends on what the VM does
+and is reported in every run but enforced only in `promote.yml`
+(`check-coverage`), never on the publishing path.
 
-| Profile | Covered | Floor | Where |
+| Profile | Covered | Floor | Where enforced |
 |---|---:|---:|---|
-| unit (all Go tests, golden releases included) | 83.0% | 83% | `gates.sh`, artifact `coverage-unit` |
-| contract (the command and `internal/verify` against a VM with every plugin; `internal/verify` alone 83.0%, 2026-11-18) | 69.7% to 70.6% (per release) | 69% | pipeline contract job, artifact `coverage-contract-<release>` |
+| unit (all Go tests, golden releases included) | 83.0% to 83.2% | 82% | `gates.sh` (every push, every pipeline run), artifact `coverage-unit` |
+| contract (the command and `internal/verify` against a VM with every plugin; `internal/verify` alone 83.0%, 2026-11-18) | 69.7% to 70.6% (per release) | 66% | `promote.yml` only; reported in every contract job, artifact `coverage-contract-<release>` |
 
 The contract profile fell from 72.4% (2026-11-17) because it can only
 count what a firewall makes happen: branches for faults the VM rarely

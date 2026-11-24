@@ -486,23 +486,26 @@ verify() {
 
 # contract IRFILE: contract tests against the running VM (after start)
 contract() {
-  # the list of successful installs (installed_packages checked each one)
-  local pk="opnsense" more
+  # the list of successful installs (installed_packages checked each one),
+  # and the plugins that could not be installed (recorded in the report)
+  local pk="opnsense" more failed
   more=$(listfile "$VM/plugins-installed.txt")
   [ -n "$more" ] && pk="opnsense,$more"
+  failed=$(listfile "$VM/plugins-failed.txt")
   # built with coverage of the contract test's own code (the command and
   # internal/verify; the main package must be instrumented, or no data is
   # written):
   # contract-coverage reports which of it ran against the instance
   rm -rf "$VM/cover"; mkdir -p "$VM/cover"
   local rc=0
-  (cd "$ROOT" && GOCOVERDIR="$VM/cover" go run -cover -coverpkg=./cmd/opnsense-api-spec,./internal/verify ./cmd/opnsense-api-spec verify -write -packages "$pk" \
+  (cd "$ROOT" && GOCOVERDIR="$VM/cover" go run -cover -coverpkg=./cmd/opnsense-api-spec,./internal/verify ./cmd/opnsense-api-spec verify -write -packages "$pk" -not-installable "$failed" \
     -ir "$1" -url "$URL" -keyfile "$VM/apikey.json") || rc=$?
   go tool covdata textfmt -i="$VM/cover" -o "$VM/contract.out" || true
   return "$rc"
 }
 
-# contract_coverage: report and floor for the last contract test
+# contract_coverage: report for the last contract test; the floor is
+# checked only with COVERAGE_ENFORCE=1 (tools/ci/coverage.sh)
 contract_coverage() {
   "$ROOT/tools/ci/coverage.sh" contract "$VM/contract.out" "$ROOT/coverage"
 }

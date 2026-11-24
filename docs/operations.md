@@ -56,6 +56,8 @@ Start a session in this repository with the issue link. Typical causes:
 | Cause | Fix |
 |---|---|
 | Contract test finding | generator bug: fix it; correct upstream behaviour: an entry in `verify/accepted.json` with reason and evidence from two runs |
+| Plugin not installable on the test VM (job step "Every plugin installed"; the release was published as a pre-release with the plugin untested) | read `install-<plugin>.log` in the run's `verified-<release>` artifact: a package fault upstream clears with its next version; a fault of the test VM (proxy, dependency) is fixed in `tools/testvm.sh` |
+| Contract test coverage below its floor in `promote.yml` | code that the VM no longer reaches: cover it with a unit test, or lower the floor with the measurements in the commit message (never on the publishing path, which only reports it) |
 | New series with a different layout (image name, key, ABI) | adjust `tools/testvm.sh` or the key chain |
 | GitHub platform change | update the pinned action or step |
 | Typing lost | read the release's diff for the listed controllers; extend the derivation, or confirm that upstream made them custom |

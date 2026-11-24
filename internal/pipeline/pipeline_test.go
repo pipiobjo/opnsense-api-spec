@@ -633,6 +633,10 @@ func TestNeedsVerification(t *testing.T) {
 		{"older generator", &IndexVerification{Composition: "26.7.9~a", Generator: "0.0.1"}, true},
 		{"failed run", &IndexVerification{Composition: "26.7.9~a", Generator: ir.GeneratorVersion, Failed: 1}, true},
 		{"plugin not tested", &IndexVerification{Composition: "26.7.9~a", Generator: ir.GeneratorVersion, Untested: []string{"os-caddy"}}, true},
+		// a plugin the test VM could not install is untested too: the
+		// release is published, but not as verified (ADR 0008)
+		{"plugin not installable", &IndexVerification{Composition: "26.7.9~a", Generator: ir.GeneratorVersion,
+			Untested: []string{"os-caddy"}, NotInstallable: []string{"os-caddy"}}, true},
 	}
 	for _, c := range cases {
 		if got := needsVerification(c.v, "26.7.9~a"); got != c.want {

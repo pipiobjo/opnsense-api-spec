@@ -94,6 +94,15 @@ sed -i 's/"current":"c1"/"current":"c2"/' "$T/root/dist/index.json"
 out=$(pub plan)
 check "changed index entry: updated" "$out" "plan: update opnsense-26.7.9"
 
+# a plugin the test VM could not install (ADR 0008): published as a
+# pre-release that names it
+setup
+jq '.releases[0] += {current: "c2", needs_verification: true, verified: (.releases[0].verified + {untested_packages: ["os-caddy"], not_installable: ["os-caddy"]})}' \
+  "$T/root/dist/index.json" > "$T/root/dist/index.json.new" && mv "$T/root/dist/index.json.new" "$T/root/dist/index.json"
+out=$(pub plan)
+check "not installable: published as a pre-release" "$out" "plan: update opnsense-26.7.9 (pre-release=true"
+check "not installable: the notes name it" "$(cat "$T/root/.cache/ci/upload/26.7.9/notes.md")" "1 packages untested, not installable on the test VM: os-caddy)"
+
 setup
 echo '[]' > "$T/fake/releases.json"
 out=$(pub plan)

@@ -1,6 +1,8 @@
 # 0008: Daily pipeline on hosted runners, GitHub releases as publication and state
 
-Status: accepted, implemented (publishing since 2026-11-13)
+Status: accepted, implemented (publishing since 2026-11-13); amended
+2026-11-24: publishing per release instead of all or nothing, coverage of
+the contract test reported instead of gating (see Amendment)
 
 ## Context
 
@@ -27,8 +29,8 @@ Constraints:
 **Workflow** (`.github/workflows/pipeline.yml`, daily and on dispatch):
 `build` (restore state, gates, `matrix -series all`, client smoke test of
 the newest release per series, `plan`) -> `contract` (one job per planned
-release, at most 3 in parallel) -> `publish` (only if every job passed) ->
-`report` (on any failure). `ci.yml` runs the code gates on every push and
+release, at most 3 in parallel) -> `prepare` and `upload` (whatever the
+contract jobs did; see Failure) -> `report` (on any failure). `ci.yml` runs the code gates on every push and
 pull request.
 
 **State is the last publication.** The complete `dist/` of the last
@@ -57,6 +59,10 @@ newest release of each series whose current composition is not verified.
 Verified means: last run on exactly this composition, with this generator,
 every package with endpoints tested, no unexplained failure. A failed or
 partial run (plugin not installable, core-only run) is not a verification.
+A plugin the test VM could not install is recorded as such
+(`not_installable` in the contract test result and the index; not an
+upstream fault and not an entry of `verify/accepted.json`): its endpoints
+are untested, the release stays unverified.
 Older releases keep `needs_verification` visible in the index and their
 release notes; re-testing them after a generator change is a manual
 dispatch (`verify: 26.7.5,...`), not a daily cost.
@@ -75,11 +81,20 @@ change); assets are replaced in place. Pre-release while the current
 composition is not verified; "latest" is the newest release when verified.
 OCI artifacts (ORAS) come later, from the same files.
 
-**Failure**: nothing is published (`publish` needs all jobs; a planned
-release that is still unverified after the contract jobs fails the publish
-gate). `report` writes the job results and the failing checks per release
-to the run's summary page. (Until 2026-11-15 it opened an issue; replaced
-by [ADR 0012](0012-quiet-operation.md).)
+**Failure** (amended 2026-11-24): each release is published with the
+contract result it has. A contract job that failed (a finding, a plugin
+that did not install, a VM that did not start) does not hold back the
+other releases: `prepare` runs after every contract job, merges every
+result there is, and the release with the failure is published as a
+pre-release ("not verified"; its notes say what failed and which plugins
+were untested or not installable). The run stays red: the contract job
+fails, and the job `complete` fails while a planned release is still
+unverified. A lasting fault therefore reaches the watchdog after 7 days
+(ADR 0012) without stopping a new series from being published. A failure
+of `build` (gates, matrix) still publishes nothing. `report` writes the
+job results and the failing checks per release to the run's summary
+page. (Until 2026-11-15 it opened an issue; replaced by
+[ADR 0012](0012-quiet-operation.md).)
 
 **Loud by construction**: `verify` exits non-zero on unexplained findings;
 the workflow shell is `bash -eo pipefail` (the implicit default has no
@@ -96,12 +111,16 @@ fetched first).
   release notes name the generator commit of the current assets.
 - Costs (public since 2026-11-15; hosted runner minutes are free for
   public repositories). Before that, as a private repository: the Actions cache is free up to 10 GB per
-  repository and only billed if that limit is raised (we use about
-  0.5 GB); release assets are not billed as storage; the dist artifact
+  repository and only billed if that limit is raised; release assets are not billed as storage; the dist artifact
   between jobs (about 10 MB, 7 days) counts toward artifact storage.
   Hosted runner minutes count against the account's
   quota. A no-op run (state restore, gates, matrix without builds, client
   smoke test) is the daily cost; contract jobs only run for new compositions.
+- Actions cache (measured 2026-11-24): 10.3 GB in 26 entries, at the
+  limit. The package cache was saved under a key per run (about 0.43 GB
+  each, 20 copies) and pushed out the test VM images; it is keyed by
+  content since 2026-11-24 (a new entry only when the downloads change).
+  The VM base images are about 0.5 GB per series and branch.
 - Accepting an upstream issue stays a reviewed change in
   `verify/accepted.json`; the pipeline never accepts anything on its own.
 
@@ -141,3 +160,27 @@ fetched first).
   `v0.6.0` created by the publish job. 26.7.8 is served by the mirror again
   and was rebuilt with its earlier composition, so the 403 was temporary.
   Repository public since 2026-11-15; runner minutes are free from then on.
+
+## Amendment 2026-11-24 (architecture review)
+
+The review found that all-or-nothing publishing turned every fault of one
+release into a stop for all: a plugin that does not install on the test
+VM kept its release unverified for good, the publish gate failed every
+day, and a new series could not be published (REL-3, OPS-5); a coverage
+floor of the contract test, a measurement of the VM's behaviour, sat on
+the same gate with less than one point of margin and was lowered three
+times in two days by hand (REQ-2, OPS-1, TST-1, REL-1). Decisions of the
+owner (2026-11-24):
+
+- Publish per release (section Failure). This implements the decision of
+  2026-11-17 that a plugin which does not install is a warning, without
+  calling the release verified.
+- Coverage floors: unit-test profiles are enforced everywhere, with the
+  floor one point below the lowest measurement. The contract test
+  coverage is reported in every run and enforced only in `promote.yml`
+  (input `check-coverage`), three points below the lowest measurement
+  (`tools/ci/coverage-floor.txt`, `tools/ci/coverage.sh`).
+- The state (section State) is attested and checked before use, a
+  transient read failure is no longer taken for "no state", and a state
+  that lost contract test records is not saved
+  ([operations.md](../operations.md#state)).

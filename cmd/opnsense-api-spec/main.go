@@ -41,6 +41,7 @@ commands:
                            serve the package snapshot of release X to an
                            isolated test VM (default listen 127.0.0.1:18080)
   verify -ir F -url U -keyfile K [-write] [-packages a,b|installed]
+         [-not-installable a,b]
                            contract tests against a THROWAWAY test instance
                            (only https://127.0.0.1:<port> or localhost);
                            writes *.verified.json and re-renders the OpenAPI
@@ -123,6 +124,7 @@ func main() {
 	extra := fs.String("verify", "", "")
 	matrix := fs.Bool("matrix", false, "")
 	onlyRequested := fs.Bool("only-requested", false, "")
+	notInstallable := fs.String("not-installable", "", "")
 	fs.Usage = usage
 	_ = fs.Parse(args)
 	c := pkgrepo.NewClient(o.base, o.cache)
@@ -187,7 +189,7 @@ func main() {
 		if o.irFile == "" || o.url == "" || o.keyfile == "" {
 			usage()
 		}
-		err = cmdVerify(o, accepted)
+		err = cmdVerify(o, accepted, notInstallable)
 	case "installed":
 		if o.url == "" || o.keyfile == "" {
 			usage()
@@ -309,7 +311,7 @@ func cmdSBOM(dist string) error {
 	return nil
 }
 
-func cmdVerify(o opts, accepted *string) error {
+func cmdVerify(o opts, accepted, notInstallable *string) error {
 	rel, err := pipeline.ReadIR(o.irFile)
 	if err != nil {
 		return err
@@ -335,6 +337,12 @@ func cmdVerify(o opts, accepted *string) error {
 	}
 	fmt.Fprintf(os.Stderr, "testing endpoints of %d installed/selected packages\n", len(pk))
 	rep := verify.Run(c, rel, pk, o.write)
+	for _, p := range strings.Split(*notInstallable, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			rep.NotInstallable = append(rep.NotInstallable, p)
+		}
+	}
+	slices.Sort(rep.NotInstallable)
 	if acc, err := verify.LoadAccepted(*accepted); err == nil {
 		if n := verify.ApplyAccepted(rep, acc); n > 0 {
 			fmt.Fprintf(os.Stderr, "%d finding(s) accepted per %s\n", n, *accepted)

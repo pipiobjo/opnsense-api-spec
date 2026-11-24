@@ -86,7 +86,7 @@ generated from the signed release packages. Not an official OPNsense project.
 | Status | $(jq -r 'if .status == "final" then "final (a newer release exists; this catalog state no longer changes)" else "provisional (newest release of its series; hotfixes may still change the catalog)" end' <<<"$e") |
 | Generator | $generator, commit [\`${commit:0:12}\`]($repo_url/commit/$commit) |
 | Source | $(jq -r 'if .source_unavailable then "**packages no longer available on the mirror** (since \(.source_unavailable.since)); these files are from the last build that had them" else "signed release packages, available on the mirror" end' <<<"$e") |
-| Contract test | $(jq -r 'if .needs_verification then "not verified for this composition" + (if .verified then " (last run: test instance \(.verified.instance), \(.verified.date), \(.verified.failed) failed, \(.verified.untested_packages // [] | length) packages untested)" else "" end) else "verified against test instance \(.verified.instance), \(.verified.date), 0 failed" end' <<<"$e") |
+| Contract test | $(jq -r 'if .needs_verification then "not verified for this composition" + (if .verified then " (last run: test instance \(.verified.instance), \(.verified.date), \(.verified.failed) failed, \(.verified.untested_packages // [] | length) packages untested" + (if (.verified.not_installable // []) != [] then ", not installable on the test VM: \(.verified.not_installable | join(", "))" else "" end) + ")" else "" end) else "verified against test instance \(.verified.instance), \(.verified.date), 0 failed" end' <<<"$e") |
 
 Assets: \`opnsense-$rel.openapi.json\` (the spec), \`.ir.json\` (intermediate
 representation), \`.coverage.md\` (what is typed and what is not),

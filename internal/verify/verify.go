@@ -60,8 +60,13 @@ type Report struct {
 	// Packages is the package selection the run tested (core "opnsense"
 	// and the plugins that were installed). Endpoints of other packages
 	// were not tested; the index reports them as untested.
-	Packages []string  `json:"packages"`
-	Results  []*Result `json:"results"`
+	Packages []string `json:"packages"`
+	// NotInstallable: plugins the run tried to install on the test VM and
+	// could not (set by the caller). Their endpoints are untested; this is
+	// a fault of the test environment or the package, not an upstream API
+	// fault, and keeps the release unverified (ADR 0008).
+	NotInstallable []string  `json:"not_installable,omitempty"`
+	Results        []*Result `json:"results"`
 	// UnusedAccepted: entries of verify/accepted.json that apply to this
 	// release but covered no failed check in this run (see ApplyAccepted).
 	UnusedAccepted []string `json:"unused_accepted,omitempty"`

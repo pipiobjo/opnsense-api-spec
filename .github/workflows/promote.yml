@@ -51,6 +51,9 @@ jobs:
     with:
       skip-contract: false
       roundtrip: true
+      # the contract test coverage floor guards code changes, so it is
+      # enforced here and nowhere on the publishing path
+      check-coverage: true
   dry-run-no-change:
     needs: ci
     uses: ./.github/workflows/pipeline.yml

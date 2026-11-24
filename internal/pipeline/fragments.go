@@ -188,6 +188,9 @@ type IndexVerification struct {
 	// did not test (plugin not installed, core-only run). A release with
 	// untested packages is not verified.
 	Untested []string `json:"untested_packages,omitempty"`
+	// NotInstallable: the part of Untested the run could not install on
+	// the test VM (verify.Report.NotInstallable).
+	NotInstallable []string `json:"not_installable,omitempty"`
 	// UnusedAccepted and UsedAccepted: the accepted entries of the run
 	// (verify.Report).
 	UnusedAccepted []string `json:"unused_accepted,omitempty"`
@@ -264,7 +267,7 @@ func BuildIndex(dist string) error {
 			if err := json.Unmarshal(raw, &rep); err == nil {
 				v := &IndexVerification{Composition: rep.Composition, Instance: rep.Instance, Date: rep.Date,
 					Generator: rep.Generator, Results: map[string]int{},
-					UnusedAccepted: rep.UnusedAccepted, UsedAccepted: rep.UsedAccepted}
+					UnusedAccepted: rep.UnusedAccepted, UsedAccepted: rep.UsedAccepted, NotInstallable: rep.NotInstallable}
 				for _, r := range rep.Results {
 					v.Results[r.Key()]++
 					if r.Status.Failed() {
