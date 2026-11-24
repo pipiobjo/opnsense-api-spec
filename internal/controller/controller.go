@@ -116,7 +116,7 @@ var (
 	returnRe = regexp.MustCompile(`return\s*$`)
 	returnKw = regexp.MustCompile(`\breturn\b`)
 	outerRe  = regexp.MustCompile(`return\s*(?:array\s*\(|\[)\s*['"](\w+)['"]\s*=>\s*$`)
-	hookRe   = regexp.MustCompile(`function\s+(getModelNodes|setActionHook|setBaseHook|__call)\s*\(`)
+	hookRe   = regexp.MustCompile(`function\s+(getModelNodes|setActionHook|setBaseHook|save|__call)\s*\(`)
 	parentRe = regexp.MustCompile(`parent::\w+Action\s*\(`)
 	litRe    = regexp.MustCompile(`^\s*(['"])([^'"]*)['"]\s*$`)
 )

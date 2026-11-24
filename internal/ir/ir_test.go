@@ -120,3 +120,25 @@ func TestOwnActionWrapper(t *testing.T) {
 		})
 	}
 }
+
+// Claim: a controller that overrides save (os-stunnel computes
+// general.enabled from its services there) marks every write it serves
+// custom-save; its reads are not marked. Found by the settings write
+// check, which changes a value (generator 0.10.0).
+func TestControllerSaveIsCustomSave(t *testing.T) {
+	m := &model.Model{Class: `OPNsense\Demo\Demo`, Root: &model.Node{Kind: model.KindContainer, Children: []*model.Node{
+		{Name: "general", Kind: model.KindContainer},
+	}}}
+	for _, hooks := range [][]string{{"save"}, nil} {
+		get := controller.Action{Name: "get", DeclaredIn: baseModelCtl}
+		set := controller.Action{Name: "set", DeclaredIn: baseModelCtl}
+		ctl := &controller.Controller{Class: `OPNsense\Demo\Api\ServicesController`, Module: "demo", Name: "services", ModelName: "demo",
+			ModelClass: m.Class, Hooks: hooks, Actions: []*controller.Action{&get, &set}}
+		for _, e := range Build([]*model.Model{m}, []*controller.Controller{ctl}) {
+			want := e.Kind == KindModelSet && hooks != nil
+			if got := gap.Has(e.Gaps, gap.CustomSave); got != want {
+				t.Errorf("hooks %v, %s: custom-save %v, want %v", hooks, e.Kind, got, want)
+			}
+		}
+	}
+}

@@ -155,10 +155,16 @@ Two independent version axes: **input** (OPNsense content) and
   composition; otherwise only the status is updated.
 - **Determinism.** The same inputs and generator version produce
   byte-identical outputs (tested).
-- **Generator versions.** A new generator version rebuilds everything;
-  fragments are content-addressed, so unchanged APIs keep their hash and
-  file. Keeping release views of older generator versions side by side is
-  **planned**.
+- **Generator versions.** A new generator version rebuilds the current
+  catalog state of every release; fragments are content-addressed, so
+  unchanged APIs keep their hash and file. Older catalog states (an
+  earlier hotfix revision of a release) are not rebuilt, because their
+  package files are no longer on the mirror. The capability data leaves
+  them out when their release has a state built by the current generator
+  (a firewall on such a revision uses the release's current state, as
+  for any revision the data does not list); `dist/` keeps them. A change
+  of the derived API without a new generator version fails the golden
+  test (`TestGeneratorRule`).
 
 Layout of `dist/`:
 
@@ -205,7 +211,7 @@ typed, whatever their kind.
 | `multiple-helpers` | several helper calls; the one matching the action is documented |
 | `helper-non-literal` | helper called with non-literal arguments; untyped |
 | `custom-write` | (field) the field type, or one it inherits from, overrides `setValue`: the stored value may differ from the request (normalized, encoded, converted). Core normalizers count too (`HostnameField`, `NetworkField`, `PortField`, `MacAddressField`, ...) |
-| `custom-save` | (model or entry list) own code between the request and what is read: the model class overrides `serializeToConfig` or `init` (the setup wizard loads every value from the rest of the configuration), or the entries are stored through `toLegacy`/`fromLegacy` (interface assignments). Values may be changed, computed, written elsewhere or dropped depending on other fields; the rule itself is not derived |
+| `custom-save` | (model, entry list or write operation) own code between the request and what is read: the model class overrides `serializeToConfig` or `init` (the setup wizard loads every value from the rest of the configuration), the entries are stored through `toLegacy`/`fromLegacy` (interface assignments), or the controller overrides `save` (os-stunnel sets `general.enabled` from its services). Values may be changed, computed, written elsewhere or dropped depending on other fields; the rule itself is not derived |
 | `magic-call` | the controller answers other action names through PHP's `__call` (unbound's `*Dot` endpoints, aliases of `*Forward` with `type` dot); those endpoints are not in the spec |
 | `overlay-unknown` | `addBase`/`setBase` force fields through an overlay whose fields cannot be derived (a helper method, an overlay assembled after reading the request, an expression); which fields is unknown |
 | `no-apply-endpoint` | no apply/reconfigure endpoint found |
@@ -304,7 +310,7 @@ fields. See section 9.
 | Client functional test | a provider-style scenario with the generated Go client against the test VM: version detection, settings get/partial set/read back, apply, entry add/get/set/search/delete, select fields, validation errors | implemented (`tools/client-smoke.sh <release> --run`, `test/consumer-go/`); 14/14 on 26.7 |
 | Response schema validation | every response of the contract tests validated against the rendered OpenAPI schema (JSON Schema 2020-12), not only against the model, so that decoding problems of generated clients show up generically | implemented (`schema` checks in `verify`) |
 | Consumer smoke test | a Go client generated with oapi-codegen (pinned v2.8.2) compiles together with the scenario (blocking); openapi-generator for other languages (informational) | Go: in every pipeline run for the newest release of each series (`tools/client-smoke.sh <release>`); openapi-generator: not automated, deferred while all consumers are Go ([ADR 0007](adr/0007-openapi-3-1.md)) |
-| Contract tests | every GET against a real instance; per entry list add -> read back -> update -> read back -> delete with generated values; all plugins with an API installed | implemented (`tools/testvm.sh`, [ADR 0009](adr/0009-generated-write-values.md)); `verify` exits non-zero on any unexplained finding |
+| Contract tests | every GET against a real instance; per entry list add -> read back -> update -> read back -> list order -> delete with generated values, write-only fields checked to read back empty; per settings model one field changed, read back, restored; all plugins with an API installed | implemented (`tools/testvm.sh`, [ADR 0009](adr/0009-generated-write-values.md)); `verify` exits non-zero on any unexplained finding |
 | Golden tests | fragment hashes of final releases (25.7.10, 26.1.10, 26.7.7) checked in; a generator change that alters the derived API of an existing release fails per package | implemented (`internal/assemble`); CI fetches the sources and fails instead of skipping when they are missing (`GOLDEN_REQUIRED=1`) |
 | Determinism | two builds from the same sources give identical IR, OpenAPI and fragment hashes | implemented (`internal/assemble`) |
 | Invariants | no duplicate paths, every referenced model and package exists, every operation has a method, every local `$ref` resolves; a violation stops the build | implemented (`internal/quality`) |

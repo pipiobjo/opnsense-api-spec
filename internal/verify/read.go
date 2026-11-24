@@ -48,14 +48,45 @@ const (
 	diffMissing diffKind = iota // a model node is not in the answer
 	diffExtra                   // the answer has a key the model does not
 	diffType                    // a value has another JSON type
+	// diffOtherResource: a missing node that holds no field of the
+	// resource read, only nested entry lists, which are resources of their
+	// own with their own get and search (the Kea and IPsec settings get
+	// leaves them out). Not a difference of this resource; a note.
+	diffOtherResource
 )
 
-func messages(ds []shapeDiff) []string {
-	var out []string
+// messages returns the findings of the differences and the notes (nodes
+// of other resources left out of the answer).
+func messages(ds []shapeDiff) (findings, notes []string) {
+	var other []string
 	for _, d := range ds {
-		out = append(out, d.msg)
+		if d.kind == diffOtherResource {
+			other = append(other, d.msg)
+			continue
+		}
+		findings = append(findings, d.msg)
 	}
-	return out
+	if len(other) > 0 {
+		notes = []string{"entry lists not in the answer (resources of their own): " + strings.Join(other, ", ")}
+	}
+	return findings, notes
+}
+
+// holdsFields: a field of this resource is below n without passing an
+// entry list (the same rule as the fields of a resource in the capability
+// data).
+func holdsFields(n *model.Node) bool {
+	for _, c := range n.Children {
+		switch c.Kind {
+		case model.KindField:
+			return true
+		case model.KindContainer:
+			if holdsFields(c) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // compare the response object with the model node (Read shape)
@@ -80,6 +111,10 @@ func compareNode(n *model.Node, v any, path string, out *[]shapeDiff) {
 		p := strings.TrimPrefix(path+"."+ch.Name, ".")
 		val, present := obj[ch.Name]
 		if !present {
+			if ch.Kind != model.KindField && !holdsFields(ch) {
+				*out = append(*out, shapeDiff{kind: diffOtherResource, msg: p})
+				continue
+			}
 			*out = append(*out, shapeDiff{kind: diffMissing, section: ch.Kind != model.KindField, msg: p + ": missing in response"})
 			continue
 		}
@@ -156,7 +191,7 @@ func checkModelGet(c *Client, e *ir.Endpoint, m *model.Model) *Result {
 		return r
 	}
 	compareNode(m.Root, inner, "", &r.diffs)
-	r.Findings = messages(r.diffs)
+	r.Findings, r.Notes = messages(r.diffs)
 	r.Status = status(r.Findings)
 	return r
 }
@@ -254,7 +289,7 @@ func checkItemGet(c *Client, e *ir.Endpoint, m *model.Model) *Result {
 	if m != nil {
 		if n := m.Find(e.ModelPath); n != nil {
 			compareNode(&model.Node{Kind: model.KindContainer, Children: n.Children}, inner, e.ModelPath, &r.diffs)
-			r.Findings = messages(r.diffs)
+			r.Findings, r.Notes = messages(r.diffs)
 		}
 	}
 	r.Status = status(r.Findings)

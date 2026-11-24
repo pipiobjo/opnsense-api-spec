@@ -267,7 +267,10 @@ bind domains, the firewall filter, os-frr's general settings; `init`: the
 setup wizard, which reads every value from the rest of the configuration,
 so a value written to it does not read back) or the entries are
 stored through `toLegacy`/`fromLegacy` (interface assignments, which drop
-the DHCPv6 options unless the IPv6 type is DHCPv6). A field's `gaps` has
+the DHCPv6 options unless the IPv6 type is DHCPv6), or the controller
+overrides `save` (os-stunnel's services, which set `general.enabled` from
+the enabled tunnels; the write operations carry the gap as well). A
+field's `gaps` has
 `custom-write` when its type converts or normalizes values on write. Both
 are read from the PHP classes; they say that a value may be stored
 differently from the request, not how. A consumer that reads back after

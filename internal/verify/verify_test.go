@@ -65,7 +65,7 @@ func TestCompareNode(t *testing.T) {
 	_ = json.Unmarshal([]byte(`{"enabled": "1", "mode": [{"value": "a", "selected": 1}], "extra": "x", "%enabled": "Yes"}`), &v)
 	var diffs []shapeDiff
 	compareNode(n, v, "", &diffs)
-	out := messages(diffs)
+	out, _ := messages(diffs)
 	want := []string{"missing: missing in response", "extra: not in model"}
 	if !reflect.DeepEqual(out, want) {
 		t.Errorf("findings %v, want %v", out, want)
@@ -100,7 +100,7 @@ func TestCompareNodeTypeErrors(t *testing.T) {
 		}
 		var diffs []shapeDiff
 		compareNode(n, v, "", &diffs)
-		out := messages(diffs)
+		out, _ := messages(diffs)
 		var want []string
 		if c.want != "" {
 			want = []string{c.want}

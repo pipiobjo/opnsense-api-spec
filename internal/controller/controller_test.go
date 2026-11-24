@@ -280,3 +280,25 @@ func TestOwnSettingsKeys(t *testing.T) {
 		}
 	}
 }
+
+// Claim: the hooks of ApiMutableModelControllerBase a controller overrides
+// are found in its own code (save as in os-stunnel's ServicesController),
+// not an action with a similar name or a mention in a comment.
+func TestHooks(t *testing.T) {
+	src := `<?php
+namespace OPNsense\Demo\Api;
+use OPNsense\Base\ApiMutableModelControllerBase;
+class ServicesController extends ApiMutableModelControllerBase
+{
+    // function getModelNodes() is not overridden here
+    protected function save($validateFullModel = false, $disable_validation = false)
+    {
+        return parent::save($validateFullModel, $disable_validation);
+    }
+    public function saveAction() { return []; }
+}`
+	cls := ParseFile(src, "Demo/Api/ServicesController.php")
+	if len(cls) != 1 || !reflect.DeepEqual(cls[0].Hooks, []string{"save"}) {
+		t.Fatalf("hooks %+v", cls)
+	}
+}

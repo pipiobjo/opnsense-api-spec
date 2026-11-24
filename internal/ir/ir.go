@@ -6,6 +6,7 @@
 package ir
 
 import (
+	"slices"
 	"sort"
 	"strings"
 
@@ -184,6 +185,11 @@ func Build(models []*model.Model, ctls []*controller.Controller) []*Endpoint {
 			}
 			e.Gaps = append(e.Gaps, c.Gaps...)
 			classify(e, c, a, mdl, primary)
+			if isMutation(e.Kind) && slices.Contains(c.Hooks, "save") {
+				// e.g. os-stunnel: save() sets general.enabled from the
+				// services, whatever the request said
+				e.Gaps = append(e.Gaps, gap.New(gap.CustomSave, "%s overrides save; values may be changed or computed before they are stored", c.Class))
+			}
 			if e.Model != "" && isMutation(e.Kind) {
 				e.Apply = ownApply[c.Class]
 				if e.Apply == "" {

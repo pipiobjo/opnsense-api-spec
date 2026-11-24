@@ -5,10 +5,13 @@ package verify
 
 import (
 	"encoding/json"
+	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -96,6 +99,30 @@ type fakeInstance struct {
 	needZone  bool              // hosts must refer to an existing zone
 	lockable  bool              // entries have lock=1 by default and refuse deletion while locked
 	zones     map[string]string // uuid -> name
+	// props: the entries also have a write-only "secret" and an ordered
+	// list "servers" (separator ","); the flags break what the data says
+	props       bool
+	leakGet     bool // get returns the secret
+	searchShows bool // search returns the secret (OPNsense 26.1.8 and later)
+	sortList    bool // the list is read back sorted
+}
+
+// orderedSelect encodes a select map with its members in this order
+// (encoding/json sorts map keys).
+type orderedSelect []string
+
+func (o orderedSelect) MarshalJSON() ([]byte, error) {
+	var b strings.Builder
+	b.WriteString("{")
+	for i, k := range o {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		kj, _ := json.Marshal(k)
+		fmt.Fprintf(&b, `%s:{"value":%s,"selected":1}`, kj, kj)
+	}
+	b.WriteString("}")
+	return []byte(b.String()), nil
 }
 
 func (f *fakeInstance) template() map[string]any {
@@ -104,6 +131,9 @@ func (f *fakeInstance) template() map[string]any {
 		iface[k] = map[string]any{"value": v, "selected": float64(0)}
 	}
 	t := map[string]any{"enabled": "1", "hostname": "", "server": "", "iface": iface, "description": ""}
+	if f.props {
+		t["secret"], t["servers"] = "", orderedSelect{""}
+	}
 	if f.lockable {
 		t["lock"] = "1"
 	}
@@ -128,6 +158,17 @@ func (f *fakeInstance) read(e map[string]string) map[string]any {
 					o.(map[string]any)["selected"] = float64(1)
 				}
 			}
+			continue
+		}
+		if k == "servers" {
+			l := orderedSelect(strings.Split(v, ","))
+			if f.sortList {
+				slices.Sort(l)
+			}
+			t[k] = l
+			continue
+		}
+		if k == "secret" && !f.leakGet {
 			continue
 		}
 		t[k] = v
@@ -188,6 +229,16 @@ func (f *fakeInstance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(p, "/api/x/zones/delZone/"):
 		delete(f.zones, strings.TrimPrefix(p, "/api/x/zones/delZone/"))
 		reply(map[string]any{"result": "deleted"})
+	case p == "/api/x/settings/searchHost":
+		var rows []any
+		for id, e := range f.entries {
+			row := map[string]any{"uuid": id, "hostname": e["hostname"]}
+			if f.searchShows {
+				row["secret"] = e["secret"]
+			}
+			rows = append(rows, row)
+		}
+		reply(map[string]any{"rows": rows, "total": len(rows), "rowCount": len(rows), "current": 1})
 	case p == "/api/x/settings/getHost":
 		reply(map[string]any{"host": f.template()})
 	case p == "/api/x/settings/addHost":
@@ -242,7 +293,14 @@ func hostCycle(t *testing.T, f *fakeInstance) *Result {
 		{Name: "zone", Kind: model.KindField, Type: "ModelRelationField", BaseType: "BaseListField", Shape: model.ShapeSelect,
 			Relations: []model.Relation{{Source: "test.zones", Items: "zones.zone"}}}, // case as in real models
 	}}
-	f2 := &family{get: ep("getHost", ir.KindItemGet), add: ep("addHost", ir.KindItemAdd), set: ep("setHost", ir.KindItemSet), del: ep("delHost", ir.KindItemDel), entry: entry}
+	if f.props {
+		entry.Children = append(entry.Children,
+			&model.Node{Name: "secret", Kind: model.KindField, Type: "UpdateOnlyTextField", BaseType: "TextField", GetEmpty: true},
+			&model.Node{Name: "servers", Kind: model.KindField, Type: "NetworkField", BaseType: "BaseSetField", Shape: model.ShapeSelect,
+				List: &model.List{Separator: ",", Ordered: true}})
+	}
+	f2 := &family{get: ep("getHost", ir.KindItemGet), add: ep("addHost", ir.KindItemAdd), set: ep("setHost", ir.KindItemSet), del: ep("delHost", ir.KindItemDel),
+		search: ep("searchHost", ir.KindItemSearch), entry: entry}
 	zep := func(action string, kind ir.Kind) *ir.Endpoint {
 		return &ir.Endpoint{Path: "/api/x/zones/" + action, Kind: kind, Wrapper: "zone", ModelPath: "zones.zone"}
 	}
@@ -277,6 +335,40 @@ func TestWriteCycleGeneratesValues(t *testing.T) {
 	// which must not fail the check
 	if len(r.Findings) != 0 || len(r.Notes) != 1 || !strings.Contains(r.Notes[0], "hostname, iface") {
 		t.Errorf("findings %v, notes %v", r.Findings, r.Notes)
+	}
+}
+
+// Claim (DEV-1, GEN-3 of the review of 2026-11-24): the write cycle
+// writes an ordered list field with two elements out of sorted order and
+// reads them back in that order, gives a write-only field a value and
+// checks that get returns it empty, and records whether search shows it.
+// Breaking each makes the cycle say so.
+func TestWriteCycleListOrderAndWriteOnly(t *testing.T) {
+	newF := func() *fakeInstance {
+		return &fakeInstance{entries: map[string]map[string]string{}, zones: map[string]string{}, options: map[string]string{"lan": "LAN"}, props: true}
+	}
+	f := newF()
+	r := hostCycle(t, f)
+	if r.Status != "ok" || !slices.Contains(r.Steps, "list-order") || len(r.ReturnedBySearch) != 0 {
+		t.Fatalf("status %s, steps %v, findings %v, search %v", r.Status, r.Steps, r.Findings, r.ReturnedBySearch)
+	}
+	if slices.Contains(r.Generated, "secret") || slices.Contains(r.RuntimeRequired, "secret") {
+		t.Errorf("the write-only value is ours, not a generated or required one: %v %v", r.Generated, r.RuntimeRequired)
+	}
+	f = newF()
+	f.sortList = true
+	if r := hostCycle(t, f); r.Status != "mismatch" || !strings.Contains(strings.Join(r.Findings, " "), "list order of servers") {
+		t.Errorf("sorted list: status %s, findings %v", r.Status, r.Findings)
+	}
+	f = newF()
+	f.leakGet = true
+	if r := hostCycle(t, f); r.Status != "mismatch" || !strings.Contains(strings.Join(r.Findings, " "), "write-only field secret returned by get") {
+		t.Errorf("get shows the secret: status %s, findings %v", r.Status, r.Findings)
+	}
+	f = newF()
+	f.searchShows = true
+	if r := hostCycle(t, f); r.Status != "ok" || !reflect.DeepEqual(r.ReturnedBySearch, []string{"secret"}) {
+		t.Errorf("search shows the secret: status %s, returned by search %v", r.Status, r.ReturnedBySearch)
 	}
 }
 
@@ -372,36 +464,81 @@ func TestSettingsWriteBack(t *testing.T) {
 	}}}
 	get := &ir.Endpoint{Path: "/api/x/settings/get", Kind: ir.KindModelGet, Wrapper: "x"}
 	set := &ir.Endpoint{Path: "/api/x/settings/set", Kind: ir.KindModelSet, Wrapper: "x"}
+	type store = map[string]string
+	// handlers: what the set endpoint does with the stored values and the
+	// request; nil answer = store and say "saved"
 	for _, c := range []struct {
 		name    string
-		answer  map[string]any
-		stores  bool
+		handle  func(st store, sent store) map[string]any
 		status  Status
 		finding string
+		steps   int
 	}{
-		{"saved and unchanged", map[string]any{"result": "saved"}, true, "ok", ""},
-		{"saved but not stored", map[string]any{"result": "saved"}, false, "mismatch", "read-back after set: general.enabled"},
-		{"own value rejected", map[string]any{"result": "failed", "validations": map[string]any{"x.general.enabled": "no"}}, true, "mismatch", "its own current value"},
-		{"model invalid by default", map[string]any{"result": "failed", "validations": map[string]any{"x.general.name": "A value is required."}}, true, "skipped", "not valid in its default state, set rejected for: general.name"},
-		{"not a configuration save", map[string]any{"status": "ok"}, true, "skipped", "does not save configuration"},
-		{"answers a file", nil, true, "skipped", "does not save configuration"},
+		{"stores", nil, "ok", "", 4},
+		// the case writing the current value back could not detect
+		{"saved but payload ignored", func(st, sent store) map[string]any { return map[string]any{"result": "saved"} }, "mismatch", "read-back after set: general.enabled", 0},
+		{"saved but another value stored", func(st, sent store) map[string]any {
+			for k := range sent {
+				st[k] = "x"
+			}
+			return map[string]any{"result": "saved"}
+		}, "mismatch", "read-back after set", 0},
+		{"own field refused, next field written", func(st, sent store) map[string]any {
+			if v, ok := sent["enabled"]; ok && v != st["enabled"] {
+				return map[string]any{"result": "failed", "validations": map[string]any{"x.general.enabled": "no"}}
+			}
+			maps.Copy(st, sent)
+			return nil
+		}, "ok", "", 4},
+		{"model invalid by default", func(st, sent store) map[string]any {
+			return map[string]any{"result": "failed", "validations": map[string]any{"x.general.other": "A value is required."}}
+		}, "skipped", "not valid in its default state, set rejected for: general.other", 0},
+		{"restore refused", func(st, sent store) map[string]any {
+			if sent["enabled"] == "1" && st["enabled"] == "0" {
+				return map[string]any{"result": "failed", "validations": map[string]any{"x.general.enabled": "no"}}
+			}
+			maps.Copy(st, sent)
+			return nil
+		}, "mismatch", "original value of general.enabled was rejected", 0},
+		// cloudflared: the token is required; setting it would make the
+		// model valid and the restore of "" fail, so nothing is changed
+		{"model valid only with a value we would set", func(st, sent store) map[string]any {
+			if v, ok := sent["name"]; !ok || v == "" {
+				if st["name"] == "" && v == "" {
+					return map[string]any{"result": "failed", "validations": map[string]any{"x.general.name": "A value is required."}}
+				}
+			}
+			maps.Copy(st, sent)
+			return nil
+		}, "skipped", "not valid in its default state, set rejected for: general.name", 0},
+		{"not a configuration save", func(st, sent store) map[string]any { return map[string]any{"status": "ok"} }, "skipped", "does not save configuration", 0},
+		{"answers a file", func(st, sent store) map[string]any { return map[string]any{"file": true} }, "skipped", "does not save configuration", 0},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			enabled := "1"
+			st := store{"name": "", "enabled": "1"}
 			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case get.Path:
-					_ = json.NewEncoder(w).Encode(map[string]any{"x": map[string]any{"general": map[string]any{"name": "", "enabled": enabled}}})
+					_ = json.NewEncoder(w).Encode(map[string]any{"x": map[string]any{"general": map[string]any{"name": st["name"], "enabled": st["enabled"]}}})
 				case set.Path:
-					if !c.stores {
-						enabled = "0"
+					var body map[string]map[string]store
+					_ = json.NewDecoder(r.Body).Decode(&body)
+					sent := body["x"]["general"]
+					var ans map[string]any
+					if c.handle != nil {
+						ans = c.handle(st, sent)
+					} else {
+						maps.Copy(st, sent)
 					}
-					if c.answer == nil {
+					if ans == nil {
+						ans = map[string]any{"result": "saved"}
+					}
+					if ans["file"] == true {
 						w.Header().Set("Content-Type", "application/octet-stream")
 						_, _ = w.Write([]byte("PK\x03\x04"))
 						return
 					}
-					_ = json.NewEncoder(w).Encode(c.answer)
+					_ = json.NewEncoder(w).Encode(ans)
 				default:
 					http.NotFound(w, r)
 				}
@@ -415,6 +552,9 @@ func TestSettingsWriteBack(t *testing.T) {
 			r := settingsWriteBack(cl, get, set, m)
 			if r.Status != c.status || (c.finding != "" && !strings.Contains(strings.Join(r.Findings, " "), c.finding)) {
 				t.Errorf("status %s, findings %v", r.Status, r.Findings)
+			}
+			if c.steps > 0 && (len(r.Steps) != c.steps || st["enabled"] != "1" || st["name"] != "") {
+				t.Errorf("steps %v, store after the check %v (want the original values back)", r.Steps, st)
 			}
 			if r.Check != "write-cycle" || r.Path != set.Path {
 				t.Errorf("result recorded as %s on %s", r.Check, r.Path)
@@ -488,6 +628,11 @@ func TestKnownGapSubsetOnlyExplainsSections(t *testing.T) {
 		status Status
 	}{
 		{"sections left out, key added", map[string]any{"dhcpv4": map[string]any{"general": map[string]any{"enabled": "1", "this_hostname": "fw"}}}, subset, StatusKnownGap},
+		// Kea on 26.x: the entry lists are resources of their own, so
+		// leaving them out is no difference of the settings resource
+		{"only entry lists left out", map[string]any{"dhcpv4": map[string]any{"general": map[string]any{"enabled": "1"}}}, subset, StatusOK},
+		{"only entry lists left out, no mark", map[string]any{"dhcpv4": map[string]any{"general": map[string]any{"enabled": "1"}}}, nil, StatusOK},
+		{"section with fields left out", map[string]any{"dhcpv4": map[string]any{"subnets": map[string]any{}}}, nil, StatusMismatch},
 		{"field missing", map[string]any{"dhcpv4": map[string]any{"general": map[string]any{"enable": "1"}}}, subset, StatusMismatch},
 		{"type error", map[string]any{"dhcpv4": map[string]any{"general": map[string]any{"enabled": 1}}}, subset, StatusMismatch},
 		{"section with another type", map[string]any{"dhcpv4": map[string]any{"general": map[string]any{"enabled": "1"}, "reservations": "x"}}, subset, StatusMismatch},
@@ -583,5 +728,45 @@ func TestRootKeyIsData(t *testing.T) {
 				t.Errorf("status %s, want %s; findings %v", r.Status, c.status, r.Findings)
 			}
 		})
+	}
+}
+
+// Claim: a settings write that does not read back is known-gap, not ok
+// and not a failure, when the data already says the writes go through own
+// code (custom-save on the set endpoint, as os-stunnel's save override, or
+// on the model, as the setup wizard's init); otherwise a mismatch.
+func TestSettingsWriteCustomSaveIsKnownGap(t *testing.T) {
+	m := &model.Model{Class: `OPNsense\X\X`, Root: &model.Node{Kind: model.KindContainer, Children: []*model.Node{
+		{Name: "general", Kind: model.KindContainer, Children: []*model.Node{
+			{Name: "enabled", Kind: model.KindField, Type: "BooleanField", BaseType: "BooleanField"},
+		}},
+	}}}
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/x/settings/get" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"x": map[string]any{"general": map[string]any{"enabled": "0"}}})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"result": "saved"}) // computes enabled itself
+	}))
+	defer srv.Close()
+	cl, err := NewClient(srv.URL, "k", "s", []string{"127.0.0.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cl.HTTP = srv.Client()
+	get := &ir.Endpoint{Path: "/api/x/settings/get", Kind: ir.KindModelGet, Wrapper: "x"}
+	plain := &ir.Endpoint{Path: "/api/x/settings/set", Kind: ir.KindModelSet, Wrapper: "x"}
+	own := *plain
+	own.Gaps = []gap.Gap{gap.New(gap.CustomSave, "overrides save")}
+	if r := settingsWriteBack(cl, get, plain, m); r.Status != StatusMismatch {
+		t.Errorf("without a gap: %s %v", r.Status, r.Findings)
+	}
+	if r := settingsWriteBack(cl, get, &own, m); r.Status != StatusKnownGap {
+		t.Errorf("custom-save on set: %s %v", r.Status, r.Findings)
+	}
+	mg := *m
+	mg.Gaps = []gap.Gap{gap.New(gap.CustomSave, "overrides init")}
+	if r := settingsWriteBack(cl, get, plain, &mg); r.Status != StatusKnownGap {
+		t.Errorf("custom-save on the model: %s %v", r.Status, r.Findings)
 	}
 }

@@ -517,6 +517,13 @@ func (d *Doc) add(hash string, f *fragment.Fragment) {
 				root = m.Find(first.ModelPath)
 			}
 			a.Gaps = gapCodes(m.Gaps)
+			for _, op := range ops {
+				// a controller whose save() runs own code stores through it
+				// for every write of the resource
+				if contains(op.Gaps, string(gap.CustomSave)) {
+					a.Gaps = addUnique(a.Gaps, string(gap.CustomSave))
+				}
+			}
 			if root != nil && r.kind == "entries" {
 				for _, g := range gapCodes(root.Gaps) {
 					a.Gaps = addUnique(a.Gaps, g)

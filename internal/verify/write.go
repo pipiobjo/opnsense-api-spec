@@ -88,12 +88,15 @@ func cycleFamilies(rel *ir.Release, models map[string]*model.Model, packages map
 	// the same rule as the capability data (ir.Families)
 	groups := map[string][]*ir.Endpoint{}
 	gets := map[string][]*ir.Endpoint{}
+	searches := map[string][]*ir.Endpoint{}
 	for _, e := range rel.Endpoints {
 		if e.ModelPath == "" || e.Source != ir.SourceBaseCall || !packages[e.Package] {
 			continue
 		}
 		k := e.Module + "/" + e.Controller + " " + e.ModelPath
 		switch e.Kind {
+		case ir.KindItemSearch:
+			searches[k] = append(searches[k], e)
 		case ir.KindItemGet:
 			gets[k] = append(gets[k], e)
 			groups[k] = append(groups[k], e)
@@ -107,6 +110,7 @@ func cycleFamilies(rel *ir.Release, models map[string]*model.Model, packages map
 	for k, eps := range groups {
 		for _, fm := range ir.Families(eps, opOf, byPath) {
 			f := &family{gets: gets[k], add: fm.Chosen["add"], del: fm.Chosen["del"], set: fm.Chosen["set"]}
+			f.search = entrySearch(searches[k], f.add)
 			key := k
 			if fm.Name != "" {
 				key += "@" + fm.Name
@@ -132,9 +136,9 @@ func cycleFamilies(rel *ir.Release, models map[string]*model.Model, packages map
 }
 
 type family struct {
-	gets               []*ir.Endpoint
-	get, add, del, set *ir.Endpoint
-	entry              *model.Node
+	gets                       []*ir.Endpoint
+	get, add, del, set, search *ir.Endpoint
+	entry                      *model.Node
 }
 
 type writer struct {
@@ -154,6 +158,7 @@ type added struct {
 	uuid     string
 	body     map[string]any
 	chosen   map[string]bool // fields set on purpose (compared on read-back)
+	injected map[string]bool // write-only fields given a value only to check them
 	tried    map[string]int  // generated fields -> candidate index
 	runtime  []string        // fields rejected with server defaults
 	notes    []string
@@ -163,7 +168,7 @@ type added struct {
 
 func (w *writer) add(f *family, depth int) *added {
 	c := w.c
-	res := &added{chosen: map[string]bool{}, tried: map[string]int{}}
+	res := &added{chosen: map[string]bool{}, tried: map[string]int{}, injected: map[string]bool{}}
 	r := &Result{Path: f.add.Path, Method: "POST", Check: CheckWriteCycle}
 	code, v, raw, err := c.do("GET", f.get.Path, nil)
 	if err != nil || code != 200 {
@@ -188,6 +193,9 @@ func (w *writer) add(f *family, depth int) *added {
 				}
 			}
 		}
+	}
+	if depth == 0 {
+		writeOnlyValues(f.entry, body, res)
 	}
 	prefix := f.add.Wrapper + "."
 	related := map[string]bool{}
@@ -217,7 +225,11 @@ func (w *writer) add(f *family, depth int) *added {
 		}
 		sort.Strings(fields)
 		if round == 0 {
-			res.runtime = fields
+			for _, fld := range fields {
+				if !res.injected[fld] {
+					res.runtime = append(res.runtime, fld)
+				}
+			}
 		}
 		var stuck []string
 		for _, fld := range fields {
@@ -231,6 +243,16 @@ func (w *writer) add(f *family, depth int) *added {
 				res.tried[fld] = i
 				res.chosen[fld] = true
 				assign(body, fld, cands[i])
+				continue
+			}
+			if res.injected[fld] {
+				// no generated value fits: leave the write-only field out
+				// rather than lose the cycle
+				delete(body, fld)
+				delete(res.chosen, fld)
+				delete(res.injected, fld)
+				delete(res.tried, fld)
+				res.notes = append(res.notes, "write-only field "+fld+" not checked (no value accepted)")
 				continue
 			}
 			if !related[fld] && depth < maxDepth {
@@ -322,7 +344,9 @@ func (w *writer) cycle(f *family) *Result {
 	}
 	r.Notes = append(r.Notes, a.notes...)
 	for fld := range a.tried {
-		r.Generated = append(r.Generated, fld)
+		if !a.injected[fld] {
+			r.Generated = append(r.Generated, fld)
+		}
 	}
 	sort.Strings(r.Generated)
 	r.Sample = a.body
@@ -342,6 +366,11 @@ func (w *writer) cycle(f *family) *Result {
 	} else {
 		r.Steps = append(r.Steps, "read-back")
 	}
+
+	// write-only fields come back empty from get; search may show them
+	fs, shown := checkWriteOnly(c, f, uuid, a)
+	r.Findings = append(r.Findings, fs...)
+	r.ReturnedBySearch = shown
 
 	// change one field and read it back
 	if f.set == nil {
@@ -368,6 +397,15 @@ func (w *writer) cycle(f *family) *Result {
 			} else {
 				r.Steps = append(r.Steps, "read-back-set")
 			}
+		}
+	}
+
+	// a list field written out of sorted order reads back in that order
+	if f.set != nil {
+		step, fs, notes := listOrder(c, f, uuid)
+		r.Findings, r.Notes = append(r.Findings, fs...), append(r.Notes, notes...)
+		if step {
+			r.Steps = append(r.Steps, "list-order")
 		}
 	}
 

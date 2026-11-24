@@ -31,6 +31,9 @@ type Result struct {
 	// form without wrapper. Values of option fields come from this
 	// instance's options (interfaces, relations) and may not exist elsewhere.
 	Sample map[string]any `json:"sample,omitempty"`
+	// ReturnedBySearch (write-cycle only): write-only fields whose stored
+	// value the search answer contained
+	ReturnedBySearch []string `json:"returned_by_search,omitempty"`
 	// Generated (write-cycle only): fields that needed a generated value
 	// because the server default was rejected.
 	Generated []string `json:"generated,omitempty"`
