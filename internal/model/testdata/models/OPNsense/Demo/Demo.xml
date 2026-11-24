@@ -48,6 +48,30 @@
             <commented type=".\CommentedField"/>
             <uid type="UniqueIdField"/>
             <secret type="UpdateOnlyTextField"/>
+            <apikeys type=".\ApiKeyField"/>
+            <b64 type=".\B64Field"/>
+            <link type="LegacyLinkField">
+                <Source>ipsec.enable</Source>
+            </link>
+            <content type=".\ContentField"/>
+            <nets type=".\AddressListField"/>
+            <csv type="CSVListField"/>
+            <servers type="NetworkField">
+                <AsList>Y</AsList>
+                <FieldSeparator>;</FieldSeparator>
+            </servers>
+            <single type="HostnameField"/>
+            <peers type="ModelRelationField">
+                <Multiple>Y</Multiple>
+                <Sorted>Y</Sorted>
+                <Model>
+                    <template>
+                        <source>OPNsense.Demo.Demo</source>
+                        <items>hosts.host</items>
+                        <display>hostname</display>
+                    </template>
+                </Model>
+            </peers>
         </general>
         <legacy>
             <entry type=".\LegacyEntryField">

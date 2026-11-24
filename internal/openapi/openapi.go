@@ -602,6 +602,11 @@ func fieldSchema(n *model.Node, dir string) M {
 		// values are UUIDs of entries in these lists
 		s["x-opnsense-relation"] = n.Relations
 	}
+	if n.List != nil {
+		// a list of elements joined by the separator; ordered: the
+		// firewall keeps the order written
+		s["x-opnsense-list"] = n.List
+	}
 	var opts []string
 	for _, o := range n.Options {
 		opts = append(opts, o.Value)
@@ -642,8 +647,10 @@ func fieldSchema(n *model.Node, dir string) M {
 	case len(opts) > 0:
 		s["description"] = "Comma-separated list of option keys"
 		s["x-opnsense-options"] = n.Options
-	case n.Shape == model.ShapeSelect && dir == "Write":
+	case n.Shape == model.ShapeSelect && dir == "Write" && n.BaseType == "BaseListField":
 		s["description"] = "Comma-separated list of option keys (options depend on the running system)"
+	case n.List != nil && dir == "Write":
+		s["description"] = fmt.Sprintf("List of elements joined by %q", n.List.Separator)
 	}
 	// a default outside the enum is an upstream model error (e.g. os-nginx:
 	// BooleanField with Default "N"); the instance returns it, so reads allow

@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -46,18 +47,24 @@ type Option struct {
 
 // Node is one element of a model tree.
 type Node struct {
-	Name     string            `json:"name"`
-	Kind     Kind              `json:"kind"`
-	Type     string            `json:"type,omitempty"`      // as written in the XML, e.g. "OptionField", ".\\KeaPoolsField"
-	BaseType string            `json:"base_type,omitempty"` // resolved core base class, e.g. "BaseListField"
-	Shape    Shape             `json:"read_shape,omitempty"`
-	Multiple bool              `json:"multiple,omitempty"`
-	List     *List             `json:"list,omitempty"`
-	Required bool              `json:"required,omitempty"`
-	Volatile bool              `json:"volatile,omitempty"`
-	Default  *string           `json:"default,omitempty"`
-	Options  []Option          `json:"options,omitempty"`
-	Props    map[string]string `json:"props,omitempty"` // other scalar settings (Mask, MinimumValue, Separator, ...)
+	Name     string `json:"name"`
+	Kind     Kind   `json:"kind"`
+	Type     string `json:"type,omitempty"`      // as written in the XML, e.g. "OptionField", ".\\KeaPoolsField"
+	BaseType string `json:"base_type,omitempty"` // resolved core base class, e.g. "BaseListField"
+	Shape    Shape  `json:"read_shape,omitempty"`
+	Multiple bool   `json:"multiple,omitempty"`
+	List     *List  `json:"list,omitempty"`
+	Required bool   `json:"required,omitempty"`
+	Volatile bool   `json:"volatile,omitempty"`
+	// What the field class does with a value (fieldclass.go): get shows
+	// it empty (__toString returns ""), a write is discarded (setValue
+	// stores nothing), a write of "" is ignored.
+	GetEmpty     bool              `json:"get_empty,omitempty"`
+	Discards     bool              `json:"discards_writes,omitempty"`
+	EmptyIgnored bool              `json:"empty_ignored,omitempty"`
+	Default      *string           `json:"default,omitempty"`
+	Options      []Option          `json:"options,omitempty"`
+	Props        map[string]string `json:"props,omitempty"` // other scalar settings (Mask, MinimumValue, Separator, ...)
 	// Relations: the entry lists a ModelRelationField refers to (its keys
 	// are UUIDs of entries there).
 	Relations []Relation `json:"relations,omitempty"`
@@ -95,11 +102,15 @@ type Model struct {
 }
 
 // ServerSet: the firewall fills the field itself and ignores a value sent
-// (UniqueIdField, AutoNumberField, JsonAuditField). Published as
-// "server_set" in the capability data, so consumers need no list of types.
+// (UniqueIdField, AutoNumberField, JsonAuditField), or the field's class
+// discards every write (LegacyLinkField). Published as "server_set" in the
+// capability data, so consumers need no list of types.
 func (n *Node) ServerSet() bool {
 	if n == nil {
 		return false
+	}
+	if n.Discards {
+		return true
 	}
 	switch n.BaseType {
 	case "UniqueIdField", "AutoNumberField", "JsonAuditField":
@@ -108,10 +119,11 @@ func (n *Node) ServerSet() bool {
 	return false
 }
 
-// WriteOnly: the field is stored but never returned (UpdateOnlyTextField,
-// e.g. passwords). Published as "write_only".
+// WriteOnly: the field is stored but get returns it empty, because its
+// class's __toString returns "" (UpdateOnlyTextField, ApiKeyField).
+// Published as "write_only". Search may still return the stored value.
 func (n *Node) WriteOnly() bool {
-	return n != nil && (n.BaseType == "UpdateOnlyTextField" || n.Type == "UpdateOnlyTextField")
+	return n != nil && n.GetEmpty
 }
 
 // Find returns the node at a dotted path below the root ("dnsbl.blocklist").
@@ -147,6 +159,12 @@ type TypeIndex struct {
 	// ArrayField subclasses that create their entries as another class
 	// (newContainerField): array class -> container class
 	container map[string]string
+	// per class, only what the class declares itself (fieldclass.go):
+	props    map[string]map[string]string // property -> literal default
+	toString map[string]bool              // declares __toString; true: always ""
+	nodeData map[string]bool              // declares getNodeData
+	setKind  map[string]string            // declares setValue: setDiscard, ...
+	splitSep map[string]string            // getNodeData splits the value: separator
 }
 
 var (
@@ -198,7 +216,9 @@ func readOverrideOf(src string) string {
 func BuildTypeIndex(modelsDir string) (*TypeIndex, error) {
 	idx := &TypeIndex{parent: map[string]string{}, names: map[string]string{},
 		readOverride: map[string]string{}, asList: map[string]bool{},
-		writeOverride: map[string]map[string]bool{}, container: map[string]string{}}
+		writeOverride: map[string]map[string]bool{}, container: map[string]string{},
+		props: map[string]map[string]string{}, toString: map[string]bool{}, nodeData: map[string]bool{},
+		setKind: map[string]string{}, splitSep: map[string]string{}}
 	err := filepath.WalkDir(modelsDir, func(p string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(p, ".php") || filepath.Base(filepath.Dir(p)) != "FieldTypes" {
 			return err
@@ -223,12 +243,29 @@ func BuildTypeIndex(modelsDir string) (*TypeIndex, error) {
 			if m := newContainerRe.FindStringSubmatch(c.Body); m != nil {
 				idx.container[key] = strings.ToLower(h.Qualify(m[1]))
 			}
+			idx.props[key] = props(c.Body)
+			ms := methods(c.Body)
+			if b, ok := ms["__tostring"]; ok {
+				idx.toString[key] = emptyStringRe.MatchString(b)
+			}
+			if b, ok := ms["setvalue"]; ok {
+				idx.setKind[key] = setValueKind(b)
+			}
+			if b, ok := ms["getnodedata"]; ok {
+				idx.nodeData[key] = true
+				if sep, ok := splitListSep(b); ok {
+					idx.splitSep[key] = sep
+				}
+			}
 			if c.Extends == "" {
 				continue // root class (BaseField)
 			}
 			idx.parent[key] = strings.ToLower(c.Extends)
 			if ov := readOverrideOf(c.Body); ov != "" && !defaultShapeClasses[key] {
 				idx.readOverride[key] = ov
+				if _, ok := idx.splitSep[key]; ok {
+					idx.readOverride[key] = "split-list"
+				}
 			}
 			if m := asListRe.FindStringSubmatch(c.Body); m != nil {
 				idx.asList[key] = m[1] == "true"
@@ -277,6 +314,9 @@ func (t *TypeIndex) writeGap(chain []string) *gap.Gap {
 			break
 		}
 		if t.writeOverride[c]["setValue"] {
+			if t.setKind[c] == setDiscard {
+				return nil // nothing is stored: server_set, not a conversion
+			}
 			g := gap.New(gap.CustomWrite, "setValue in %s converts or normalizes the value; the stored value may differ from the request", t.baseName(c))
 			return &g
 		}
@@ -324,31 +364,123 @@ func (t *TypeIndex) readShape(chain []string, base string, shape Shape, multiple
 				return ShapeSelect, nil
 			}
 			return ShapeString, nil
+		case "split-list":
+			return ShapeSelect, nil
 		case "custom":
 			g := gap.New(gap.CustomReadShape, "custom getNodeData/getNodeOptions in %s; read shape may differ", t.baseName(c))
 			return shape, &g
 		}
 	}
 	if base == "BaseSetField" {
-		asList := false
-		for _, c := range chain {
-			if v, ok := t.asList[c]; ok {
-				asList = v
-				break
-			}
-		}
-		switch strings.ToUpper(xmlAsList) {
-		case "Y":
-			asList = true
-		case "N":
-			asList = false
-		}
-		if asList {
+		if t.isAsList(chain, xmlAsList) {
 			return ShapeSelect, nil
 		}
 		return ShapeString, nil
 	}
 	return shape, nil
+}
+
+// isAsList: a set field that holds a list ($internalAsList of the class,
+// <AsList> in the model).
+func (t *TypeIndex) isAsList(chain []string, xmlAsList string) bool {
+	asList := false
+	for _, c := range chain {
+		if v, ok := t.asList[c]; ok {
+			asList = v
+			break
+		}
+	}
+	switch strings.ToUpper(xmlAsList) {
+	case "Y":
+		asList = true
+	case "N":
+		asList = false
+	}
+	return asList
+}
+
+// prop is the default of a property, from the most specific class of the
+// chain that declares it.
+func (t *TypeIndex) prop(chain []string, name string) (string, bool) {
+	for _, c := range chain {
+		if v, ok := t.props[c][name]; ok {
+			return v, true
+		}
+	}
+	return "", false
+}
+
+// list derives whether a field's value is a list, its separator and
+// whether the order written is kept:
+//   - a multiple option or relation field: comma, order of the options
+//     (a relation field with <Sorted>Y</Sorted> keeps the stored order);
+//   - a getNodeData of the form "foreach explode(sep, value) as x:
+//     result[x] = [value => x, selected => 1]" (first such override in
+//     the chain): sep, stored order;
+//   - a set field with AsList: <FieldSeparator>, else the class's
+//     $internalFieldSeparator, stored order.
+func (t *TypeIndex) list(chain []string, n *Node) *List {
+	if n.Multiple && n.BaseType == "BaseListField" {
+		sorted := strings.EqualFold(n.Props["Sorted"], "Y") && slices.Contains(chain, baseNS+"modelrelationfield")
+		return &List{Separator: ",", Ordered: sorted}
+	}
+	for _, c := range chain {
+		if defaultShapeClasses[c] {
+			break
+		}
+		if !t.nodeData[c] {
+			continue
+		}
+		sep, ok := t.splitSep[c]
+		if !ok {
+			return nil // another getNodeData decides
+		}
+		if strings.HasPrefix(sep, "$this->") {
+			if sep, ok = t.prop(chain, strings.TrimPrefix(sep, "$this->")); !ok {
+				return nil
+			}
+		}
+		if sep == "" {
+			return nil
+		}
+		return &List{Separator: sep, Ordered: true}
+	}
+	if n.BaseType == "BaseSetField" && t.isAsList(chain, n.Props["AsList"]) {
+		sep, ok := n.Props["FieldSeparator"], n.Props["FieldSeparator"] != ""
+		if !ok {
+			sep, ok = t.prop(chain, "internalFieldSeparator")
+		}
+		if !ok || sep == "" {
+			sep = ","
+		}
+		return &List{Separator: sep, Ordered: true}
+	}
+	return nil
+}
+
+// readWrite derives get_empty, discards and empty_ignored: the most
+// specific class of the chain (below BaseField) that declares the method
+// decides.
+func (t *TypeIndex) readWrite(chain []string, n *Node) {
+	for _, c := range chain {
+		if c == baseNS+"basefield" || t.nodeData[c] {
+			break // getNodeData of its own: __toString is not the read path
+		}
+		if empty, ok := t.toString[c]; ok {
+			n.GetEmpty = empty
+			break
+		}
+	}
+	for _, c := range chain {
+		if c == baseNS+"basefield" {
+			break
+		}
+		if k, ok := t.setKind[c]; ok {
+			n.Discards = k == setDiscard
+			n.EmptyIgnored = k == setEmptyIgnored
+			break
+		}
+	}
 }
 
 // classify picks base type and read shape from a resolved chain.
@@ -550,6 +682,8 @@ func convert(x *xnode, ns string, types *TypeIndex) *Node {
 		if g := types.writeGap(chain); g != nil {
 			n.Gaps = append(n.Gaps, *g)
 		}
+		n.List = types.list(chain, n)
+		types.readWrite(chain, n)
 	}
 	if base == "BaseListField" && n.Options == nil && n.Type == "OptionField" {
 		n.Gaps = append(n.Gaps, gap.New(gap.OptionsDynamic, "OptionField without static OptionValues"))

@@ -98,9 +98,14 @@ plugins (`model.TypeIndex`): a plugin's own field class is followed to the
 nearest base class of the core. The read shape is derived from the
 `getNodeData`/`getNodeOptions` code of the classes on that path, and
 `custom-write` from a `setValue` override, so a new type usually needs no
-change. Only the flags `server_set` and `write_only` name base classes
-(`Node.ServerSet`, `Node.WriteOnly` in `internal/model/model.go`); a new
-core class with that behaviour is added there. If a type cannot be
+change. The same scan reads what a class does with a value
+(`internal/model/fieldclass.go`): a `__toString` that returns `""` makes
+the field `write_only`, a `setValue` that stores nothing makes it
+`server_set`, one that stores only non-empty values `empty_ignored`, and
+a `getNodeData` that splits the value into selected elements makes it a
+`list`. Each rule recognises one exact form of code; another form is not
+guessed. Only `server_set` for the core's id, number and audit fields
+names base classes (`Node.ServerSet` in `internal/model/model.go`). If a type cannot be
 resolved, the field gets `field-type-unresolved` rather than a guess.
 
 ### A new check in the contract test

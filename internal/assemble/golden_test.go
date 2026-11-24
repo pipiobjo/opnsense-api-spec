@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -19,6 +20,7 @@ import (
 	"github.com/pipiobjo/opnsense-api-spec/internal/ir"
 	"github.com/pipiobjo/opnsense-api-spec/internal/model"
 	"github.com/pipiobjo/opnsense-api-spec/internal/openapi"
+	"github.com/pipiobjo/opnsense-api-spec/internal/pkgrepo"
 )
 
 // go test ./internal/assemble -run Golden -update   rewrites testdata/golden
@@ -131,6 +133,18 @@ func TestGolden(t *testing.T) {
 			for _, f := range fragment.Split(r) {
 				hashes[f.Package] = f.Hash()
 			}
+			var old struct {
+				Generator string            `json:"generator"`
+				Fragments map[string]string `json:"fragments"`
+			}
+			if raw, err := os.ReadFile(filepath.Join("testdata/golden", rel+".json")); err == nil {
+				if err := json.Unmarshal(raw, &old); err != nil {
+					t.Fatal(err)
+				}
+				if msg := generatorRule(old.Generator, ir.GeneratorVersion, !maps.Equal(old.Fragments, hashes)); msg != "" {
+					t.Fatalf("%s: %s", rel, msg)
+				}
+			}
 			golden := map[string]any{"release": rel, "generator": ir.GeneratorVersion,
 				"catalog_sha256": r.CatalogSHA256, "fragments": hashes}
 			if err := os.MkdirAll("testdata/golden", 0o755); err != nil {
@@ -154,6 +168,7 @@ func TestGolden(t *testing.T) {
 			}
 			var golden struct {
 				Catalog   string            `json:"catalog_sha256"`
+				Generator string            `json:"generator"`
 				Fragments map[string]string `json:"fragments"`
 			}
 			raw, _ := os.ReadFile(gf)
@@ -178,7 +193,42 @@ func TestGolden(t *testing.T) {
 					t.Errorf("%s: new fragment not in golden file", pkg)
 				}
 			}
+			if msg := generatorRule(golden.Generator, ir.GeneratorVersion, !maps.Equal(golden.Fragments, got)); msg != "" {
+				t.Error(msg)
+			}
 		})
+	}
+}
+
+// generatorRule: a changed derived API needs a newer GeneratorVersion than
+// the one the golden file was written with, otherwise two different
+// outputs carry the same version and the pipeline does not rebuild older
+// releases (review 2026-11-24, ARC-4). Returns "" when the rule holds.
+func generatorRule(golden, current string, changed bool) string {
+	if !changed {
+		return ""
+	}
+	if pkgrepo.CompareVersions(current, golden) <= 0 {
+		return fmt.Sprintf("derived API changed but GeneratorVersion %s is not newer than the golden files' %s: bump it in internal/ir/ir.go, then run -update", current, golden)
+	}
+	return ""
+}
+
+// Claim (ARC-4): a changed derived API without a newer generator version
+// fails; a newer version or no change passes.
+func TestGeneratorRule(t *testing.T) {
+	for _, c := range []struct {
+		golden, current string
+		changed, ok     bool
+	}{
+		{"0.9.4", "0.9.4", true, false},
+		{"0.9.4", "0.9.3", true, false},
+		{"0.9.4", "0.10.0", true, true}, // numeric, not text order
+		{"0.9.4", "0.9.4", false, true},
+	} {
+		if got := generatorRule(c.golden, c.current, c.changed) == ""; got != c.ok {
+			t.Errorf("%+v: ok = %v", c, got)
+		}
 	}
 }
 

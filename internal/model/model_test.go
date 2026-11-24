@@ -107,29 +107,70 @@ func TestWriteSideGaps(t *testing.T) {
 	}
 }
 
-// Which fields the firewall sets itself or never returns is defined once,
-// here, and published in the capability data.
+// Which fields the firewall sets itself, shows empty on get or does not
+// clear with "" is derived from the field classes (fixtures copied from
+// 26.7.9: UpdateOnlyTextField, ApiKeyField, StoreB64Field, LegacyLinkField),
+// not from a list of type names, and published in the capability data.
 func TestServerSetAndWriteOnly(t *testing.T) {
 	ms, _, err := LoadAll("testdata")
 	if err != nil {
 		t.Fatal(err)
 	}
 	m := ms[0]
-	for path, want := range map[string][2]bool{
-		"general.uid":     {true, false},
-		"general.secret":  {false, true},
-		"general.enabled": {false, false},
+	for path, want := range map[string][3]bool{ // server-set, write-only, empty-ignored
+		"general.uid":     {true, false, false},
+		"general.secret":  {false, true, true},   // __toString "", setValue only if != ""
+		"general.apikeys": {false, true, true},   // plugin class, guards: SimpleXMLElement && ..., !empty
+		"general.b64":     {false, false, false}, // __toString decodes; setValue('') at the end clears
+		"general.link":    {true, false, false},  // setValue { return; }: every write discarded
+		"general.mac":     {false, false, false},
+		"general.enabled": {false, false, false},
 	} {
 		n := m.Find(path)
 		if n == nil {
 			t.Fatalf("%s missing", path)
 		}
-		if n.ServerSet() != want[0] || n.WriteOnly() != want[1] {
-			t.Errorf("%s: server-set %v write-only %v, want %v", path, n.ServerSet(), n.WriteOnly(), want)
+		if got := [3]bool{n.ServerSet(), n.WriteOnly(), n.EmptyIgnored}; got != want {
+			t.Errorf("%s: server-set, write-only, empty-ignored = %v, want %v", path, got, want)
 		}
+	}
+	if g := m.Find("general.link").Gaps; len(g) != 0 {
+		t.Errorf("a discarding setValue is no conversion: gaps %v", g)
 	}
 	var none *Node
 	if none.ServerSet() || none.WriteOnly() {
 		t.Error("a missing node is neither")
+	}
+}
+
+// Which fields hold a list, with which separator, and whether the firewall
+// keeps the order written (DEV-1 of the review of 2026-11-24).
+func TestListFields(t *testing.T) {
+	ms, _, err := LoadAll("testdata")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := ms[0]
+	for path, want := range map[string]*List{
+		"general.iface":   {Separator: ",", Ordered: false}, // multiple option field: option order
+		"general.peers":   {Separator: ",", Ordered: true},  // multiple relation with Sorted
+		"general.csv":     {Separator: ",", Ordered: true},  // $internalAsList = true in the class
+		"general.servers": {Separator: ";", Ordered: true},  // AsList Y, FieldSeparator from the model
+		"general.content": {Separator: "\n", Ordered: true}, // getNodeData splits on $this->separatorchar
+		"general.nets":    {Separator: ",", Ordered: true},  // getNodeData splits on a literal
+		"general.single":  nil,                              // set field without AsList: one value
+		"general.secret":  nil,
+		"hosts.host.mode": nil,
+	} {
+		n := m.Find(path)
+		if n == nil {
+			t.Fatalf("%s missing", path)
+		}
+		if !reflect.DeepEqual(n.List, want) {
+			t.Errorf("%s: list %+v, want %+v", path, n.List, want)
+		}
+		if want != nil && path != "general.iface" && path != "general.peers" && (n.Shape != ShapeSelect || len(n.Gaps) != 0) {
+			t.Errorf("%s: read shape %s gaps %v, want select without gaps", path, n.Shape, n.Gaps)
+		}
 	}
 }

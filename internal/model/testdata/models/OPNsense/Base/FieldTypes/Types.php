@@ -31,18 +31,57 @@
  */
 namespace OPNsense\Base\FieldTypes;
 
-abstract class BaseField { public function setValue($value) {} }  /* the framework itself: not a conversion */
+abstract class BaseField { public function setValue($value) {} public function __toString() { return (string)$this->internalValue; } }  /* the framework itself: not a conversion */
 abstract class BaseListField extends BaseField {}
-class BaseSetField extends BaseField {}
+class BaseSetField extends BaseField
+{
+    protected $internalFieldSeparator = ',';
+    protected $internalAsList = false;
+}
+class CSVListField extends BaseSetField { protected $internalAsList = true; }
 class BooleanField extends BaseField {}
 class IntegerField extends BaseField {}
 class ArrayField extends BaseField {}
 class OptionField extends BaseListField {}
+class ModelRelationField extends BaseListField {}
 class PortField extends BaseListField {}
 class InterfaceField extends BaseListField {}
 class HostnameField extends BaseSetField {}
+class NetworkField extends BaseSetField {}
 class TextField extends BaseField {}
 class UniqueIdField extends BaseField {}
-class UpdateOnlyTextField extends BaseField {}
 class ContainerField extends BaseField {}
-class MacAddressField extends BaseField { public function setValue($value) { /* lower case */ } }
+class MacAddressField extends BaseField { public function setValue($value) { parent::setValue(strtolower($value)); } }
+/* as in 26.7.9 */
+class UpdateOnlyTextField extends TextField
+{
+    public function __toString()
+    {
+        return "";
+    }
+
+    public function setValue($value)
+    {
+        if ($value != "") {
+            parent::setValue($value);
+        }
+    }
+}
+/* as in 26.7.9 */
+class LegacyLinkField extends BaseField
+{
+    private $internalSourceLink = null;
+
+    public function __toString()
+    {
+        if (!empty($this->internalSourceLink)) {
+            return (string)$this->internalSourceLink;
+        }
+        return (string)null;
+    }
+
+    public function setValue($value)
+    {
+        return;
+    }
+}
