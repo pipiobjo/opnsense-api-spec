@@ -417,8 +417,10 @@ jobs:
         with:
           name: publish-input
           path: .ci/in
+      # prepare ran the build and its dependencies: its archive may only
+      # add files below .cache/ci, never replace a script run below
       - name: Unpack
-        run: tar -xf .ci/in/publish-input.tar
+        run: tools/ci/unpack-input.sh .ci/in/publish-input.tar
       - name: Publish releases
         env:
           GH_TOKEN: ${{ github.token }}
@@ -481,8 +483,9 @@ jobs:
           path: .ci/in
       - name: Unpack
         run: |
-          tar -xf .ci/in/publish-input.tar
-          mkdir -p .ci/dist && zstd -dc .cache/ci/state/dist.tar.zst | tar -C .ci/dist -xf -
+          tools/ci/unpack-input.sh .ci/in/publish-input.tar
+          mkdir -p .ci/dist && zstd -dc .cache/ci/state/dist.tar.zst | tar -C .ci/dist --no-same-owner -xf -
+          if [ -n "$(find .ci/dist ! -type f ! -type d)" ]; then echo "::error::dist from prepare contains links"; exit 1; fi
       - name: Publishing round trip (draft)
         env:
           GH_TOKEN: ${{ github.token }}

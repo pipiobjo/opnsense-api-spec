@@ -131,6 +131,24 @@ rm -rf "$T/root/.cache/ci/upload"
 out=$(pub upload --dry-run)
 check "no plan: refused" "$out" "error: no plan"
 
+# unpack-input.sh: the hand-over archive of prepare may only add files
+# below .cache/ci (a build dependency must not replace a script that the
+# write job runs next; ADR 0015)
+U="$T/unpack"; mkdir -p "$U/src/.cache/ci/upload/26.7.9" "$U/src/.cache/ci/sums" "$U/src/tools/ci"
+echo x > "$U/src/.cache/ci/upload/26.7.9/a"; echo y > "$U/src/.cache/ci/published.txt"; echo evil > "$U/src/tools/ci/publish.sh"
+(cd "$U/src" && tar -cf ../good.tar .cache/ci/upload .cache/ci/published.txt && tar -cf ../script.tar .cache/ci/upload tools/ci/publish.sh)
+ln -s /etc/passwd "$U/src/.cache/ci/sums/link"; (cd "$U/src" && tar -cf ../link.tar .cache/ci/sums)
+(cd "$U/src" && tar -cf ../dots.tar --transform 's,^\.cache/ci/upload,.cache/ci/upload/../../tools,' .cache/ci/upload)
+(cd "$U/src" && tar -cf ../other.tar --transform 's,^\.cache/ci/upload,.cache/ci/other,' .cache/ci/upload)
+unpack() { rm -rf "$U/out"; mkdir -p "$U/out"; (cd "$U/out" && "$HERE/unpack-input.sh" "$U/$1.tar" 2>&1) || echo "unpack exited $?"; }
+out=$(unpack good); check "unpack: hand-over files" "$out" "exited" absent
+[ -f "$U/out/.cache/ci/upload/26.7.9/a" ] && echo "ok   unpack: file is there" || { echo "FAIL unpack: file missing"; fails=$((fails + 1)); }
+out=$(unpack script); check "unpack: a script is refused" "$out" "'tools/ci/publish.sh' is outside the hand-over paths"
+[ ! -e "$U/out/tools" ] && echo "ok   unpack: nothing written when refused" || { echo "FAIL unpack: wrote despite refusal"; fails=$((fails + 1)); }
+out=$(unpack link); check "unpack: a link is refused" "$out" "is not a plain file or directory"
+out=$(unpack dots); check "unpack: .. is refused" "$out" "outside the hand-over paths"
+out=$(unpack other); check "unpack: another .cache/ci path is refused" "$out" "'.cache/ci/other/' is outside the hand-over paths"
+
 echo
 if [ "$fails" -gt 0 ]; then echo "$fails failed"; exit 1; fi
 echo "all passed"

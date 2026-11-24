@@ -54,6 +54,15 @@ permissions) as in scope.
   checks of `prepare` and the contract tests. Attestations name what the
   pipeline on `main` produced, as before; they do not prove the data is
   right.
+- Amended 2026-11-24 (review finding SEC-1 of 2026-11-24): until then
+  `upload` and `roundtrip` unpacked `publish-input.tar` straight into the
+  checkout, so a member `tools/ci/publish.sh` replaced the script the job
+  ran next with its write token and `id-token`; the sentence above was
+  not true. `tools/ci/unpack-input.sh` now accepts only plain files and
+  directories below the hand-over paths in `.cache/ci` and refuses the
+  whole archive otherwise; the state's `dist.tar.zst` in `roundtrip` must
+  not contain links. What stays: a compromised dependency decides the
+  content of what `upload` publishes and attests (see the first point).
 - `publish.sh upload --dry-run` runs in every dry run against the real
   plan, so the upload's reading of the plan is tested before `main`
   moves, although the upload job itself runs only live.
@@ -76,7 +85,9 @@ permissions) as in scope.
   2026-11-17.
 - `tools/ci/publish_test.sh` (fake `gh`): a left-over asset with
   matching `SHA256SUMS` is republished and deleted; a bad release name,
-  asset name, link or commit in the plan is refused. Each was seen failing
-  with its rule removed.
+  asset name, link or commit in the plan is refused; `unpack-input.sh`
+  refuses a script, a link, `..` and another `.cache/ci` path in the
+  hand-over archive and writes nothing then. Each was seen failing with
+  its rule removed.
 - Dry run of the split pipeline on `dev` (workflow_dispatch, publish off):
   `prepare` ran with a read-only token, `upload` did not start.
