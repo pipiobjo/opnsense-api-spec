@@ -33,7 +33,7 @@ for plugins.
   changes, also for final releases; what identifies one version of them is
   `SHA256SUMS`, the generator version in the release notes and the
   attestation. Consumers that need a fixed state use the capability
-  data's immutable releases (ADR 0010).
+  data's never-replaced releases (ADR 0010).
 - Daily change detection on catalog hashes; rebuild only changed fragments.
 - Views derived from fragments: per release, per fragment, superset per
   package with availability ranges.

@@ -184,3 +184,16 @@ owner (2026-11-24):
   transient read failure is no longer taken for "no state", and a state
   that lost contract test records is not saved
   ([operations.md](../operations.md#state)).
+- GitHub's Immutable Releases setting stays **off** (decided by the owner
+  on 2026-11-24). It freezes the assets of every release published after
+  it is turned on, while `publish.sh` replaces the assets of an
+  `opnsense-<release>` release in place when the release is verified
+  again or a new generator version rebuilds it (`--clobber`). With the
+  setting on, every release published from then on (26.7.10 would have
+  been the first) could never be corrected. Integrity rests instead on
+  the build provenance attestations, `SHA256SUMS`, and the check of what
+  was published after every run, including the recomputed `data_id` of
+  the capability data (ADR 0010). Turning it on needs a release model
+  without in-place replacement first (for example one release per
+  composition); a deleted immutable release also blocks its tag name for
+  good.

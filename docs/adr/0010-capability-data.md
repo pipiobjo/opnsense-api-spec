@@ -45,7 +45,7 @@ Measured on the published data (34 releases, core and 75 packages):
   does not count.
 - UI texts (`ValidationMessage`, `BlankDesc`) are not part of the format;
   an empty default equals no default.
-- Published per data state as the immutable pre-release
+- Published per data state as the never-replaced pre-release
   `catalog-v1-<data_id>` and as the rolling pre-release `catalog` (newest
   state), each with `catalog.json`, `capabilities.tar.zst`, `SHA256SUMS`
   and build provenance attestations (capabilities.md, "Identity and
@@ -88,3 +88,8 @@ Measured on the published data (34 releases, core and 75 packages):
   decide which fields are sensitive (docs/capabilities.md).
 - Consumers pin the hash of `SHA256SUMS` and verify the attestation; the
   release body says how.
+- GitHub's Immutable Releases setting stays off (ADR 0008, amendment
+  2026-11-24): "never changed" for `catalog-v1-<data_id>` is a rule of
+  `catalog.sh`, checked after every run (`check-published.sh catalog`
+  recomputes the `data_id` and verifies the attestation), not a property
+  GitHub enforces.
