@@ -109,7 +109,7 @@ runs:
         # an existing Go (1.21 or newer) fetches the version go.mod needs by itself;
         # do not replace a Go the calling workflow set up
         if command -v go >/dev/null; then echo "have=true" >> "$GITHUB_OUTPUT"; else echo "have=false" >> "$GITHUB_OUTPUT"; fi
-    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+    - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
       if: inputs.command == 'start' && steps.go.outputs.have != 'true'
       with:
         go-version-file: ${{ steps.paths.outputs.root }}/go.mod
