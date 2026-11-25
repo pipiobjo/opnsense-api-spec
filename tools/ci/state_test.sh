@@ -52,7 +52,7 @@ setup() {
   cp "$T/src/index.json" "$T/fake/assets/index.json"
   echo 200 > "$T/fake/status"; touch "$T/fake/attested" "$T/fake/calls"
 }
-st() { (cd "$T/root" && env PATH="$T/bin:$PATH" FAKE="$T/fake" GITHUB_REPOSITORY=example/spec STATE_GRACE_UNTIL=2000-01-01 "$@" 2>&1) || echo "state.sh exited $?"; }
+st() { (cd "$T/root" && env -u LIVE -u STATE_ACCEPT_UNATTESTED -u STATE_ALLOW_FEWER_VERIFIED PATH="$T/bin:$PATH" FAKE="$T/fake" GITHUB_REPOSITORY=example/spec STATE_GRACE_UNTIL=2000-01-01 "$@" 2>&1) || echo "state.sh exited $?"; }
 
 setup
 out=$(st tools/ci/state.sh restore)

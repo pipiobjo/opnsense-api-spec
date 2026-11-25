@@ -25,9 +25,11 @@ GOLDEN_REQUIRED=1 go test -count=1 -v -coverpkg=./... -coverprofile=.cache/ci/un
 grep -E '^(ok|FAIL)\s' .cache/ci/unit.log
 tools/ci/skips.sh .cache/ci/unit.log
 tools/ci/coverage.sh unit .cache/ci/unit.out coverage
-tools/ci/alerts_test.sh
-tools/ci/testvm_test.sh
-tools/ci/publish_test.sh
-tools/ci/state_test.sh
-tools/ci/catalog_test.sh
-tools/ci/pins_test.sh
+# The script tests run with the switches of a live run set, so a test that
+# lets the job environment leak into a case fails here (promote, pull
+# requests) and not first in the scheduled run (2026-11-25: LIVE=true
+# turned the dry-run case of state_test.sh into a live one).
+for t in alerts testvm publish state catalog pins; do
+  env LIVE=true STATE_ACCEPT_UNATTESTED=1 STATE_ALLOW_FEWER_VERIFIED=1 \
+    CATALOG_LIVE=true "tools/ci/${t}_test.sh"
+done
