@@ -372,8 +372,13 @@ rather than guess:
   `write_only` fields are recognisable, and even those are returned by
   `search` on newer releases. Fields such as a `password` or
   `secret` of type `TextField` (more than 200 over all packages) look like
-  any other text. A provider has to decide which fields to treat as
-  sensitive, for example by name, and should err towards hiding.
+  any other text. A consumer has to decide which fields to treat as
+  sensitive and should err towards hiding. The Go client
+  [opnsense-api-go](https://github.com/pipiobjo/opnsense-api-go) has one
+  tested rule for this (`FieldInfo.Secret`: every `write_only` field plus
+  text fields whose name looks like a secret, checked against a reviewed
+  list over the published data); the planned provider (P1) and MCP server
+  (M7) use it, and other consumers may copy it.
 - **Value types.** Every value is a string on the wire. `base` and
   `multiple` decide how to present it: `BooleanField` is `"0"`/`"1"`,
   `IntegerField` and `NumericField` are numbers as strings, fields with
