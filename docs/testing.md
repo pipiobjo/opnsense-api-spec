@@ -93,7 +93,7 @@ and is reported in every run but enforced only in `promote.yml`
 | Profile | Covered | Floor | Where enforced |
 |---|---:|---:|---|
 | unit (all Go tests, golden releases included) | 83.0% to 83.2% | 82% | `gates.sh` (every push, every pipeline run), artifact `coverage-unit` |
-| contract (the command and `internal/verify` against a VM with every plugin; `internal/verify` alone 83.0%, 2026-11-18) | 69.7% to 70.6% (per release) | 66% | `promote.yml` only; reported in every contract job, artifact `coverage-contract-<release>` |
+| contract (the command and `internal/verify` against a VM with every plugin; `internal/verify` alone 83.0%, 2026-11-18) | 69.7% to 70.6% (per release, 0.9.4); 68.9% on 26.7.10 with 0.10.0 | 66% | `promote.yml` only; reported in every contract job, artifact `coverage-contract-<release>` |
 
 The contract profile fell from 72.4% (2026-11-17) because it can only
 count what a firewall makes happen: branches for faults the VM rarely
@@ -116,10 +116,14 @@ deliberate breaks above are what make the tests count.
 The newest result per release is published with each release
 (`opnsense-<release>.verified.json`) and summarised in the capability
 data. Most recent local run on fresh VMs with every plugin, generator
-0.9.4 (2026-11-18): 0 failures on 25.7.11_9, 26.1.11_10 and 26.7.9_3;
-known-gap results 30/29/30 with 0.9.3, 21/20/21 with 0.9.4 (the settings
-reads whose root key is now derived from the controller's own code pass
-as `ok`).
+0.10.0 (2026-11-25): 0 failures on 25.7.11, 26.1.11 and 26.7.10;
+known-gap results 19/16/16 (0.9.4 on 25.7.11, 26.1.11, 26.7.9: 21/20/21;
+settings answers that leave out only nested entry lists now pass).
+Settings writes that change a value and restore it: 88/91/93 `ok`, 2
+`known-gap` each (the setup wizard, os-stunnel); with 0.9.4, 91/93/95
+passed by writing the current value back. 36 entry lists checked the
+list order on 26.7.10; search returned a write-only value for os-caddy's
+basic auth and os-ddclient's accounts.
 
 ## What is not tested
 
