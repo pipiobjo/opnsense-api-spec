@@ -29,7 +29,7 @@ tools/ci/coverage.sh unit .cache/ci/unit.out coverage
 # lets the job environment leak into a case fails here (promote, pull
 # requests) and not first in the scheduled run (2026-11-25: LIVE=true
 # turned the dry-run case of state_test.sh into a live one).
-for t in alerts testvm publish state catalog pins; do
+for t in alerts testvm parallel publish state catalog pins; do
   env LIVE=true STATE_ACCEPT_UNATTESTED=1 STATE_ALLOW_FEWER_VERIFIED=1 \
     CATALOG_LIVE=true "tools/ci/${t}_test.sh"
 done

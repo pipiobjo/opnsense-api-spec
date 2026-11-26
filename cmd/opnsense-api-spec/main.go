@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/pipiobjo/opnsense-api-spec/internal/capability"
+	"github.com/pipiobjo/opnsense-api-spec/internal/groups"
+	"github.com/pipiobjo/opnsense-api-spec/internal/ir"
 	"github.com/pipiobjo/opnsense-api-spec/internal/jsonfile"
 	"github.com/pipiobjo/opnsense-api-spec/internal/openapi"
 	"github.com/pipiobjo/opnsense-api-spec/internal/pipeline"
@@ -42,10 +44,26 @@ commands:
                            serve the package snapshot of release X to an
                            isolated test VM (default listen 127.0.0.1:18080)
   verify -ir F -url U -keyfile K [-write] [-packages a,b|installed]
-         [-not-installable a,b]
+         [-not-installable a,b] [-out FILE]
                            contract tests against a THROWAWAY test instance
                            (only https://127.0.0.1:<port> or localhost);
                            writes *.verified.json and re-renders the OpenAPI
+                           (next to the IR, or -out FILE.verified.json and
+                           FILE.openapi.json)
+  merge-verified -ir F [-out FILE] PART...
+                           merge the reports of one release's contract test
+                           split over several VMs (tools/parallel.sh) into one
+                           report as verify writes it (same checks, exit
+                           status and OpenAPI); fails when the parts differ in
+                           release or instance, or a package is in two parts
+  groups -ir F -groups FILE [-auto N] [-times FILE]
+                           split the plugins of a release into the groups
+                           test VMs install and test in parallel
+                           (tools/parallel.sh; internal/groups): named groups
+                           from FILE, the rest balanced over N groups (default
+                           from FILE, else 3) by the measured times in -times
+                           (a run's timings.json) or by count; dependencies
+                           from the signed catalog and the IR. Prints JSON
   installed -url U -keyfile K
                            installed packages of the THROWAWAY test instance,
                            one per line (what verify -packages installed uses)
@@ -53,13 +71,15 @@ commands:
   capabilities [-out DIR]  build the capability data (catalog.json and one
                            document per package) from dist/ into DIR
                            (default dist/capabilities)
-  plan [-verify A,B] [-only-requested] [-matrix]
+  plan [-verify A,B] [-only-requested] [-matrix] [-newest]
                            print the releases to contract-test as a JSON list
                            (newest release per series, current composition
                            not verified with this generator), plus the built
                            releases in -verify (-only-requested: only those);
                            -matrix: as the workflow matrix
-                           [{"release":..,"series":..}]
+                           [{"release":..,"series":..}]; -newest: the newest
+                           release of every series, verified or not (a full
+                           local run, tools/parallel.sh)
   sbom                     write the SBOM (CycloneDX 1.6) of every release in
                            -dist: the packages its description was derived
                            from (dist/<release>/opnsense-<release>.sbom.cdx.json)
@@ -125,6 +145,10 @@ func main() {
 	extra := fs.String("verify", "", "")
 	matrix := fs.Bool("matrix", false, "")
 	onlyRequested := fs.Bool("only-requested", false, "")
+	newest := fs.Bool("newest", false, "")
+	groupsFile := fs.String("groups", "", "")
+	times := fs.String("times", "", "")
+	auto := fs.Int("auto", 0, "")
 	notInstallable := fs.String("not-installable", "", "")
 	fs.Usage = usage
 	_ = fs.Parse(args)
@@ -192,6 +216,16 @@ func main() {
 			usage()
 		}
 		err = cmdVerify(o, accepted, notInstallable)
+	case "groups":
+		if o.irFile == "" || *groupsFile == "" {
+			usage()
+		}
+		err = cmdGroups(pl, o.irFile, *groupsFile, *times, *auto)
+	case "merge-verified":
+		if o.irFile == "" || fs.NArg() == 0 {
+			usage()
+		}
+		err = cmdMergeVerified(o, *accepted, fs.Args())
 	case "installed":
 		if o.url == "" || o.keyfile == "" {
 			usage()
@@ -215,7 +249,7 @@ func main() {
 	case "sbom":
 		err = cmdSBOM(pl.Dist)
 	case "plan":
-		err = cmdPlan(pl.Dist, *extra, *matrix, *onlyRequested)
+		err = cmdPlan(pl.Dist, *extra, *matrix, *onlyRequested, *newest)
 	case "proxy":
 		if o.release == "" {
 			usage()
@@ -368,7 +402,94 @@ func cmdVerify(o opts, accepted, notInstallable *string) error {
 	if !strings.HasPrefix(rep.Instance, rel.Version) {
 		fmt.Fprintf(os.Stderr, "warning: instance runs %q, IR is %s\n", rep.Instance, rel.Version)
 	}
-	base := strings.TrimSuffix(o.irFile, ".ir.json")
+	return writeReport(rel, rep, reportBase(o))
+}
+
+// cmdGroups prints the split of a release's plugins into test groups
+// (groups.Make) as JSON.
+func cmdGroups(pl *pipeline.Pipeline, irFile, file, times string, auto int) error {
+	rel, err := pipeline.ReadIR(irFile)
+	if err != nil {
+		return err
+	}
+	f, err := groups.ReadFile(file)
+	if err != nil {
+		return err
+	}
+	cat, _, err := pl.VerifiedCatalog(rel.Version)
+	if err != nil {
+		return fmt.Errorf("package catalog of %s (for the plugins' dependencies): %w", rel.Version, err)
+	}
+	plugins := groups.Plugins(rel)
+	needs, notes := groups.Dependencies(rel, cat.Packages, plugins)
+	in := groups.Input{Release: rel.Version, Plugins: plugins, Needs: needs}
+	if times != "" {
+		var t struct {
+			Release string       `json:"release"`
+			Runs    []groups.Run `json:"runs"`
+		}
+		switch err := jsonfile.Read(times, &t); {
+		case os.IsNotExist(err):
+			notes = append(notes, "no timings yet ("+times+"): balanced by count")
+		case err != nil:
+			return err
+		default:
+			in.Weights = groups.Weights(rel, t.Runs)
+		}
+	}
+	plan, err := groups.Make(f, in, auto)
+	if err != nil {
+		return err
+	}
+	plan.Notes = append(notes, plan.Notes...)
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", " ")
+	return enc.Encode(plan)
+}
+
+// reportBase: the path of a report without ".verified.json" (next to the
+// IR unless -out names it).
+func reportBase(o opts) string {
+	if o.out != "" {
+		return strings.TrimSuffix(o.out, ".verified.json")
+	}
+	return strings.TrimSuffix(o.irFile, ".ir.json")
+}
+
+// cmdMergeVerified writes the merged report of a contract test split over
+// several VMs (groups.MergeReports), exactly as one run's report is written.
+func cmdMergeVerified(o opts, accepted string, files []string) error {
+	rel, err := pipeline.ReadIR(o.irFile)
+	if err != nil {
+		return err
+	}
+	var parts []*verify.Report
+	for _, f := range files {
+		var rep verify.Report
+		if err := jsonfile.Read(f, &rep); err != nil {
+			return err
+		}
+		parts = append(parts, &rep)
+	}
+	list, err := verify.LoadAccepted(accepted)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	rep, err := groups.MergeReports(parts, list)
+	if err != nil {
+		return err
+	}
+	if rep.Release != rel.Version {
+		return fmt.Errorf("the reports are of release %s, the IR of %s", rep.Release, rel.Version)
+	}
+	fmt.Fprintf(os.Stderr, "merged %d reports: %d packages, %d results\n", len(parts), len(rep.Packages), len(rep.Results))
+	return writeReport(rel, rep, reportBase(o))
+}
+
+// writeReport writes base.verified.json and the OpenAPI document with the
+// results (base.openapi.json), prints the counts, and fails when a check
+// failed.
+func writeReport(rel *ir.Release, rep *verify.Report, base string) error {
 	if err := jsonfile.Write(base+".verified.json", rep); err != nil {
 		return err
 	}
@@ -411,12 +532,16 @@ func cmdDataID(dir string) error {
 }
 
 // cmdPlan prints the contract test plan (pipeline.Index.Plan).
-func cmdPlan(dist, extra string, matrix, onlyRequested bool) error {
+func cmdPlan(dist, extra string, matrix, onlyRequested, newest bool) error {
 	idx, err := pipeline.ReadIndex(filepath.Join(dist, "index.json"))
 	if err != nil {
 		return err
 	}
-	legs, err := idx.Plan(strings.Split(extra, ","), onlyRequested)
+	requested := strings.Split(extra, ",")
+	if newest {
+		requested, onlyRequested = append(requested, idx.Newest()...), true
+	}
+	legs, err := idx.Plan(requested, onlyRequested)
 	if err != nil {
 		return err
 	}

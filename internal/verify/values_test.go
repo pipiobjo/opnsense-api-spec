@@ -443,6 +443,54 @@ func TestWriteCycleCreatesPrerequisite(t *testing.T) {
 	}
 }
 
+// Claim: a plugin's write cycle gets its prerequisite entry from a core
+// list also when the run does not test the core (one plugin group of a
+// parallel run): the core is on every instance. Seen on 25.7.11: without
+// it, os-ndp-proxy-go's alias field found no firewall alias to point at
+// and its cycle was skipped instead of passing.
+func TestWriteCyclePrerequisiteFromTheCoreWhenItIsNotTested(t *testing.T) {
+	f := &fakeInstance{entries: map[string]map[string]string{}, zones: map[string]string{}, options: map[string]string{"lan": "LAN"}, needZone: true}
+	srv := httptest.NewTLSServer(f)
+	defer srv.Close()
+	c, err := NewClient(srv.URL, "k", "s", []string{"127.0.0.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.HTTP = srv.Client()
+	var eps []*ir.Endpoint
+	ep := func(pkg, ctl, action, model, path, wrapper string, kind ir.Kind) {
+		eps = append(eps, &ir.Endpoint{Path: "/api/x/" + ctl + "/" + action, Module: "x", Controller: ctl, Action: action, Kind: kind,
+			Source: ir.SourceBaseCall, Package: pkg, Model: model, ModelPath: path, Wrapper: wrapper})
+	}
+	for a, k := range map[string]ir.Kind{"getHost": ir.KindItemGet, "addHost": ir.KindItemAdd, "setHost": ir.KindItemSet, "delHost": ir.KindItemDel} {
+		ep("os-x", "settings", a, `Test\Host`, "hosts.host", "host", k)
+	}
+	for a, k := range map[string]ir.Kind{"getZone": ir.KindItemGet, "addZone": ir.KindItemAdd, "delZone": ir.KindItemDel} {
+		ep(ir.CorePackage, "zones", a, `Test\Zones`, "zones.zone", "zone", k)
+	}
+	list := func(name, item string, children ...*model.Node) *model.Node {
+		return &model.Node{Kind: model.KindContainer, Children: []*model.Node{{Name: name, Kind: model.KindContainer,
+			Children: []*model.Node{{Name: item, Kind: model.KindArray, Children: children}}}}}
+	}
+	models := map[string]*model.Model{
+		`Test\Host`: {Class: `Test\Host`, Root: list("hosts", "host",
+			&model.Node{Name: "hostname", Kind: model.KindField, Type: "HostnameField", BaseType: "BaseSetField", Props: map[string]string{"IpAllowed": "N"}},
+			&model.Node{Name: "iface", Kind: model.KindField, Type: "InterfaceField", BaseType: "BaseListField", Shape: model.ShapeSelect},
+			&model.Node{Name: "server", Kind: model.KindField, Type: "NetworkField", BaseType: "BaseSetField", Required: true},
+			&model.Node{Name: "zone", Kind: model.KindField, Type: "ModelRelationField", BaseType: "BaseListField", Shape: model.ShapeSelect,
+				Relations: []model.Relation{{Source: "test.zones", Items: "zones.zone"}}})},
+		`Test\Zones`: {Class: `Test\Zones`, Root: list("zones", "zone",
+			&model.Node{Name: "name", Kind: model.KindField, Type: "TextField", BaseType: "TextField"})},
+	}
+	rs := writeCycles(c, &ir.Release{Endpoints: eps}, models, map[string]bool{"os-x": true})
+	if len(rs) != 1 || rs[0].Path != "/api/x/settings/addHost" {
+		t.Fatalf("only the plugin's list is tested: %+v", rs)
+	}
+	if rs[0].Status != StatusOK || rs[0].Sample["zone"] != "z1" {
+		t.Errorf("status %s, sample %v, findings %v: the core's zone list must serve as prerequisite", rs[0].Status, rs[0].Sample, rs[0].Findings)
+	}
+}
+
 func TestWriteCycleUnlocksBeforeDelete(t *testing.T) {
 	f := &fakeInstance{entries: map[string]map[string]string{}, zones: map[string]string{}, options: map[string]string{"lan": "LAN"}, lockable: true}
 	r := hostCycle(t, f)

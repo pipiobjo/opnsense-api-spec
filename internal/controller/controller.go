@@ -397,23 +397,30 @@ func LoadAll(appDir string) ([]*Controller, error) {
 	return Resolve(classes), nil
 }
 
+// Route returns the module and controller of the URL an API controller
+// class answers on (/api/<module>/<controller>/...): Vendor\Module\Api\NameController;
+// ok is false for any other class (base classes, models).
+func Route(class string) (module, name string, ok bool) {
+	parts := strings.Split(class, `\`)
+	if len(parts) != 4 || parts[2] != "Api" || !strings.HasSuffix(parts[3], "Controller") {
+		return "", "", false
+	}
+	return strings.ToLower(parts[1]), snake(strings.TrimSuffix(parts[3], "Controller")), true
+}
+
 // Resolve builds routable controllers from parsed classes.
 func Resolve(classes map[string]*Class) []*Controller {
 	var out []*Controller
 	for _, c := range classes {
-		if c.Abstract || !strings.HasSuffix(c.Name, "Controller") {
-			continue
-		}
-		parts := strings.Split(c.Name, `\`)
-		// Vendor\Module\Api\NameController
-		if len(parts) != 4 || parts[2] != "Api" {
+		module, name, ok := Route(c.Name)
+		if c.Abstract || !ok {
 			continue
 		}
 		ctl := &Controller{
 			Class:  c.Name,
 			File:   c.File,
-			Module: strings.ToLower(parts[1]),
-			Name:   snake(strings.TrimSuffix(parts[3], "Controller")),
+			Module: module,
+			Name:   name,
 		}
 		// inheritance chain, most specific first
 		var chain []*Class

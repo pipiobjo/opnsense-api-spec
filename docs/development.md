@@ -21,7 +21,8 @@ is derived from where and why. This page explains how.
 | `internal/verify` | contract tests against a throwaway instance; the failure rule (`Status.Failed`) |
 | `internal/gap` | gap codes; every code has a row in concepts.md (a test checks) |
 | `internal/mutation` | targeted mutants of the key checks; each must make its test fail (add a case for a new security or verdict check) |
-| `tools/testvm.sh` | the throwaway OPNsense VM |
+| `tools/testvm.sh` | the throwaway OPNsense VM; `TESTVM_SLOT` runs several at once |
+| `tools/parallel.sh`, `internal/groups`, `verify/groups.json` | local runs on several VMs at once: plugin groups, conflict check, merged results ([ADR 0016](adr/0016-parallel-local-runs.md)) |
 | `tools/ci/` | scripts the workflows run; each also runs locally; `gh-lib.sh` decides "release absent" (HTTP 404 only) for all of them |
 | `tools/pins.env` | pins Dependabot cannot see (the `golang` image, CI tools); `tools/ci/pins.sh` reports outdated ones to the watchdog |
 | `verify/accepted.json` | upstream behaviour declared as expected, with evidence |
@@ -56,6 +57,24 @@ go run ./cmd/opnsense-api-spec capabilities
 Run `verify` for each supported series (25.7, 26.1, 26.7). It needs QEMU,
 ideally with KVM. `failures` prints nothing when nothing failed; that is
 the same rule the pipeline uses.
+
+All three series at once, on several fresh VMs ([ADR 0016](adr/0016-parallel-local-runs.md)):
+
+```sh
+tools/parallel.sh            # newest release of every series in dist/index.json
+```
+
+It splits each release's plugins into groups (`verify/groups.json`,
+`opnsense-api-spec groups`), boots one VM per group plus one per release
+that installs every plugin together (the conflict check), runs the
+contract test of each group's packages (the core on exactly one VM),
+merges the reports into `dist/<release>/opnsense-<release>.verified.json`
+as one run would write them, applies the contract coverage floor to each
+release's merged profile, prints a timing table and tears every VM down,
+also when interrupted. Logs and results: `.cache/parallel/<time>/`.
+About 2 GB of memory per VM; 12 VMs for three releases. `TESTVM_SLOT=N
+tools/testvm.sh ...` addresses one of them; `--first-slot` keeps two
+runs apart (the Go client's `tools/parallel.sh` uses slots from 50).
 
 To start from what the pipeline last published instead of building every
 release: `tools/ci/state.sh restore` (needs `gh`, read access is enough).

@@ -1,0 +1,14 @@
+{
+ "about": "Plugin groups of the local parallel contract test (tools/parallel.sh, docs/testing.md). Each group is installed and tested on its own throwaway VM; the core is tested on exactly one. Plugins no group below names are spread over auto_groups balanced groups; plugins that need each other (package dependency, model relation) always share a VM. CI and the scheduled pipeline do not use this file: they test every plugin on one VM.",
+ "auto_groups": 3,
+ "groups": [],
+ "together": [
+  {
+   "packages": [
+    "os-crowdsec",
+    "os-ndp-proxy-go"
+   ],
+   "why": "os-ndp-proxy-go's alias field only accepts a firewall alias of type external; on a fresh firewall the only one is created by os-crowdsec's plugin code (plugins.inc.d/crowdsec.inc, type external), and the contract test's own prerequisite alias does not pass the field's filter. Seen on 25.7.11 on 2026-11-26: with os-crowdsec on another VM the write cycle was skipped (no accepted value for: alias), with every plugin on one VM it passes."
+  }
+ ]
+}

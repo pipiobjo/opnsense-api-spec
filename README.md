@@ -110,6 +110,7 @@ tools/testvm.sh verify 26.7 --release 26.7.5 --plugins
                                  # update the series image to exactly 26.7.5 first
 tools/testvm.sh start 26.7 --release latest --plugins "os-frr"
                                  # leave a VM running for your own tests (.cache/vm/state.env)
+tools/parallel.sh                # all series at once, plugins split over several fresh VMs
 ```
 
 Other repositories get the same VM in GitHub Actions through the action
@@ -223,6 +224,7 @@ internal/verify/         contract tests against a running test instance
 internal/jsonfile/       reading and writing the JSON files in one format
 verify/accepted.json     reviewed upstream findings that do not count as failures
 tools/testvm.sh          throwaway OPNsense VM (QEMU/KVM, software emulation fallback)
+tools/parallel.sh        local test run on several throwaway VMs at once
 .github/actions/testvm/  the VM as a GitHub Action for other repositories
 tools/ci/                pipeline helpers (gates, state, publish, capability data, round trip, published-file check, failure report, needs-you check, pins)
 tools/pins.env           pins Dependabot cannot see

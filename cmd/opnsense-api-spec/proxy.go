@@ -5,7 +5,6 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -93,20 +92,6 @@ func download(hc *http.Client, url, dst string) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("%s", resp.Status)
 	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return err
-	}
-	tmp := dst + ".part"
-	f, err := os.Create(tmp)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(f, resp.Body); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp, dst)
+	// proxies of parallel test VMs share this cache
+	return pkgrepo.WriteAtomic(dst, resp.Body)
 }

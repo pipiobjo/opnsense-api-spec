@@ -618,6 +618,10 @@ func TestVerifyPlan(t *testing.T) {
 	if p := (&Index{}).VerifyPlan(); p == nil || len(p) != 0 {
 		t.Fatalf("empty index: plan %#v, want empty non-nil list", p)
 	}
+	// a full local run takes the newest of every series, verified or not
+	if got, want := strings.Join(idx.Newest(), ","), "25.7.11,26.1.11,26.7.10"; got != want {
+		t.Fatalf("newest %q, want %q", got, want)
+	}
 }
 
 func TestNeedsVerification(t *testing.T) {

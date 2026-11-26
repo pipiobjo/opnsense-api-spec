@@ -51,13 +51,13 @@ func TestIndexAndPlanCommands(t *testing.T) {
 	if err := cmdIndex(dist, filepath.Join(dist, "missing.json")); err != nil {
 		t.Errorf("no accepted list is fine: %v", err)
 	}
-	if got := stdout(t, func() error { return cmdPlan(dist, "", false, false) }); got != "[]" {
+	if got := stdout(t, func() error { return cmdPlan(dist, "", false, false, false) }); got != "[]" {
 		t.Errorf("plan %s", got)
 	}
-	if got := stdout(t, func() error { return cmdPlan(dist, " ", true, true) }); got != "[]" {
+	if got := stdout(t, func() error { return cmdPlan(dist, " ", true, true, false) }); got != "[]" {
 		t.Errorf("matrix %s", got)
 	}
-	if err := cmdPlan(dist, "26.7.5", true, false); err == nil {
+	if err := cmdPlan(dist, "26.7.5", true, false, false); err == nil {
 		t.Error("a release that is not built must be refused")
 	}
 }

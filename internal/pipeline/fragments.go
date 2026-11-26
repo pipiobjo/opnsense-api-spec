@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -446,19 +447,35 @@ func (idx *Index) Plan(requested []string, onlyRequested bool) ([]PlanLeg, error
 // keep needs_verification visible in the index and the spec; a full re-run
 // after a generator change is a manual dispatch, not a daily cost.
 func (idx *Index) VerifyPlan() []string {
+	out := []string{}
+	for _, r := range idx.newest() {
+		if r.NeedsVerification {
+			out = append(out, r.Release)
+		}
+	}
+	return out
+}
+
+// Newest returns the newest release of each series, in version order: the
+// releases a full local test run covers (tools/parallel.sh), whatever
+// their verification state.
+func (idx *Index) Newest() []string {
+	out := []string{}
+	for _, r := range idx.newest() {
+		out = append(out, r.Release)
+	}
+	return out
+}
+
+func (idx *Index) newest() []IndexRelease {
 	newest := map[string]IndexRelease{}
 	for _, r := range idx.Releases {
 		if cur, ok := newest[r.Series]; !ok || pkgrepo.CompareVersions(r.Release, cur.Release) > 0 {
 			newest[r.Series] = r
 		}
 	}
-	out := []string{}
-	for _, r := range newest {
-		if r.NeedsVerification {
-			out = append(out, r.Release)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return pkgrepo.CompareVersions(out[i], out[j]) < 0 })
+	out := slices.Collect(maps.Values(newest))
+	sort.Slice(out, func(i, j int) bool { return pkgrepo.CompareVersions(out[i].Release, out[j].Release) < 0 })
 	return out
 }
 

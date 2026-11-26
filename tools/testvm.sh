@@ -20,13 +20,31 @@
 #                                  (url, keyfile, version, plugins, accel,
 #                                  slow: the factor waits were stretched by); used by
 #                                  the action .github/actions/testvm
-#   tools/testvm.sh contract dist/26.7.5/opnsense-26.7.5.ir.json
+#   tools/testvm.sh contract dist/26.7.5/opnsense-26.7.5.ir.json [--no-core] [--out FILE]
 #                                  contract tests against the running VM
+#                                  (--no-core: only the installed plugins,
+#                                  not the core; --out: the report's path,
+#                                  default next to the IR)
 #   tools/testvm.sh verify 26.7 [--release 26.7.5] [--plugins]
 #                                  start + contract tests + down
 #   tools/testvm.sh contract-coverage
 #                                  coverage report of the last contract test,
 #                                  with the floor (tools/ci/coverage.sh)
+#   tools/testvm.sh lockfile       the lock file of this slot (callers hold it
+#                                  with flock from start to down)
+#   tools/testvm.sh ir 26.7.5      path of the release's IR (dist/, else
+#                                  downloaded from the published release)
+#
+# Slots: several VMs can run at once from one checkout. TESTVM_SLOT=N
+# (1 to 99) gives a VM its own state directory .cache/vm-slot-N, ports
+# 127.0.0.1:(18443+N) and (18080+N), QEMU name opnsense-test-<series>-slotN,
+# helper binary and lock file .cache/vm-slot-N.lock. Without TESTVM_SLOT
+# everything is as it always was: .cache/vm, ports 18443/18080 (PORT and
+# PROXY_PORT override the ports in both cases), lock file .cache/vm.lock.
+# The read-only base images stay in .cache/vm and are shared; prepare holds
+# .cache/vm/prepare-<series>.lock while it builds one and replaces the file
+# in one step, so a slot never boots from a half-written base.
+# tools/parallel.sh runs the contract test on several slots at once.
 #
 # Isolation: user-mode networking with restrict=on (no route to the LAN or the
 # internet). The only way in is a port forward on 127.0.0.1:${PORT:-18443} to
@@ -51,10 +69,27 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VM="$ROOT/.cache/vm"
 IMG="$ROOT/.cache/images"
-PORT="${PORT:-18443}"
-PROXY_PORT="${PROXY_PORT:-18080}"
+BASE="$ROOT/.cache/vm"   # read-only base images, shared by all slots
+
+die() { echo "error: $*" >&2; exit 1; }
+
+# slot_config: the state directory (VM), ports, QEMU name (QNAME, plus the
+# series), helper binary directory (BIN) and lock file (LOCK) of the slot
+# TESTVM_SLOT; without one, today's fixed paths and ports
+slot_config() {
+  local n="${TESTVM_SLOT:-}"
+  if [ -z "$n" ]; then
+    VM="$BASE"; BIN="$ROOT/.cache/bin"; QNAME=""
+    PORT="${PORT:-18443}"; PROXY_PORT="${PROXY_PORT:-18080}"
+  else
+    [[ "$n" =~ ^[1-9][0-9]?$ ]] || die "TESTVM_SLOT must be a number from 1 to 99, got '$n'"
+    VM="$ROOT/.cache/vm-slot-$n"; BIN="$VM/bin"; QNAME="-slot$n"
+    PORT="${PORT:-$((18443 + n))}"; PROXY_PORT="${PROXY_PORT:-$((18080 + n))}"
+  fi
+  LOCK="$VM.lock"
+}
+slot_config
 PROXY_IP="10.99.0.200"   # address of the package proxy as seen from the VM (WAN side)
 URL="https://127.0.0.1:$PORT"
 MIRROR="https://pkg.opnsense.org/releases"
@@ -71,7 +106,6 @@ export TESTVM_SLOW="$SLOW"
 # waits N: number of wait iterations, stretched for software emulation
 waits() { echo $(($1 * SLOW)); }
 
-die() { echo "error: $*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null || die "$1 not installed"; }
 # Downloads from outside (mirror, changelog, GitHub) retry: one dropped
 # connection must not end a job that already booted a VM. Everything
@@ -90,7 +124,7 @@ image_version() {
 # it was updated to (TARGET)
 vm_version() {
   if [ -n "${TARGET:-}" ]; then echo "$TARGET"; return; fi
-  cat "$VM/base-$1.version" 2>/dev/null || echo "$1"
+  cat "$BASE/base-$1.version" 2>/dev/null || echo "$1"
 }
 
 prepare() {
@@ -99,7 +133,10 @@ prepare() {
   v=$(image_version "$series"); [ -n "$v" ] || die "no nano image for $series"
   n="OPNsense-$v-nano-amd64.img"
   echo "series $series: image $v"
-  mkdir -p "$d" "$VM"
+  mkdir -p "$d" "$BASE"
+  # one build per series at a time (slots may prepare concurrently)
+  exec 8>"$BASE/prepare-$series.lock"
+  flock 8
   for f in "OPNsense-$v-checksums-amd64.sha256" "$n.sig" "OPNsense-$series.pub"; do
     curl -fsS "${NET[@]}" -m 60 -o "$d/$f" "$MIRROR/$series/$f"
   done
@@ -122,19 +159,23 @@ prepare() {
     || die "signature invalid"
   echo "signature ok (release key matches announcement)"
 
-  rm -f "$VM/base-$series.qcow2"
-  qemu-img convert -O qcow2 "$d/$n" "$VM/base-$series.qcow2"
-  chmod a-w "$VM/base-$series.qcow2"
-  echo "$v" > "$VM/base-$series.version"
+  # built beside the base and moved in one step: a VM booting meanwhile
+  # sees the old base or the new one, never a half-written file
+  local tmp="$BASE/.base-$series.qcow2.$$"
+  rm -f "$tmp"
+  qemu-img convert -O qcow2 "$d/$n" "$tmp"
+  chmod a-w "$tmp"
+  mv -f "$tmp" "$BASE/base-$series.qcow2"
+  echo "$v" > "$BASE/.base-$series.version.$$" && mv -f "$BASE/.base-$series.version.$$" "$BASE/base-$series.version"
   if [ "${TESTVM_DROP_RAW:-}" = 1 ]; then rm -f "$d/$n" "$d/$n.bz2"; fi
-  echo "base image: $VM/base-$series.qcow2 ($v)"
+  echo "base image: $BASE/base-$series.qcow2 ($v)"
 }
 
 running() { [ -f "$VM/qemu.pid" ] && kill -0 "$(cat "$VM/qemu.pid")" 2>/dev/null; }
 
 up() {
   local series="$1"
-  [ -f "$VM/base-$series.qcow2" ] || die "run: $0 prepare $series"
+  [ -f "$BASE/base-$series.qcow2" ] || die "run: $0 prepare $series"
   running && die "VM already running (pid $(cat "$VM/qemu.pid")); run: $0 down"
   need qemu-system-x86_64
   local accel=(-enable-kvm -cpu host)
@@ -144,12 +185,17 @@ up() {
   else
     [ -r /dev/kvm ] && [ -w /dev/kvm ] || die "/dev/kvm not accessible (TESTVM_ACCEL=tcg allows software emulation)"
   fi
+  mkdir -p "$VM"
   rm -f "$VM/run.qcow2" "$VM/console.log" "$VM/apikey.json" "$VM/cookies.txt" "$VM"/install-*.log
+  # the backing file relative to the overlay where both share .cache/vm,
+  # absolute for a slot
+  local backing="base-$series.qcow2"
+  [ "$VM" = "$BASE" ] || backing="$BASE/base-$series.qcow2"
   # 24G: room for plugins; the nano image grows to the disk size on first boot
-  qemu-img create -q -f qcow2 -F qcow2 -b "base-$series.qcow2" "$VM/run.qcow2" 24G
+  qemu-img create -q -f qcow2 -F qcow2 -b "$backing" "$VM/run.qcow2" 24G
   # vtnet0 = LAN (192.168.1.1), vtnet1 = WAN, vtnet2/3 = spare NICs for
   # interface tests; all networks are isolated (restrict=on)
-  qemu-system-x86_64 -name "opnsense-test-$series" "${accel[@]}" -m 2048 -smp "${TESTVM_CPUS:-2}" \
+  qemu-system-x86_64 -name "opnsense-test-$series$QNAME" "${accel[@]}" -m 2048 -smp "${TESTVM_CPUS:-2}" \
     -drive "file=$VM/run.qcow2,if=virtio,format=qcow2" \
     -netdev "user,id=lan,net=192.168.1.0/24,host=192.168.1.2,dhcpstart=192.168.1.100,restrict=on,hostfwd=tcp:127.0.0.1:$PORT-192.168.1.1:443" \
     -device virtio-net-pci,netdev=lan \
@@ -251,6 +297,13 @@ fw_wait_idle() {
 }
 
 install_plugin() {
+  local p="$1" t0=$SECONDS
+  install_plugin_wait "$p" || { echo "plugin $p: failed after $((SECONDS - t0)) s"; return 1; }
+  # one line per plugin: tools/parallel.sh balances its groups by it
+  echo "plugin $p: $((SECONDS - t0)) s"
+}
+
+install_plugin_wait() {
   local p="$1" before started=0
   # never start while another firmware job runs: the request would be lost
   fw_wait_idle "$(waits 600)" || echo "install of $p: the previous firmware job did not finish" >&2
@@ -287,7 +340,7 @@ install_plugin() {
 # contract test's own detection (built by proxy_for, which every
 # installation goes through)
 installed_packages() {
-  "$ROOT/.cache/bin/opnsense-api-spec" installed -url "$URL" -keyfile "$VM/apikey.json"
+  "$BIN/opnsense-api-spec" installed -url "$URL" -keyfile "$VM/apikey.json"
 }
 
 # proxy_for REL: the package proxy serves exactly the snapshot of REL and
@@ -295,13 +348,15 @@ installed_packages() {
 proxy_for() {
   local rel="$1"
   need socat
-  (cd "$ROOT" && go build -o .cache/bin/opnsense-api-spec ./cmd/opnsense-api-spec)
+  # one binary per slot: a build must not replace the file a running proxy
+  # of another slot executes
+  (cd "$ROOT" && go build -o "$BIN/opnsense-api-spec" ./cmd/opnsense-api-spec)
   if [ -f "$VM/proxy.pid" ] && kill -0 "$(cat "$VM/proxy.pid")" 2>/dev/null; then
     if [ "$(cat "$VM/proxy.release" 2>/dev/null)" = "$rel" ]; then return; fi
     kill "$(cat "$VM/proxy.pid")"
     for _ in $(seq 1 50); do ss -ltn | grep -q ":$PROXY_PORT " || break; sleep 0.2; done
   fi
-  (cd "$ROOT" && exec .cache/bin/opnsense-api-spec proxy -release "$rel" -listen "127.0.0.1:$PROXY_PORT" >>"$VM/proxy.log" 2>&1) &
+  (cd "$ROOT" && exec "$BIN/opnsense-api-spec" proxy -release "$rel" -listen "127.0.0.1:$PROXY_PORT" >>"$VM/proxy.log" 2>&1) &
   echo $! > "$VM/proxy.pid"
   echo "$rel" > "$VM/proxy.release"
   for _ in $(seq 1 50); do ss -ltn | grep -q ":$PROXY_PORT " && break; sleep 0.2; done
@@ -411,8 +466,10 @@ ensure_ir() {
   [ -f "$f" ] && return
   mkdir -p "$(dirname "$f")"
   local url="https://github.com/${TESTVM_SPEC_REPO:-pipiobjo/opnsense-api-spec}/releases/download/opnsense-$rel/opnsense-$rel.ir.json"
-  curl -fsSL "${NET[@]}" -m 120 -o "$f" "$url" \
-    || { local rc=$?; rm -f "$f"; die "no IR for $rel: not in dist/, and downloading $url failed (curl exit $rc; 22 means not published)"; }
+  # downloaded beside it and moved in one step (slots may fetch the same IR)
+  curl -fsSL "${NET[@]}" -m 120 -o "$f.$$" "$url" \
+    || { local rc=$?; rm -f "$f.$$"; die "no IR for $rel: not in dist/, and downloading $url failed (curl exit $rc; 22 means not published)"; }
+  mv -f "$f.$$" "$f"
 }
 
 start() {
@@ -433,7 +490,7 @@ start() {
     TARGET=$(latest_release "$series"); [ -n "$TARGET" ] || die "no release found for series $series"
   fi
   case "${TARGET:-$series}" in "$series"|"$series".*) ;; *) die "release ${TARGET} is not in series $series" ;; esac
-  image=$(cat "$VM/base-$series.version" 2>/dev/null || echo "$series")
+  image=$(cat "$BASE/base-$series.version" 2>/dev/null || echo "$series")
   rm -f "$VM/state.env"
   up "$series"
   trap down EXIT
@@ -485,13 +542,28 @@ verify() {
   contract "$irf"
 }
 
-# contract IRFILE: contract tests against the running VM (after start)
+# contract IRFILE [--no-core] [--out FILE]: contract tests against the
+# running VM (after start); --no-core leaves the core's endpoints to another
+# VM (tools/parallel.sh tests the core on exactly one), --out writes the
+# report (and its OpenAPI document) elsewhere than next to the IR
 contract() {
+  local irf="$1" core=1 out=()
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --no-core) core=0 ;;
+      --out) out=(-out "${2:?--out needs a file}"); shift ;;
+      *) die "unknown option $1" ;;
+    esac
+    shift
+  done
   # the list of successful installs (installed_packages checked each one),
   # and the plugins that could not be installed (recorded in the report)
-  local pk="opnsense" more failed
+  local pk="" more failed
+  [ "$core" = 1 ] && pk="opnsense"
   more=$(listfile "$VM/plugins-installed.txt")
-  [ -n "$more" ] && pk="opnsense,$more"
+  [ -n "$more" ] && pk="${pk:+$pk,}$more"
+  [ -n "$pk" ] || die "nothing to test: --no-core and no plugin installed"
   failed=$(listfile "$VM/plugins-failed.txt")
   # built with coverage of the contract test's own code (the command and
   # internal/verify; the main package must be instrumented, or no data is
@@ -500,7 +572,7 @@ contract() {
   rm -rf "$VM/cover"; mkdir -p "$VM/cover"
   local rc=0
   (cd "$ROOT" && GOCOVERDIR="$VM/cover" go run -cover -coverpkg=./cmd/opnsense-api-spec,./internal/verify ./cmd/opnsense-api-spec verify -write -packages "$pk" -not-installable "$failed" \
-    -ir "$1" -url "$URL" -keyfile "$VM/apikey.json") || rc=$?
+    -ir "$irf" "${out[@]}" -url "$URL" -keyfile "$VM/apikey.json") || rc=$?
   go tool covdata textfmt -i="$VM/cover" -o "$VM/contract.out" || true
   return "$rc"
 }
@@ -520,8 +592,10 @@ case "${1:-}" in
   plugins) s="${2:?series}"; shift 2; plugins "$s" "$@" ;;
   update)  TARGET="${2:?release}"; update "$TARGET" ;;
   start)   s="${2:?series}"; shift 2; start "$s" "$@" ;;
-  contract) running || die "no VM running; run: $0 start <series>"; contract "${2:?IR file}" ;;
+  contract) running || die "no VM running; run: $0 start <series>"; shift; contract "${1:?IR file}" "${@:2}" ;;
   verify)  s="${2:?series}"; shift 2; verify "$s" "$@" ;;
   contract-coverage) contract_coverage ;;
-  *) sed -n '4,27p' "$0"; exit 2 ;;
+  lockfile) echo "$LOCK" ;;
+  ir)      ensure_ir "${2:?release}"; echo "$ROOT/dist/$2/opnsense-$2.ir.json" ;;
+  *) sed -n '4,47p' "$0"; exit 2 ;;
 esac

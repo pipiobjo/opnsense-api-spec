@@ -87,6 +87,14 @@ type Relation struct {
 	Items  string `json:"items"`
 }
 
+// ClassKey is a model class in one spelling, to compare a relation's
+// Source with a Model's Class: relations name the class with dots and in
+// any case ("OPNsense.quagga.ospf" for OPNsense\Quagga\OSPF), and PHP
+// class names are case-insensitive.
+func ClassKey(class string) string {
+	return strings.ToLower(strings.ReplaceAll(class, ".", `\`))
+}
+
 // Model is one parsed model XML.
 type Model struct {
 	Class       string `json:"class"` // e.g. "OPNsense\\Kea\\KeaDhcpv4"

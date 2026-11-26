@@ -86,6 +86,10 @@ type Endpoint struct {
 	Gaps        []gap.Gap `json:"gaps,omitempty"`
 }
 
+// CorePackage is the package name of the OPNsense core, which every
+// firewall has.
+const CorePackage = "opnsense"
+
 // Package is provenance of one input package.
 type Package struct {
 	Name    string `json:"name"`

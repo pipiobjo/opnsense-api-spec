@@ -115,12 +115,7 @@ func Run(c *Client, rel *ir.Release, packages map[string]bool, write bool) *Repo
 		rep.Results = append(rep.Results, settingsWriteBacks(c, rel, models, packages)...)
 	}
 	rep.Results = append(rep.Results, c.schemaResults...)
-	sort.Slice(rep.Results, func(i, j int) bool {
-		if rep.Results[i].Path != rep.Results[j].Path {
-			return rep.Results[i].Path < rep.Results[j].Path
-		}
-		return rep.Results[i].Check < rep.Results[j].Check
-	})
+	SortResults(rep.Results)
 	return rep
 }
 
@@ -132,4 +127,14 @@ func fail(r *Result, code int, raw []byte, err error) *Result {
 	}
 	r.Status, r.Findings = StatusError, []string{fmt.Sprintf("HTTP %d: %s", code, trunc(raw))}
 	return r
+}
+
+// SortResults: the order of a report's results (path, then check).
+func SortResults(rs []*Result) {
+	sort.SliceStable(rs, func(i, j int) bool {
+		if rs[i].Path != rs[j].Path {
+			return rs[i].Path < rs[j].Path
+		}
+		return rs[i].Check < rs[j].Check
+	})
 }

@@ -137,23 +137,34 @@ type Fetched struct {
 	Owners   *assemble.Owners
 }
 
+// VerifiedCatalog returns the package catalog of a release, its signature
+// checked, and the key that signed it.
+func (p *Pipeline) VerifiedCatalog(version string) (*pkgrepo.Catalog, pkgrepo.Key, error) {
+	r, err := p.Client.FindRelease(p.Arch, version)
+	if err != nil {
+		return nil, pkgrepo.Key{}, err
+	}
+	cat, err := p.Client.FetchCatalog(r)
+	if err != nil {
+		return nil, pkgrepo.Key{}, err
+	}
+	k, err := pkgrepo.VerifyCatalog(cat, p.Keys)
+	if err != nil {
+		return nil, pkgrepo.Key{}, err
+	}
+	return cat, k, nil
+}
+
 // Fetch downloads and verifies the catalog and packages of a release and
 // unpacks their MVC sources into one app directory, as on a firewall. With
 // plugins, all os-* packages except -devel variants are included. An empty
 // dir means <SrcRoot>/<release>/{core,core+plugins}.
 func (p *Pipeline) Fetch(version string, plugins bool, dir string) (*Fetched, error) {
-	r, err := p.Client.FindRelease(p.Arch, version)
+	cat, k, err := p.VerifiedCatalog(version)
 	if err != nil {
 		return nil, err
 	}
-	cat, err := p.Client.FetchCatalog(r)
-	if err != nil {
-		return nil, err
-	}
-	k, err := pkgrepo.VerifyCatalog(cat, p.Keys)
-	if err != nil {
-		return nil, err
-	}
+	r := cat.Release
 	key := k.Name
 	if k.Status != "trusted" {
 		key += " (key of an older series, revoked in " + k.RevokedIn + ")"

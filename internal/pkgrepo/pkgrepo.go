@@ -311,14 +311,7 @@ func (c *Client) fresh(r Release, name, url string) ([]byte, error) {
 		return nil, err
 	}
 	if c.CacheDir != "" {
-		path := filepath.Join(c.CacheDir, r.ABI, r.Version, name)
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			return nil, err
-		}
-		if err := os.WriteFile(path+".tmp", data, 0o644); err != nil {
-			return nil, err
-		}
-		if err := os.Rename(path+".tmp", path); err != nil {
+		if err := WriteAtomic(filepath.Join(c.CacheDir, r.ABI, r.Version, name), bytes.NewReader(data)); err != nil {
 			return nil, err
 		}
 	}
@@ -338,10 +331,7 @@ func (c *Client) cached(r Release, name, url string) ([]byte, error) {
 		return nil, err
 	}
 	if path != "" {
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			return nil, err
-		}
-		if err := os.WriteFile(path, data, 0o644); err != nil {
+		if err := WriteAtomic(path, bytes.NewReader(data)); err != nil {
 			return nil, err
 		}
 	}
