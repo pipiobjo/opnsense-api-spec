@@ -151,7 +151,10 @@ func (f *fakeInstance) read(e map[string]string) map[string]any {
 	t := f.template()
 	for k, v := range e {
 		if k == "iface" || k == "zone" {
-			m := t[k].(map[string]any)
+			m, ok := t[k].(map[string]any)
+			if !ok {
+				continue // the instance has no such field
+			}
 			for key, o := range m {
 				o.(map[string]any)["selected"] = float64(0)
 				if key == v {
@@ -482,7 +485,8 @@ func TestWriteCyclePrerequisiteFromTheCoreWhenItIsNotTested(t *testing.T) {
 		`Test\Zones`: {Class: `Test\Zones`, Root: list("zones", "zone",
 			&model.Node{Name: "name", Kind: model.KindField, Type: "TextField", BaseType: "TextField"})},
 	}
-	rs := writeCycles(c, &ir.Release{Endpoints: eps}, models, map[string]bool{"os-x": true})
+	rs := slices.DeleteFunc(writeCycles(c, &ir.Release{Endpoints: eps}, models, map[string]bool{"os-x": true}),
+		func(r *Result) bool { return r.Check != CheckWriteCycle })
 	if len(rs) != 1 || rs[0].Path != "/api/x/settings/addHost" {
 		t.Fatalf("only the plugin's list is tested: %+v", rs)
 	}
@@ -816,5 +820,32 @@ func TestSettingsWriteCustomSaveIsKnownGap(t *testing.T) {
 	mg.Gaps = []gap.Gap{gap.New(gap.CustomSave, "overrides init")}
 	if r := settingsWriteBack(cl, get, plain, &mg); r.Status != StatusKnownGap {
 		t.Errorf("custom-save on the model: %s %v", r.Status, r.Findings)
+	}
+}
+
+// beats: the first plain field is required and still empty; writing its
+// own empty value is refused. The model needs settings first: skipped,
+// not a mismatch.
+func TestSettingsWriteBackRequiredEmpty(t *testing.T) {
+	m := &model.Model{Class: `OPNsense\X\X`, Root: &model.Node{Kind: model.KindContainer, Children: []*model.Node{
+		{Name: "hosts", Kind: model.KindField, Type: "UrlField", BaseType: "UrlField", Required: true},
+	}}}
+	get := &ir.Endpoint{Path: "/api/x/settings/get", Kind: ir.KindModelGet, Wrapper: "x"}
+	set := &ir.Endpoint{Path: "/api/x/settings/set", Kind: ir.KindModelSet, Wrapper: "x"}
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == get.Path {
+			_ = json.NewEncoder(w).Encode(map[string]any{"x": map[string]any{"hosts": ""}})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"result": "failed", "validations": map[string]any{"x.hosts": "A value is required."}})
+	}))
+	defer srv.Close()
+	cl, err := NewClient(srv.URL, "k", "s", []string{"127.0.0.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cl.HTTP = srv.Client()
+	if r := settingsWriteBack(cl, get, set, m); r.Status != StatusSkipped || !strings.Contains(r.Findings[0], "hosts (required, empty)") {
+		t.Errorf("status %s, findings %q", r.Status, r.Findings)
 	}
 }

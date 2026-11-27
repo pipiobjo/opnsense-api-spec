@@ -190,7 +190,9 @@ type Field struct {
 	Options      []model.Option    `json:"options,omitempty"`
 	Relations    []model.Relation  `json:"relations,omitempty"`
 	Props        map[string]string `json:"constraints,omitempty"`
-	Gaps         []string          `json:"gaps,omitempty"`
+	// Limits: the derived limits of a non-empty value (model.Limits)
+	Limits *model.Limits `json:"limits,omitempty"`
+	Gaps   []string      `json:"gaps,omitempty"`
 }
 
 // Action is an endpoint that is not a resource operation (service
@@ -227,6 +229,19 @@ type ResVerify struct {
 	// SameDefinitionAs: this fragment was not tested; the result is the
 	// one of the named fragment, where the resource is defined identically.
 	SameDefinitionAs string `json:"same_definition_as,omitempty"`
+	// Probe: status of the field probes (ADR 0017); absent when none ran.
+	Probe verify.Status `json:"probe,omitempty"`
+	// Probes: per field, the values the firewall accepted and rejected,
+	// each written alone to an otherwise valid object. Rejections that
+	// named only other fields are left out: they say nothing about the
+	// value.
+	Probes map[string]*Verdicts `json:"probes,omitempty"`
+}
+
+// Verdicts are the firewall's verdicts on values of one field.
+type Verdicts struct {
+	Accepted []string `json:"accepted,omitempty"`
+	Rejected []string `json:"rejected,omitempty"`
 }
 
 // Build reads dist/ (compositions, fragments, verification reports) and
@@ -630,23 +645,17 @@ func walk(n *model.Node, prefix string, visit func(string, *model.Node)) {
 	}
 }
 
-// uiText: properties that are texts for the web UI, not part of the
-// contract. They change often (punctuation, wording) and would split
-// fields into variants that differ in nothing a client can rely on; they
-// stay in the OpenAPI documents.
-var uiText = map[string]bool{"ValidationMessage": true, "BlankDesc": true}
-
 func field(n *model.Node) *Field {
 	f := &Field{Type: strings.TrimPrefix(n.Type, ".\\"), Base: n.BaseType, ReadShape: string(n.Shape),
 		Multiple: n.Multiple, Required: n.Required, Volatile: n.Volatile, Default: n.Default,
 		List: n.List, ServerSet: n.ServerSet(), WriteOnly: n.WriteOnly(), EmptyIgnored: n.EmptyIgnored,
-		Options: n.Options, Relations: n.Relations, Gaps: gapCodes(n.Gaps)}
+		Options: n.Options, Relations: n.Relations, Limits: n.Limits(), Gaps: gapCodes(n.Gaps)}
 	// an empty default and no default both leave the field empty
 	if f.Default != nil && *f.Default == "" {
 		f.Default = nil
 	}
 	for k, v := range n.Props {
-		if uiText[k] {
+		if model.UIText[k] {
 			continue
 		}
 		if f.Props == nil {
@@ -798,6 +807,12 @@ func (d *Doc) addVerification(hash string, c *fragment.Composition, rep *verify.
 					if r.Status != verify.StatusOK {
 						v.Findings = append(v.Findings, r.Findings...)
 					}
+				case op == "set" && r.Check == verify.CheckFieldProbe:
+					v.Probe = r.Status
+					if r.Status != verify.StatusOK && r.Status != verify.StatusSkipped {
+						v.Findings = append(v.Findings, r.Findings...)
+					}
+					v.Probes = verdicts(r.Probes)
 				case (op == "get" || op == "search") && (r.Check == verify.CheckShape || r.Check == verify.CheckSchema):
 					v.Read = verify.Worse(v.Read, r.Status)
 					if r.Status != verify.StatusOK && r.Status != verify.StatusAccepted {
@@ -806,7 +821,7 @@ func (d *Doc) addVerification(hash string, c *fragment.Composition, rep *verify.
 				}
 			}
 		}
-		if v.Read == "" && v.Write == "" {
+		if v.Read == "" && v.Write == "" && v.Probe == "" {
 			continue
 		}
 		if res.Verify == nil {
@@ -821,6 +836,33 @@ func (d *Doc) addVerification(hash string, c *fragment.Composition, rep *verify.
 		}
 		res.Verify[hash] = v
 	}
+}
+
+// verdicts groups probes by field: what the firewall accepted, what it
+// rejected (in probe order, each value once).
+func verdicts(ps []verify.Probe) map[string]*Verdicts {
+	out := map[string]*Verdicts{}
+	for _, p := range ps {
+		if p.Outcome == verify.OutcomeOtherFields {
+			continue
+		}
+		v := out[p.Field]
+		if v == nil {
+			v = &Verdicts{}
+			out[p.Field] = v
+		}
+		if p.Accepted() {
+			if !slices.Contains(v.Accepted, p.Value) {
+				v.Accepted = append(v.Accepted, p.Value)
+			}
+		} else if !slices.Contains(v.Rejected, p.Value) {
+			v.Rejected = append(v.Rejected, p.Value)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // carryVerification gives a fragment without its own test result the

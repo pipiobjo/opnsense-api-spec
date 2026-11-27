@@ -65,7 +65,7 @@ func writeValue(v any) any {
 // "skipped" with the reason. Nothing is applied (no reconfigure), so the
 // running test instance is not changed beyond its stored configuration.
 func writeCycles(c *Client, rel *ir.Release, models map[string]*model.Model, packages map[string]bool) []*Result {
-	w := &writer{c: c, byList: map[string]*family{}}
+	w := &writer{c: c, byList: map[string]*family{}, models: models}
 	fams, keys := cycleFamilies(rel, models, packages)
 	// prerequisites: the first family of a list (in key order) serves. The
 	// core is on every instance, so its lists serve also when the run does
@@ -83,9 +83,17 @@ func writeCycles(c *Client, rel *ir.Release, models map[string]*model.Model, pac
 	}
 	var out []*Result
 	for _, k := range keys {
-		out = append(out, c.noted(w.cycle(fams[k])))
+		f := fams[k]
+		n := len(w.probes)
+		r := c.noted(w.cycle(f))
+		out = append(out, r)
+		if len(w.probes) == n && f.set != nil {
+			// no entry to probe: the claims stay unconfirmed, and say why
+			out = append(out, &Result{Path: f.set.Path, Method: "POST", Check: CheckFieldProbe, Status: StatusSkipped,
+				Findings: []string{"not probed: no entry was created (write cycle " + string(r.Status) + ")"}})
+		}
 	}
-	return out
+	return append(out, w.probes...)
 }
 
 // cycleFamilies returns the entry lists to write-test, keyed
@@ -152,6 +160,16 @@ type family struct {
 type writer struct {
 	c      *Client
 	byList map[string]*family // model class + "#" + entry list path
+	probes []*Result          // field-probe results of the cycles
+	models map[string]*model.Model
+}
+
+// modelGaps: the gaps of the model class (nil if unknown).
+func (w *writer) modelGaps(class string) []gap.Gap {
+	if m := w.models[class]; m != nil {
+		return m.Gaps
+	}
+	return nil
 }
 
 // maxRounds bounds the add retries of one entry list; maxDepth bounds
@@ -416,6 +434,15 @@ func (w *writer) cycle(f *family) *Result {
 		}
 	}
 
+	// every field set to the values the data predicts (ADR 0017)
+	if f.set != nil {
+		var listGaps []gap.Gap // custom-save of entries stored through toLegacy
+		if f.entry != nil {
+			listGaps = f.entry.Gaps
+		}
+		w.probes = append(w.probes, c.noted(probeResult(f.set, entryTarget(c, f.get, f.set, uuid), f.entry, f.set.Gaps, w.modelGaps(f.add.Model), listGaps)))
+	}
+
 	code, v, raw, err := c.do("POST", f.del.Path+"/"+uuid, map[string]any{})
 	if code == 500 && strings.Contains(string(raw), "locked") && lookup(body, "lock") == "1" && f.set != nil {
 		// e.g. interface assignments: "Interface locked, unset lock first
@@ -453,18 +480,9 @@ func (w *writer) cycle(f *family) *Result {
 // readBack gets the entry and compares every sent field (write form).
 // Differences are findings prefixed "read-back".
 func readBack(c *Client, get *ir.Endpoint, uuid string, sent map[string]any, step string) []string {
-	code, v, raw, err := c.do("GET", get.Path+"/"+uuid, nil)
-	if err != nil || code != 200 {
-		return []string{fmt.Sprintf("get/%s after %s: HTTP %d %s", uuid, step, code, trunc(raw))}
-	}
-	c.schema(get, "GET", get.Path+"/{uuid}", v)
-	root, _ := v.(map[string]any)
-	if get.Outer != "" {
-		root, _ = root[get.Outer].(map[string]any)
-	}
-	got, ok := root[get.Wrapper].(map[string]any)
-	if !ok {
-		return []string{"get by uuid: root key " + get.Wrapper + " missing"}
+	got, err := getEntry(c, get, uuid)
+	if err != nil {
+		return []string{fmt.Sprintf("get/%s after %s: %v", uuid, step, err)}
 	}
 	var out []string
 	var walk func(prefix string, s map[string]any)
@@ -489,6 +507,24 @@ func readBack(c *Client, get *ir.Endpoint, uuid string, sent map[string]any, ste
 	}
 	walk("", sent)
 	return out
+}
+
+// getEntry reads one entry: the object under the wrapper key.
+func getEntry(c *Client, get *ir.Endpoint, uuid string) (map[string]any, error) {
+	code, v, raw, err := c.do("GET", get.Path+"/"+uuid, nil)
+	if err != nil || code != 200 {
+		return nil, fmt.Errorf("HTTP %d %s", code, trunc(raw))
+	}
+	c.schema(get, "GET", get.Path+"/{uuid}", v)
+	root, _ := v.(map[string]any)
+	if get.Outer != "" {
+		root, _ = root[get.Outer].(map[string]any)
+	}
+	got, ok := root[get.Wrapper].(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("root key %s missing", get.Wrapper)
+	}
+	return got, nil
 }
 
 // sameValue compares written and read values; comma-separated lists are

@@ -26,7 +26,8 @@ const (
 var (
 	methodRe = regexp.MustCompile(`function\s+(\w+)\s*\([^)]*\)[^{;]*\{`)
 	// a property with a literal default: private $separatorchar = "\n";
-	propRe = regexp.MustCompile(`(?:private|protected|public)\s+(?:static\s+)?\$(\w+)\s*=\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')\s*;`)
+	propRe     = regexp.MustCompile(`(?:private|protected|public)\s+(?:static\s+)?\$(\w+)\s*=\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')\s*;`)
+	boolPropRe = regexp.MustCompile(`(?i:private|protected|public)\s+(?:static\s+)?\$(\w+)\s*=\s*(?i:(true|false))\s*;`)
 	// __toString that always returns the empty string
 	emptyStringRe = regexp.MustCompile(`^\{\s*return\s*(?:""|''|\(string\)\s*null)\s*;\s*\}$`)
 	discardRe     = regexp.MustCompile(`^\{\s*(?:return\s*;)?\s*\}$`)
@@ -64,6 +65,10 @@ func props(body string) map[string]string {
 		if v, ok := phpString(m[2]); ok {
 			out[m[1]] = v
 		}
+	}
+	// booleans as "true"/"false" (protected $internalIsRequired = true;)
+	for _, m := range boolPropRe.FindAllStringSubmatch(body, -1) {
+		out[m[1]] = strings.ToLower(m[2])
 	}
 	return out
 }

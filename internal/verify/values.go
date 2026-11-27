@@ -161,34 +161,14 @@ func optionKeys(v any) []string {
 	return keys
 }
 
-// phpRegex converts a PHP (PCRE) pattern such as "/^.{1,255}$/u" to Go.
-// Patterns Go cannot compile (look-arounds) yield nil: no filtering, the
-// instance's answer decides.
+// phpRegex compiles a model Mask (model.GoPattern); nil: Go cannot run
+// it, so no filtering, the instance's answer decides.
 func phpRegex(mask string) *regexp.Regexp {
-	if len(mask) < 2 {
+	p, ok := model.GoPattern(mask)
+	if !ok {
 		return nil
 	}
-	d := mask[0]
-	end := strings.LastIndexByte(mask, d)
-	if end <= 0 {
-		return nil
-	}
-	expr, flags := mask[1:end], mask[end+1:]
-	prefix := ""
-	for _, f := range flags {
-		switch f {
-		case 'i', 's', 'm':
-			prefix += string(f)
-		}
-	}
-	if prefix != "" {
-		expr = "(?" + prefix + ")" + expr
-	}
-	re, err := regexp.Compile(expr)
-	if err != nil {
-		return nil
-	}
-	return re
+	return regexp.MustCompile(p)
 }
 
 func filterMask(c []string, mask string) []string {
@@ -198,7 +178,7 @@ func filterMask(c []string, mask string) []string {
 	}
 	var out []string
 	for _, v := range c {
-		if re.MatchString(v) {
+		if model.MaskAccepts(re, v) {
 			out = append(out, v)
 		}
 	}

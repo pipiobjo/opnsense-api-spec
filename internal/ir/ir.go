@@ -22,7 +22,7 @@ import (
 // v<GeneratorVersion> (tools/ci/publish.sh).
 const (
 	GeneratorName    = "opnsense-api-spec"
-	GeneratorVersion = "0.11.0"
+	GeneratorVersion = "0.12.0"
 )
 
 // Source says how an endpoint description was derived.
@@ -370,6 +370,16 @@ func classify(e *Endpoint, c *controller.Controller, a *controller.Action, mdl *
 				e.Forced[o.Field] = o.Value
 			default:
 				e.Computed = append(e.Computed, o.Field)
+			}
+		}
+		// the controller's setBaseHook runs in addBase and setBase after
+		// validation and sets fields itself (26.1 DNatController: the
+		// created/updated audit fields)
+		if e.Kind == KindItemAdd || e.Kind == KindItemSet {
+			for _, f := range c.HookSets {
+				if !slices.Contains(e.Computed, f) {
+					e.Computed = append(e.Computed, f)
+				}
 			}
 		}
 		setModel()

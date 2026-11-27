@@ -41,8 +41,28 @@ func TestLoadAllFixture(t *testing.T) {
 	if n := check("general.safesearch", KindField, "BooleanField", ShapeString); n.Default == nil || *n.Default != "0" {
 		t.Errorf("safesearch: the default of BooleanField is \"0\": %+v", n)
 	}
-	if n := m.Find("general.loglevel"); n == nil || n.Default == nil || *n.Default != "1" {
-		t.Errorf("loglevel: the default of its own class: %+v", n)
+	if n := m.Find("general.loglevel"); n == nil || n.Default == nil || *n.Default != "1" || !n.Required {
+		t.Errorf("loglevel: the default of its own class, required by its class: %+v", n)
+	}
+	// the model's own performValidation names ttl, mode and hostname
+	// (access, braces, literal); a method call (iterateItems) is no field
+	for _, p := range []string{"hosts.host.ttl", "hosts.host.mode", "hosts.host.hostname", "general.safesearch"} {
+		if n := m.Find(p); n == nil || !gap.Has(n.Gaps, gap.ModelValidation) {
+			t.Errorf("%s: want model-validation: %+v", p, n)
+		}
+	}
+	// the end of a message path names a field (".name"; the legacy and
+	// plain entry lists have one)
+	if n := m.Find("legacy.entry.name"); n == nil || !gap.Has(n.Gaps, gap.ModelValidation) {
+		t.Errorf("name: want model-validation from \".name\": %+v", n)
+	}
+	// <Constraints> in the XML: a rule over several fields or entries
+	if n := m.Find("hosts.host.filters"); n == nil || !gap.Has(n.Gaps, gap.ModelValidation) ||
+		!strings.Contains(n.Gaps[0].Detail, "(SetIfConstraint, reference)") {
+		t.Errorf("filters: want model-validation from Constraints: %+v", n)
+	}
+	if n := m.Find("hosts.host.zone"); n == nil || gap.Has(n.Gaps, gap.ModelValidation) {
+		t.Errorf("zone is not named by performValidation: %+v", n)
 	}
 	// a default outside the valid values is an upstream model error
 	for _, p := range []string{"general.oldbool", "general.transport"} {

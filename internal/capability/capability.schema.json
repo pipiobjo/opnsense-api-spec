@@ -228,6 +228,12 @@
           }
         },
         "constraints": {"type": "object", "additionalProperties": {"type": "string"}},
+        "limits": {
+          "type": "object",
+          "description": "limits of a non-empty value the field's class enforces: an integer range, and a Go regexp whose first match must be the whole value",
+          "properties": {"minimum": {"type": "integer"}, "maximum": {"type": "integer"}, "pattern": {"type": "string"}},
+          "additionalProperties": false
+        },
         "gaps": {"$ref": "#/$defs/gaps"}
       }
     },
@@ -260,9 +266,19 @@
         "sample": {"type": "object"},
         "generated": {"$ref": "#/$defs/strings"},
         "runtime_required": {"$ref": "#/$defs/strings"},
-        "findings": {"$ref": "#/$defs/strings"}
+        "findings": {"$ref": "#/$defs/strings"},
+        "probe": {"$ref": "#/$defs/status", "description": "status of the field probes (ADR 0017); absent when none ran"},
+        "probes": {
+          "type": "object",
+          "description": "per field (dotted path in write form): the values the firewall accepted and rejected when written alone to a valid object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {"accepted": {"$ref": "#/$defs/strings"}, "rejected": {"$ref": "#/$defs/strings"}},
+            "additionalProperties": false
+          }
+        }
       },
-      "anyOf": [{"required": ["read"]}, {"required": ["write"]}]
+      "anyOf": [{"required": ["read"]}, {"required": ["write"]}, {"required": ["probe"]}]
     }
   }
 }

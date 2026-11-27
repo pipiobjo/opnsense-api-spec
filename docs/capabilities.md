@@ -203,6 +203,7 @@ documents keep them.
 | `default` | the model default; absent means empty |
 | `options` | static options from the model; dynamic options (interfaces, certificates) only exist on the instance |
 | `relations` | entry lists a relation field points to: `source` is the model class as written in the model, with dots and in any case (`OPNsense.quagga.ospf` for `OPNsense\Quagga\OSPF`; PHP class names are case-insensitive), `items` the list path |
+| `limits` | what the field's class checks in a non-empty value, where it is derived: `minimum`/`maximum` of an integer field, and `pattern`, the `Mask` of a text field in Go (RE2) regexp syntax with its flags inline. The value passes when the pattern's first match is the whole value (OPNsense's Regex validator; an unanchored mask still constrains all of it). A mask Go cannot run (look-arounds) has no `pattern`; the firewall's check is then the only one. The contract test probes exactly these limits |
 | `constraints` | other model settings (`Mask`, `MinimumValue`, `AddressFamily`, ...), as strings; `"(structured)"` marks nested settings that are not represented |
 | `gaps` | gap codes: where the derivation is uncertain (concepts, section 8) |
 
@@ -221,7 +222,10 @@ A field with `list` holds several elements in one wire string, joined by
 | a type whose own `getNodeData` splits the value the same way (`AliasContentField`, separator newline) | elements joined by the separator | as above; the alias `getItem` also lists other aliases with `selected: 0` | `true` |
 
 A reader takes the keys with `selected` 1 in the order of the answer
-(JSON object member order; PHP keeps it). When the keys are `0`, `1`, ...
+(JSON object member order; PHP keeps it). A single select (not
+`multiple`, no `list`) that marks the empty key `""` and one other key
+holds the other key: OPNsense 25.7 marks the empty choice for every value
+PHP's `empty()` calls empty, `"0"` included; 26.1 and later do not. When the keys are `0`, `1`, ...
 PHP sends a JSON list instead of an object, and the index is the key. An
 empty value reads as one key `""`, which is the empty list. Because the
 keys of a JSON object are unique, a read returns each element once even if
@@ -340,6 +344,21 @@ os-frr on 26.7.9:
   save configuration" (a job or action under the name `set`, such as
   `core/firmware`), "not a configuration resource", "no plain field" or
   "no other value accepted".
+- `probe`: the field probes ([ADR 0017](adr/0017-field-probes.md)):
+  every field of the object (a settings model, or the entry the write
+  cycle created) is set, alone, to the values the data predicts accepted
+  or rejected: every option, a key that is not one, two options together,
+  the empty value, `0`/`1`/`2` for booleans, the integer limits and one
+  beyond each, a value matching the mask and one not. `ok`: the firewall
+  judged every value as predicted and every accepted value read back as
+  sent. `known-gap`: the differences are on fields with `model-validation`
+  or under `custom-save`. `skipped`: not probed (the object's current
+  values are refused, or no entry could be created); not a pass.
+- `probes`: per field, the values the firewall `accepted` and `rejected`.
+  A consumer can run them through its own value check and must reach the
+  same verdict on every field without `model-validation` (the Go client
+  does so in its tests). A rejection whose messages named only other
+  fields is left out.
 - `returned_by_search`: `write_only` fields whose stored value the
   `search` answer contained in this run (entry lists; see `write_only`).
 - `runtime_required`: fields the instance required although the model does
@@ -398,7 +417,8 @@ rather than guess:
   ignore unknown keys. Added so far: `version-order.json` (2026-11-18);
   `list`, `empty_ignored`, `same_definition_as`, `returned_by_search` and
   the steps `restore`, `read-back-restore`, `list-order` (generator
-  0.10.0). With 0.10.0 settings `write` changed from writing back the
+  0.10.0); `probe`, `probes`, `limits` and the gap `model-validation` (generator
+  0.12.0). With 0.10.0 settings `write` changed from writing back the
   current value to writing a different one; older results of settings
   have `steps` [set, read-back] only.
 - Fragment hashes are content addresses and do not change. A new generator

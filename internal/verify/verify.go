@@ -48,6 +48,12 @@ type Result struct {
 	// set, read-back-set, del. A missing "set" means the update was not
 	// tested (no set endpoint, or the changed value was rejected).
 	Steps []string `json:"steps,omitempty"`
+	// Probes (field-probe only): every value written and the firewall's
+	// verdict on it.
+	Probes []Probe `json:"probes,omitempty"`
+	// Unprobed (field-probe only): constraints of the probed fields that
+	// no probe tries, by name, with the number of fields.
+	Unprobed map[string]int `json:"unprobed,omitempty"`
 }
 
 // Report is the outcome of a run.
@@ -75,6 +81,9 @@ type Report struct {
 	UnusedAccepted []string `json:"unused_accepted,omitempty"`
 	// UsedAccepted: entries that covered at least one failed check.
 	UsedAccepted []string `json:"used_accepted,omitempty"`
+	// Claims: the field probes counted (Summarize), set when the report
+	// is written.
+	Claims *ClaimSummary `json:"claims,omitempty"`
 }
 
 // Run executes all checks for endpoints of the given packages (installed

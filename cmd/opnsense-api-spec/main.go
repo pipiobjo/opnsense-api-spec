@@ -490,6 +490,8 @@ func cmdMergeVerified(o opts, accepted string, files []string) error {
 // results (base.openapi.json), prints the counts, and fails when a check
 // failed.
 func writeReport(rel *ir.Release, rep *verify.Report, base string) error {
+	claims := verify.Summarize(rep.Results)
+	rep.Claims = &claims
 	if err := jsonfile.Write(base+".verified.json", rep); err != nil {
 		return err
 	}
@@ -499,6 +501,9 @@ func writeReport(rel *ir.Release, rep *verify.Report, base string) error {
 	}
 	for _, k := range pipeline.SortedKeys(counts) {
 		fmt.Fprintf(os.Stderr, "%-24s %d\n", k, counts[k])
+	}
+	for _, l := range claims.Lines() {
+		fmt.Fprintln(os.Stderr, l)
 	}
 	doc, _ := openapi.RenderVerified(rel, rep)
 	if err := jsonfile.Write(base+".openapi.json", doc); err != nil {

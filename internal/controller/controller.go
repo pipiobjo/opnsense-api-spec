@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
@@ -91,6 +92,9 @@ type Class struct {
 	Actions    map[string]*Action `json:"-"`
 	// protected hooks of ApiMutableModelControllerBase this class overrides
 	Hooks []string `json:"hooks,omitempty"`
+	// HookSets: fields its setBaseHook assigns ($node->updated->time = ...),
+	// as dotted paths below the entry
+	HookSets []string `json:"hook_sets,omitempty"`
 }
 
 // Controller is a routable API controller with its effective actions.
@@ -104,7 +108,8 @@ type Controller struct {
 	Chain      []string  `json:"chain"`             // class, parent, ... (resolved part)
 	ModelName  string    `json:"model_name,omitempty"`
 	ModelClass string    `json:"model_class,omitempty"`
-	Hooks      []string  `json:"hooks,omitempty"` // overridden hooks (getModelNodes, ...)
+	Hooks      []string  `json:"hooks,omitempty"`     // overridden hooks (getModelNodes, ...)
+	HookSets   []string  `json:"hook_sets,omitempty"` // fields setBaseHook assigns (Class.HookSets)
 	Actions    []*Action `json:"actions"`
 	Gaps       []gap.Gap `json:"gaps,omitempty"`
 }
@@ -123,6 +128,29 @@ var (
 
 var paramNameRe = regexp.MustCompile(`\$(\w+)`)
 
+// hookAssignRe: an assignment to a field of the hook's node,
+// $node->updated->time = ... or $node->{'max-src'} = ... (not ==).
+var hookAssignRe = regexp.MustCompile(`\$node((?:\s*->\s*(?:\w+|\{\s*['"][\w-]+['"]\s*\}))+)\s*=[^=>]`)
+
+// hookSets: the fields a setBaseHook body assigns, sorted, unique.
+func hookSets(body string) []string {
+	var out []string
+	for _, m := range hookAssignRe.FindAllStringSubmatch(body, -1) {
+		var parts []string
+		for _, p := range strings.Split(m[1], "->") {
+			p = strings.Trim(strings.TrimSpace(p), "{}'\" ")
+			if p != "" {
+				parts = append(parts, p)
+			}
+		}
+		if f := strings.Join(parts, "."); !slices.Contains(out, f) {
+			out = append(out, f)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
 // ParseFile parses one PHP file into classes.
 func ParseFile(src, relFile string) []*Class {
 	code := php.StripComments(src)
@@ -130,8 +158,21 @@ func ParseFile(src, relFile string) []*Class {
 	for _, pc := range php.Classes(code, php.ParseHeader(code)) {
 		cl := &Class{Name: pc.Name, Extends: pc.Extends, File: relFile, Abstract: pc.Abstract, Actions: map[string]*Action{}}
 		body := pc.Body
-		for _, m := range hookRe.FindAllStringSubmatch(body, -1) {
-			cl.Hooks = append(cl.Hooks, m[1])
+		for _, m := range hookRe.FindAllStringSubmatchIndex(body, -1) {
+			name := body[m[2]:m[3]]
+			cl.Hooks = append(cl.Hooks, name)
+			if name != "setBaseHook" {
+				continue
+			}
+			open := strings.IndexByte(body[m[1]:], '{')
+			if open < 0 {
+				continue
+			}
+			end := php.Match(body, m[1]+open, '{', '}')
+			if end < 0 {
+				continue
+			}
+			cl.HookSets = hookSets(body[m[1]+open : end+1])
 		}
 		for _, m := range propRe.FindAllStringSubmatch(body, -1) {
 			if m[1] == "internalModelName" {
@@ -450,6 +491,9 @@ func Resolve(classes map[string]*Class) []*Controller {
 			}
 			if !strings.HasPrefix(cl.Name, `OPNsense\Base\`) {
 				ctl.Hooks = append(ctl.Hooks, cl.Hooks...)
+				if slices.Contains(cl.Hooks, "setBaseHook") {
+					ctl.HookSets = cl.HookSets // the most specific override counts
+				}
 			}
 			for k, a := range cl.Actions {
 				cp := *a

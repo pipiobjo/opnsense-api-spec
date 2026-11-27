@@ -39,6 +39,7 @@ const (
 	CheckShape      Check = "shape"       // a read answer matches the model
 	CheckSchema     Check = "schema"      // an answer matches the derived OpenAPI schema
 	CheckWriteCycle Check = "write-cycle" // written, read back, (updated,) deleted; for settings written back
+	CheckFieldProbe Check = "field-probe" // every field set to values the data predicts accepted or rejected (ADR 0017)
 )
 
 // status: findings make a mismatch, no findings are ok. Non-failing

@@ -46,6 +46,7 @@ const (
 	UnknownSetting      Code = "unknown-setting"       // untyped leaf element that is not a known setting
 	CustomWrite         Code = "custom-write"          // the field type converts or normalizes values on write (setValue)
 	CustomSave          Code = "custom-save"           // own code between request and stored data (toLegacy/fromLegacy, serializeToConfig)
+	ModelValidation     Code = "model-validation"      // the model's performValidation or <Constraints> check the field together with other fields or entries
 )
 
 // Gap is one finding of the generator.

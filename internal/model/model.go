@@ -673,6 +673,20 @@ func convert(x *xnode, ns string, types *TypeIndex) *Node {
 			n.Options = options(c)
 		case "AsList":
 			setProp(n, name, val)
+		case "Constraints":
+			// rules over several fields or entries (SetIfConstraint,
+			// UniqueConstraint, ...): what they need is not derived
+			setProp(n, name, "(structured)")
+			var kinds []string
+			for j := range c.Children {
+				if t := c.Children[j].child("type"); t != nil {
+					kinds = append(kinds, strings.TrimSpace(t.Text))
+				} else {
+					kinds = append(kinds, c.Children[j].XMLName.Local)
+				}
+			}
+			slices.Sort(kinds)
+			n.Gaps = append(n.Gaps, gap.New(gap.ModelValidation, "the model's Constraints (%s) check it with other fields or entries; a value valid on its own may be refused", strings.Join(slices.Compact(kinds), ", ")))
 		case "Model":
 			setProp(n, name, "(structured)")
 			for j := range c.Children {
@@ -707,6 +721,11 @@ func convert(x *xnode, ns string, types *TypeIndex) *Node {
 			if v, ok := types.prop(chain, "internalDefaultValue"); ok && v != "" {
 				n.Default = &v
 			}
+		}
+		// a class that makes its fields required ($internalIsRequired,
+		// e.g. the IPsec CharonLogLevelField)
+		if v, _ := types.prop(chain, "internalIsRequired"); v == "true" && !n.Required {
+			n.Required = true
 		}
 		if c, ok := types.runtimeOptions(chain); ok && n.Options != nil {
 			n.Gaps = append(n.Gaps, gap.New(gap.OptionsDynamic, "%s sets the options at run time; the listed ones may not be offered", c))
@@ -839,6 +858,9 @@ func LoadAll(appDir string) ([]*Model, *TypeIndex, error) {
 				if saveFnRe.MatchString(src) {
 					m.Gaps = append(m.Gaps, gap.New(gap.CustomSave, "%s overrides serializeToConfig; saving runs own code (values may be changed, computed or written elsewhere)", m.Class))
 				}
+				if ms := methods(src); ms["performvalidation"] != "" {
+					modelValidation(m, validationCode(ms))
+				}
 				if initFnRe.MatchString(src) {
 					// e.g. OPNsense\Core\InitialSetup loads every value from
 					// the rest of the configuration on each read
@@ -851,4 +873,66 @@ func LoadAll(appDir string) ([]*Model, *TypeIndex, error) {
 	})
 	sort.Slice(out, func(i, j int) bool { return out[i].Class < out[j].Class })
 	return out, types, err
+}
+
+// names a model's performValidation may refer to a field by: a property
+// access ($rule->icmptype, $node->{'max-src-conn'}) that is not a method
+// call, or a string literal ('statetimeout' in a list of field names, a
+// case 'type': of a switch over the nodes, the end of a message's path
+// as in $ref . ".time_period").
+var (
+	accessRe   = regexp.MustCompile(`->\s*(\w+)\s*(\()?`)
+	braceRe    = regexp.MustCompile(`->\s*\{\s*['"]([\w-]+)['"]\s*\}`)
+	thisCallRe = regexp.MustCompile(`\$this\s*->\s*(\w+)\s*\(`)
+	literalRe  = regexp.MustCompile(`'\.?([\w-]+)'|"\.?([\w-]+)"`)
+)
+
+// validationCode: performValidation with the bodies of the class's own
+// methods it calls ($this->checkLayer4Matchers($messages), as os-caddy),
+// transitively.
+func validationCode(ms map[string]string) string {
+	seen := map[string]bool{}
+	var b strings.Builder
+	var add func(name string)
+	add = func(name string) {
+		if seen[name] || ms[name] == "" {
+			return
+		}
+		seen[name] = true
+		b.WriteString(ms[name])
+		for _, x := range thisCallRe.FindAllStringSubmatch(ms[name], -1) {
+			add(strings.ToLower(x[1]))
+		}
+	}
+	add("performvalidation")
+	return b.String()
+}
+
+// modelValidation marks every field of m whose name the model's own
+// performValidation (body) mentions with the gap model-validation. Names
+// are matched without their path, so a field of the same name elsewhere
+// in the model is marked as well: the gap says "may", never "does".
+func modelValidation(m *Model, body string) {
+	names := map[string]bool{}
+	for _, x := range accessRe.FindAllStringSubmatch(body, -1) {
+		if x[2] == "" {
+			names[x[1]] = true
+		}
+	}
+	for _, x := range braceRe.FindAllStringSubmatch(body, -1) {
+		names[x[1]] = true
+	}
+	for _, x := range literalRe.FindAllStringSubmatch(body, -1) {
+		names[x[1]+x[2]] = true
+	}
+	var walk func(n *Node)
+	walk = func(n *Node) {
+		for _, c := range n.Children {
+			if c.Kind == KindField && names[c.Name] && !gap.Has(c.Gaps, gap.ModelValidation) {
+				c.Gaps = append(c.Gaps, gap.New(gap.ModelValidation, "performValidation of %s checks it with other fields; a value valid on its own may be refused or changed", m.Class))
+			}
+			walk(c)
+		}
+	}
+	walk(m.Root)
 }

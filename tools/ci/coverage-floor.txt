@@ -1,6 +1,7 @@
 # Coverage floors (tools/ci/coverage.sh): name, minimum percent of
 # statements, margin. Floor = lowest measurement minus the margin, rounded
-# down: unit 83.0% (2026-11-24) - 1; contract 69.7% (26.1.11, 2026-11-19)
+# down: unit 83.0% (2026-11-24) - 1; contract 71.7% (26.1.11, parallel
+# local run with field probes, 2026-11-27; 25.7.11 72.4%, 26.7.10 72.0%)
 # - 3. The contract floor is enforced only in promote.yml.
 unit 82 1
-contract 66 3
+contract 68 3

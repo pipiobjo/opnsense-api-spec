@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -263,6 +264,12 @@ func TestVerification(t *testing.T) {
 				Steps: []string{"add", "read-back", "set", "read-back-set", "del"}, Sample: map[string]any{"area": "0.0.0.0"},
 				ReturnedBySearch: []string{"area"}},
 			{Path: "/api/demo/settings/get", Check: "shape", Status: "ok"},
+			{Path: "/api/demo/settings/set", Check: "field-probe", Status: "ok", Probes: []verify.Probe{
+				{Field: "general.port", Value: "1", Accept: true, Outcome: verify.OutcomeAgreed},
+				{Field: "general.port", Value: "0", Accept: false, Outcome: verify.OutcomeAgreed},
+				{Field: "general.port", Value: "70000", Accept: false, Outcome: verify.OutcomeContradicted},
+				{Field: "general.mode", Value: "x", Accept: true, Outcome: verify.OutcomeOtherFields},
+			}},
 		}}
 	d.write(filepath.Join("26.1.2", "opnsense-26.1.2.verified.json"), rep)
 	// a report without package list says nothing
@@ -288,6 +295,12 @@ func TestVerification(t *testing.T) {
 	s := docs["os-demo"].Resources["demo/settings"].Verify[v2.Hash()]
 	if s == nil || s.Read != "ok" || s.Write != "" {
 		t.Errorf("settings: read verified, write not tested: %s", js(s))
+	}
+	// the firewall's verdicts per field; a rejection for other fields is
+	// no verdict on the value
+	if s == nil || s.Probe != "ok" || len(s.Probes) != 1 || s.Probes["general.port"] == nil ||
+		!slices.Equal(s.Probes["general.port"].Accepted, []string{"1", "70000"}) || !slices.Equal(s.Probes["general.port"].Rejected, []string{"0"}) {
+		t.Errorf("settings probes: %s", js(s))
 	}
 	if first := cat.Releases[0].Compositions[0].Verified; first != nil {
 		t.Errorf("a report without package list must not count: %s", js(first))

@@ -52,7 +52,14 @@ func settingsWriteBacks(c *Client, rel *ir.Release, models map[string]*model.Mod
 		if g == nil || g.Wrapper != e.Wrapper {
 			continue
 		}
-		out = append(out, c.noted(settingsWriteBack(c, g, e, models[e.Model])))
+		m := models[e.Model]
+		out = append(out, c.noted(settingsWriteBack(c, g, e, m)))
+		var root *model.Node
+		var mgaps []gap.Gap
+		if m != nil {
+			root, mgaps = m.Root, m.Gaps
+		}
+		out = append(out, c.noted(probeResult(e, settingsTarget(c, g, e), root, e.Gaps, mgaps)))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out
@@ -89,11 +96,7 @@ func settingsWriteBack(c *Client, get, set *ir.Endpoint, m *model.Model) *Result
 		if err != nil || code != 200 {
 			return nil, fail(r, code, raw, err)
 		}
-		obj, _ := v.(map[string]any)
-		inner, ok := obj[get.Wrapper].(map[string]any)
-		if l, isList := obj[get.Wrapper].([]any); isList && len(l) == 0 {
-			inner, ok = map[string]any{}, true // PHP encodes an empty object as []
-		}
+		inner, ok := settingsObject(v, get.Wrapper)
 		if !ok {
 			// otherwise it would pass as "no plain field to write back"
 			r.HTTP, r.Status, r.Findings = code, StatusMismatch, []string{fmt.Sprintf("root key %q missing or not an object in the answer of %s", get.Wrapper, get.Path)}
@@ -104,33 +107,25 @@ func settingsWriteBack(c *Client, get, set *ir.Endpoint, m *model.Model) *Result
 	// write sends one field; others are the fields of the validation
 	// messages that are not the written one
 	write := func(path, val string) (setAnswer, []string) {
-		code, v, raw, err := c.do("POST", set.Path, map[string]any{set.Wrapper: nested(path, val)})
-		var nj *NonJSON
-		if errors.As(err, &nj) {
-			r.HTTP, r.Status, r.Findings = code, StatusSkipped, []string{"set does not save configuration, it answers with " + err.Error()}
+		a := postFields(c, set.Path, set.Wrapper, map[string]string{path: val})
+		switch {
+		case a.nonJSON != nil:
+			r.HTTP, r.Status, r.Findings = a.code, StatusSkipped, []string{"set does not save configuration, it answers with " + a.nonJSON.Error()}
 			return setNoSave, nil
-		}
-		if err != nil || code != 200 {
-			fail(r, code, raw, err)
+		case a.httpErr != nil || a.code != 200:
+			fail(r, a.code, a.raw, a.httpErr)
 			return setFailed, nil
 		}
 		r.HTTP = 200
-		out, _ := v.(map[string]any)
-		if res, _ := out["result"].(string); res == "saved" {
+		switch {
+		case a.saved:
 			return setSaved, nil
+		case a.own[path]:
+			return setOwnField, nil
+		case len(a.others) > 0:
+			return setOthers, a.others
 		}
-		if vals := asMap(out["validations"]); len(vals) > 0 {
-			var others []string
-			for k := range vals {
-				f := strings.TrimPrefix(k, set.Wrapper+".")
-				if f == path {
-					return setOwnField, nil
-				}
-				others = append(others, f)
-			}
-			return setOthers, others
-		}
-		r.Status, r.Findings = StatusSkipped, []string{"set does not save configuration, it answers " + trunc(raw)}
+		r.Status, r.Findings = StatusSkipped, []string{"set does not save configuration, it answers " + trunc(a.raw)}
 		return setNoSave, nil
 	}
 	cur, bad := read()
@@ -148,6 +143,11 @@ func settingsWriteBack(c *Client, get, set *ir.Endpoint, m *model.Model) *Result
 	switch ans, oth := write(fields[0].path, fields[0].value); ans {
 	case setSaved:
 	case setOwnField:
+		if fields[0].value == "" && fields[0].node.Required {
+			// a required field still empty: the model needs settings first
+			r.Status, r.Findings = StatusSkipped, []string{"model not valid in its default state, set rejected for: " + fields[0].path + " (required, empty)"}
+			return r
+		}
 		r.Status, r.Findings = StatusMismatch, []string{fmt.Sprintf("its own current value of %s was rejected", fields[0].path)}
 		return r
 	case setOthers:
@@ -290,14 +290,14 @@ func otherValues(n *model.Node, cur string) []string {
 	return out
 }
 
-// nested turns "general.enabled" and a value into {"general": {"enabled": v}}.
-func nested(path, v string) map[string]any {
-	parts := strings.Split(path, ".")
-	out := map[string]any{parts[len(parts)-1]: v}
-	for i := len(parts) - 2; i >= 0; i-- {
-		out = map[string]any{parts[i]: out}
+// settingsObject: the object under the wrapper key of a settings get.
+func settingsObject(v any, wrapper string) (map[string]any, bool) {
+	obj, _ := v.(map[string]any)
+	inner, ok := obj[wrapper].(map[string]any)
+	if l, isList := obj[wrapper].([]any); isList && len(l) == 0 {
+		inner, ok = map[string]any{}, true // PHP encodes an empty object as []
 	}
-	return out
+	return inner, ok
 }
 
 func leaf(obj map[string]any, path string) any {

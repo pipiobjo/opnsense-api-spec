@@ -18,6 +18,7 @@
 | [0014](0014-attribute-identity-and-moves.md) | Provider attribute names are fixed once; field moves are mapped in the provider's name table, `moved_from` is not generated | accepted 2026-11-18 (P8) |
 | [0015](0015-publish-without-build-code.md) | Publishing rights only in a job that runs no build code; dry runs never hold an id-token | accepted, implemented |
 | [0016](0016-parallel-local-runs.md) | Parallel local test runs with plugin groups and a conflict check; CI keeps one VM with every plugin | accepted, implemented |
+| [0017](0017-field-probes.md) | Field probes: every claim of the data about a field is tried on the firewall, with the predicted verdict | accepted, in progress |
 
 Format: context, decision, consequences, evidence. A superseded ADR stays
 and links to its successor.

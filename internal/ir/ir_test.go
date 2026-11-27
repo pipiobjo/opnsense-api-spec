@@ -4,6 +4,7 @@
 package ir
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/pipiobjo/opnsense-api-spec/internal/controller"
@@ -139,6 +140,28 @@ func TestControllerSaveIsCustomSave(t *testing.T) {
 			if got := gap.Has(e.Gaps, gap.CustomSave); got != want {
 				t.Errorf("hooks %v, %s: custom-save %v, want %v", hooks, e.Kind, got, want)
 			}
+		}
+	}
+}
+
+// fields the controller's setBaseHook assigns are computed on its add and
+// set endpoints, not on others
+func TestHookSetsAreComputed(t *testing.T) {
+	entry := &model.Node{Name: "rule", Kind: model.KindArray}
+	m := &model.Model{Class: `OPNsense\Demo\Demo`, Root: &model.Node{Kind: model.KindContainer, Children: []*model.Node{
+		{Name: "rules", Kind: model.KindContainer, Children: []*model.Node{entry}},
+	}}}
+	const own = `OPNsense\Demo\Api\RuleController`
+	act := func(name, fn string) *controller.Action {
+		return &controller.Action{Name: name, DeclaredIn: own, Lines: 3,
+			Calls: []controller.BaseCall{{Func: fn, Key: "rule", Path: "rules.rule", Direct: true}}}
+	}
+	ctl := &controller.Controller{Class: own, Module: "demo", Name: "rule", ModelClass: m.Class,
+		HookSets: []string{"updated.time"}, Actions: []*controller.Action{act("addRule", "addBase"), act("setRule", "setBase"), act("getRule", "getBase")}}
+	for _, e := range Build([]*model.Model{m}, []*controller.Controller{ctl}) {
+		want := e.Kind == KindItemAdd || e.Kind == KindItemSet
+		if got := slices.Contains(e.Computed, "updated.time"); got != want {
+			t.Errorf("%s (%s): computed %v, want %v", e.Path, e.Kind, e.Computed, want)
 		}
 	}
 }

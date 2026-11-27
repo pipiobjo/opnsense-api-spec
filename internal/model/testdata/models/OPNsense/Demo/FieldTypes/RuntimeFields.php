@@ -21,4 +21,6 @@ class BackendServiceField extends BaseListField
 class LogLevelField extends BaseListField
 {
     protected $internalDefaultValue = "1";
+
+    protected $internalIsRequired = TRUE;
 }

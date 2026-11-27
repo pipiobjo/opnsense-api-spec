@@ -302,3 +302,26 @@ class ServicesController extends ApiMutableModelControllerBase
 		t.Fatalf("hooks %+v", cls)
 	}
 }
+
+// the fields a setBaseHook assigns (26.1 DNatController: the audit
+// fields), not the ones it only reads or compares
+func TestHookSets(t *testing.T) {
+	src := `<?php
+namespace OPNsense\Demo\Api;
+use OPNsense\Base\ApiMutableModelControllerBase;
+class RuleController extends ApiMutableModelControllerBase
+{
+    protected function setBaseHook($node)
+    {
+        $node->updated->time = sprintf('%0.2f', microtime(true));
+        $node->{'max-src'} = '1';
+        if ($node->created->time->isEmpty() || $node->enabled == '1') {
+            $node->created->time = $node->updated->time;
+        }
+    }
+}`
+	cls := ParseFile(src, "Demo/Api/RuleController.php")
+	if len(cls) != 1 || !reflect.DeepEqual(cls[0].HookSets, []string{"created.time", "max-src", "updated.time"}) {
+		t.Fatalf("hook sets %+v", cls[0].HookSets)
+	}
+}

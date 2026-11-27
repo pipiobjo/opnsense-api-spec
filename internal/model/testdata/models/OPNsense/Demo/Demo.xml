@@ -128,7 +128,15 @@
                     <MinimumValue>1</MinimumValue>
                 </ttl>
                 <odd type="UnknownField"/>
-                <filters type="TextField"/>
+                <filters type="TextField">
+                    <Constraints>
+                        <check001>
+                            <type>SetIfConstraint</type>
+                            <field>mode</field>
+                        </check001>
+                        <reference>other.check001</reference>
+                    </Constraints>
+                </filters>
                 <zone type="ModelRelationField">
                     <Model>
                         <template>
