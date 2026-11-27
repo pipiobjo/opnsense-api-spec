@@ -99,7 +99,9 @@ catalog + packages ──► extract ──► IR (JSON) ──► render ──
 
 - **Models:** every field with type, base class, read shape, required,
   default, options. Field type classes are followed up to the core base
-  classes, including overrides of how a field is read back.
+  classes, including overrides of how a field is read back, a default the
+  class sets itself (a boolean without `<Default>` is `"0"`), and option
+  lists the class replaces at run time.
 - **Controllers:** actions, parameters, inheritance, calls to the generic
   helpers (`searchBase`, `getBase`, `addBase`, `setBase`, `delBase`,
   `toggleBase`) with their wrapper key and model path, overridden hooks.
@@ -223,8 +225,8 @@ typed, whatever their kind.
 | `unknown-setting` | (field) an untyped XML element that is not a known field setting; reported instead of guessed |
 | `field-type-unresolved` | field type not resolved to a core base class (field level) |
 | `custom-read-shape` | custom `getNodeData`/`getNodeOptions`; read shape untyped (field level) |
-| `options-dynamic` | option list depends on the running system (field level) |
-| `invalid-default` | default outside the allowed values; an upstream model error (field level) |
+| `options-dynamic` | option list depends on the running system: an OptionField without options, or a field class that sets its options at run time although the model lists some; listed options are then only a hint (field level) |
+| `invalid-default` | default outside the allowed values of a boolean or an option field with fixed options; an upstream model error: the firewall puts it into a new entry and refuses to save it unchanged (field level) |
 
 Codes counted as "the instance may answer with another shape"
 (`override-*`, `service-override`, `get-model-nodes-override`,

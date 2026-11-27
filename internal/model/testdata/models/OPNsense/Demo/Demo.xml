@@ -61,6 +61,32 @@
                 <FieldSeparator>;</FieldSeparator>
             </servers>
             <single type="HostnameField"/>
+            <oldbool type="BooleanField">
+                <Default>N</Default>
+            </oldbool>
+            <transport type="OptionField">
+                <Required>Y</Required>
+                <Default>udp</Default>
+                <OptionValues>
+                    <udp4>UDP(4)</udp4>
+                    <tcp4>TCP(4)</tcp4>
+                </OptionValues>
+            </transport>
+            <levels type="OptionField">
+                <Multiple>Y</Multiple>
+                <Default>warn,info</Default>
+                <OptionValues>
+                    <info>Info</info>
+                    <warn>Warning</warn>
+                </OptionValues>
+            </levels>
+            <service type=".\BackendServiceField">
+                <Default>other</Default>
+                <OptionValues>
+                    <listed>Listed</listed>
+                </OptionValues>
+            </service>
+            <loglevel type=".\LogLevelField"/>
             <peers type="ModelRelationField">
                 <Multiple>Y</Multiple>
                 <Sorted>Y</Sorted>

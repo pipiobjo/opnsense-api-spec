@@ -31,15 +31,15 @@
  */
 namespace OPNsense\Base\FieldTypes;
 
-abstract class BaseField { public function setValue($value) {} public function __toString() { return (string)$this->internalValue; } }  /* the framework itself: not a conversion */
-abstract class BaseListField extends BaseField {}
+abstract class BaseField { protected $internalDefaultValue = ""; public function setValue($value) {} public function __toString() { return (string)$this->internalValue; } }  /* the framework itself: not a conversion */
+abstract class BaseListField extends BaseField { public function setOptionValues($data) { $this->internalOptionList = $data; } }  /* the framework: options from the model */
 class BaseSetField extends BaseField
 {
     protected $internalFieldSeparator = ',';
     protected $internalAsList = false;
 }
 class CSVListField extends BaseSetField { protected $internalAsList = true; }
-class BooleanField extends BaseField {}
+class BooleanField extends BaseField { protected $internalDefaultValue = "0"; }
 class IntegerField extends BaseField {}
 class ArrayField extends BaseField {}
 class OptionField extends BaseListField {}

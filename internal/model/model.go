@@ -168,11 +168,12 @@ type TypeIndex struct {
 	// (newContainerField): array class -> container class
 	container map[string]string
 	// per class, only what the class declares itself (fieldclass.go):
-	props    map[string]map[string]string // property -> literal default
-	toString map[string]bool              // declares __toString; true: always ""
-	nodeData map[string]bool              // declares getNodeData
-	setKind  map[string]string            // declares setValue: setDiscard, ...
-	splitSep map[string]string            // getNodeData splits the value: separator
+	props       map[string]map[string]string // property -> literal default
+	toString    map[string]bool              // declares __toString; true: always ""
+	nodeData    map[string]bool              // declares getNodeData
+	setKind     map[string]string            // declares setValue: setDiscard, ...
+	splitSep    map[string]string            // getNodeData splits the value: separator
+	setsOptions map[string]bool              // assigns $this->internalOptionList (options decided at run time)
 }
 
 var (
@@ -180,6 +181,7 @@ var (
 	returnRe       = regexp.MustCompile(`\breturn\b`)
 	nodeFnRe       = regexp.MustCompile(`function\s+(getNodeData|getNodeOptions)\s*\([^)]*\)[^{]*\{`)
 	asListRe       = regexp.MustCompile(`\$internalAsList\s*=\s*(true|false)`)
+	setOptionsRe   = regexp.MustCompile(`\$this->internalOptionList\s*(?:\[[^\]]*\])?\s*=[^=]`)
 	writeFnRe      = regexp.MustCompile(`function\s+(setValue|toLegacy|fromLegacy)\s*\(`)
 	newContainerRe = regexp.MustCompile(`function\s+newContainerField\s*\([^)]*\)[^{]*\{[^}]*\bnew\s+([\\\w]+)\s*\(`)
 	saveFnRe       = regexp.MustCompile(`function\s+serializeToConfig\s*\(`)
@@ -226,7 +228,7 @@ func BuildTypeIndex(modelsDir string) (*TypeIndex, error) {
 		readOverride: map[string]string{}, asList: map[string]bool{},
 		writeOverride: map[string]map[string]bool{}, container: map[string]string{},
 		props: map[string]map[string]string{}, toString: map[string]bool{}, nodeData: map[string]bool{},
-		setKind: map[string]string{}, splitSep: map[string]string{}}
+		setKind: map[string]string{}, splitSep: map[string]string{}, setsOptions: map[string]bool{}}
 	err := filepath.WalkDir(modelsDir, func(p string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(p, ".php") || filepath.Base(filepath.Dir(p)) != "FieldTypes" {
 			return err
@@ -252,6 +254,7 @@ func BuildTypeIndex(modelsDir string) (*TypeIndex, error) {
 				idx.container[key] = strings.ToLower(h.Qualify(m[1]))
 			}
 			idx.props[key] = props(c.Body)
+			idx.setsOptions[key] = setOptionsRe.MatchString(c.Body)
 			ms := methods(c.Body)
 			if b, ok := ms["__tostring"]; ok {
 				idx.toString[key] = emptyStringRe.MatchString(b)
@@ -698,11 +701,78 @@ func convert(x *xnode, ns string, types *TypeIndex) *Node {
 		}
 		n.List = types.list(chain, n)
 		types.readWrite(chain, n)
+		if n.Default == nil {
+			// the field class's own default ($internalDefaultValue,
+			// e.g. "0" of BooleanField); BaseField's "" is no default
+			if v, ok := types.prop(chain, "internalDefaultValue"); ok && v != "" {
+				n.Default = &v
+			}
+		}
+		if c, ok := types.runtimeOptions(chain); ok && n.Options != nil {
+			n.Gaps = append(n.Gaps, gap.New(gap.OptionsDynamic, "%s sets the options at run time; the listed ones may not be offered", c))
+		}
 	}
 	if base == "BaseListField" && n.Options == nil && n.Type == "OptionField" {
 		n.Gaps = append(n.Gaps, gap.New(gap.OptionsDynamic, "OptionField without static OptionValues"))
 	}
+	if g := invalidDefault(n); g != nil {
+		n.Gaps = append(n.Gaps, *g)
+	}
 	return n
+}
+
+// runtimeOptions: a class of the chain below the core list classes
+// assigns the option list itself (from the backend, the configuration,
+// a cache), so options from the model XML are not what the firewall
+// offers. Returns the class name.
+func (t *TypeIndex) runtimeOptions(chain []string) (string, bool) {
+	for _, c := range chain {
+		if c == baseNS+"optionfield" || c == baseNS+"baselistfield" {
+			break
+		}
+		if t.setsOptions[c] {
+			return t.baseName(c), true
+		}
+	}
+	return "", false
+}
+
+// invalidDefault: the model's default is not a value the field accepts
+// (an upstream model error, e.g. Default "udp" with the options udp4 and
+// tcp4, or "N" for a boolean). The firewall still fills it into a new
+// entry, where it reads as nothing selected and is refused on save.
+// Checked where the valid values are known: booleans and option fields
+// whose options are not decided at run time.
+func invalidDefault(n *Node) *gap.Gap {
+	if n.Default == nil || *n.Default == "" || n.Kind != KindField {
+		return nil
+	}
+	var valid []string
+	switch {
+	case n.BaseType == "BooleanField":
+		valid = []string{"0", "1"}
+	case n.BaseType == "BaseListField" && len(n.Options) > 0 && !gap.Has(n.Gaps, gap.OptionsDynamic):
+		for _, o := range n.Options {
+			valid = append(valid, o.Value)
+		}
+	default:
+		return nil
+	}
+	items := []string{*n.Default}
+	if n.Multiple {
+		sep := ","
+		if n.List != nil && n.List.Separator != "" {
+			sep = n.List.Separator
+		}
+		items = strings.Split(*n.Default, sep)
+	}
+	for _, it := range items {
+		if !slices.Contains(valid, it) {
+			g := gap.New(gap.InvalidDefault, "default %q is not a valid value for %s (upstream model error)", *n.Default, n.Type)
+			return &g
+		}
+	}
+	return nil
 }
 
 func setProp(n *Node, k, v string) {

@@ -6,6 +6,7 @@ package openapi
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -652,24 +653,12 @@ func fieldSchema(n *model.Node, dir string) M {
 	case n.List != nil && dir == "Write":
 		s["description"] = fmt.Sprintf("List of elements joined by %q", n.List.Separator)
 	}
-	// a default outside the enum is an upstream model error (e.g. os-nginx:
-	// BooleanField with Default "N"); the instance returns it, so reads allow
-	// it, writes do not, and the field carries a visible gap
-	if enum, ok := s["enum"].([]string); ok && n.Default != nil && *n.Default != "" {
-		found := false
-		for _, v := range enum {
-			if v == *n.Default {
-				found = true
-			}
-		}
-		if !found {
-			g := gap.New(gap.InvalidDefault, "default %q is not a valid value for %s (upstream model error)", *n.Default, n.Type)
-			gaps, _ := s["x-opnsense-gaps"].([]gap.Gap)
-			s["x-opnsense-gaps"] = append(append([]gap.Gap{}, gaps...), g)
-			if dir == "Read" {
-				s["enum"] = append(append([]string{}, enum...), *n.Default)
-			}
-		}
+	// a default outside the valid values is an upstream model error (the
+	// model marks it, model.invalidDefault); the firewall returns it, so
+	// reads allow it, writes do not
+	if enum, ok := s["enum"].([]string); ok && dir == "Read" && gap.Has(n.Gaps, gap.InvalidDefault) &&
+		!slices.Contains(enum, *n.Default) {
+		s["enum"] = append(append([]string{}, enum...), *n.Default)
 	}
 	for k, v := range n.Props {
 		switch k {

@@ -22,7 +22,7 @@ import (
 // v<GeneratorVersion> (tools/ci/publish.sh).
 const (
 	GeneratorName    = "opnsense-api-spec"
-	GeneratorVersion = "0.10.1"
+	GeneratorVersion = "0.11.0"
 )
 
 // Source says how an endpoint description was derived.

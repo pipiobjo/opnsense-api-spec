@@ -4,6 +4,7 @@
 package model
 
 import (
+	"github.com/pipiobjo/opnsense-api-spec/internal/gap"
 	"reflect"
 	"strings"
 	"testing"
@@ -36,8 +37,26 @@ func TestLoadAllFixture(t *testing.T) {
 	if !en.Required || en.Default == nil || *en.Default != "0" {
 		t.Errorf("enabled: %+v", en)
 	}
-	if n := check("general.safesearch", KindField, "BooleanField", ShapeString); n.Default != nil {
-		t.Error("safesearch has no default")
+	// without <Default>, the field class's own default ($internalDefaultValue)
+	if n := check("general.safesearch", KindField, "BooleanField", ShapeString); n.Default == nil || *n.Default != "0" {
+		t.Errorf("safesearch: the default of BooleanField is \"0\": %+v", n)
+	}
+	if n := m.Find("general.loglevel"); n == nil || n.Default == nil || *n.Default != "1" {
+		t.Errorf("loglevel: the default of its own class: %+v", n)
+	}
+	// a default outside the valid values is an upstream model error
+	for _, p := range []string{"general.oldbool", "general.transport"} {
+		if n := m.Find(p); n == nil || !gap.Has(n.Gaps, gap.InvalidDefault) {
+			t.Errorf("%s: want invalid-default: %+v", p, n)
+		}
+	}
+	if n := m.Find("general.levels"); n == nil || len(n.Gaps) != 0 {
+		t.Errorf("levels: a list default of valid options is no gap: %+v", n)
+	}
+	// options set at run time: the listed ones are not the offered ones,
+	// and a default outside them is not known to be invalid
+	if n := m.Find("general.service"); n == nil || !gap.Has(n.Gaps, gap.OptionsDynamic) || gap.Has(n.Gaps, gap.InvalidDefault) {
+		t.Errorf("service: want options-dynamic only: %+v", n)
 	}
 	if n := check("general.iface", KindField, "BaseListField", ShapeSelect); !n.Multiple || len(n.Gaps) != 0 {
 		t.Errorf("custom field type via FieldTypes: %+v", n)

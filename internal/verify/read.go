@@ -53,6 +53,9 @@ const (
 	// own with their own get and search (the Kea and IPsec settings get
 	// leaves them out). Not a difference of this resource; a note.
 	diffOtherResource
+	// diffValue: a field's options or default differ from the data
+	// (fieldvalues.go)
+	diffValue
 )
 
 // messages returns the findings of the differences and the notes (nodes
@@ -89,8 +92,10 @@ func holdsFields(n *model.Node) bool {
 	return false
 }
 
-// compare the response object with the model node (Read shape)
-func compareNode(n *model.Node, v any, path string, out *[]shapeDiff) {
+// compareNode compares a read answer with the model node: its shape, and
+// the values the data claims (compareValues; template: the answer is the
+// get of a new entry, which holds the defaults).
+func compareNode(n *model.Node, v any, path string, template bool, out *[]shapeDiff) {
 	obj, ok := v.(map[string]any)
 	if arr, isArr := v.([]any); isArr && len(arr) == 0 {
 		obj, ok = map[string]any{}, true // PHP encodes an empty object as []
@@ -120,7 +125,7 @@ func compareNode(n *model.Node, v any, path string, out *[]shapeDiff) {
 		}
 		switch ch.Kind {
 		case model.KindContainer:
-			compareNode(ch, val, p, out)
+			compareNode(ch, val, p, template, out)
 		case model.KindArray:
 			if _, ok := val.(map[string]any); !ok {
 				if arr, ok := val.([]any); !ok || len(arr) != 0 {
@@ -135,14 +140,18 @@ func compareNode(n *model.Node, v any, path string, out *[]shapeDiff) {
 				_, isList := val.([]any)
 				if !isMap && !isList {
 					typeErr(p, "select map", val)
+					break
 				}
+				compareValues(ch, val, p, template, out)
 			case model.ShapeString:
 				if fieldShapeUncertain(ch) {
 					break
 				}
 				if _, ok := val.(string); !ok {
 					typeErr(p, "string", val)
+					break
 				}
+				compareValues(ch, val, p, template, out)
 			}
 		}
 	}
@@ -190,7 +199,7 @@ func checkModelGet(c *Client, e *ir.Endpoint, m *model.Model) *Result {
 		r.Status, r.Findings = StatusSkipped, []string{"model unknown"}
 		return r
 	}
-	compareNode(m.Root, inner, "", &r.diffs)
+	compareNode(m.Root, inner, "", false, &r.diffs)
 	r.Findings, r.Notes = messages(r.diffs)
 	r.Status = status(r.Findings)
 	return r
@@ -243,7 +252,7 @@ func unexplainedBySubset(r *Result) []string {
 	}
 	var bad []string
 	for _, d := range r.diffs {
-		if d.kind == diffType || (d.kind == diffMissing && !d.section) {
+		if d.kind == diffType || d.kind == diffValue || (d.kind == diffMissing && !d.section) {
 			bad = append(bad, d.msg)
 		}
 	}
@@ -288,7 +297,7 @@ func checkItemGet(c *Client, e *ir.Endpoint, m *model.Model) *Result {
 	}
 	if m != nil {
 		if n := m.Find(e.ModelPath); n != nil {
-			compareNode(&model.Node{Kind: model.KindContainer, Children: n.Children}, inner, e.ModelPath, &r.diffs)
+			compareNode(&model.Node{Kind: model.KindContainer, Children: n.Children}, inner, e.ModelPath, true, &r.diffs)
 			r.Findings, r.Notes = messages(r.diffs)
 		}
 	}
