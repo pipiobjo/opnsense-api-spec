@@ -92,6 +92,7 @@
                     <Default>a</Default>
                     <OptionValues>
                         <a>Mode A</a>
+                        <none value="">None</none>
                         <group1 label="Grouped">
                             <opt value="b-1">Mode B</opt>
                         </group1>

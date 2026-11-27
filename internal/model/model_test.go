@@ -48,8 +48,11 @@ func TestLoadAllFixture(t *testing.T) {
 	}
 	check("hosts.host.hostname", KindField, "BaseSetField", ShapeString)
 	mode := check("hosts.host.mode", KindField, "BaseListField", ShapeSelect)
-	if len(mode.Options) != 2 || mode.Options[1] != (Option{Value: "b-1", Label: "Mode B", Group: "Grouped"}) {
-		t.Errorf("options incl. optgroup: %+v", mode.Options)
+	// value="" is the key "" (as OPNsense's BaseListField), not the
+	// element name "none"
+	if len(mode.Options) != 3 || mode.Options[1] != (Option{Value: "", Label: "None"}) ||
+		mode.Options[2] != (Option{Value: "b-1", Label: "Mode B", Group: "Grouped"}) {
+		t.Errorf("options incl. empty value and optgroup: %+v", mode.Options)
 	}
 	if ttl := check("hosts.host.ttl", KindField, "IntegerField", ShapeString); ttl.Props["MinimumValue"] != "1" {
 		t.Errorf("props: %+v", ttl.Props)

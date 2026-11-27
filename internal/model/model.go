@@ -525,12 +525,18 @@ type xnode struct {
 }
 
 func (x *xnode) attr(name string) string {
+	v, _ := x.lookupAttr(name)
+	return v
+}
+
+// lookupAttr tells an empty attribute (value="") from a missing one.
+func (x *xnode) lookupAttr(name string) (string, bool) {
 	for _, a := range x.Attrs {
 		if a.Name.Local == name {
-			return a.Value
+			return a.Value, true
 		}
 	}
-	return ""
+	return "", false
 }
 
 func (x *xnode) child(name string) *xnode {
@@ -720,8 +726,11 @@ func options(x *xnode) []Option {
 				walk(c, g)
 				continue
 			}
-			v := c.attr("value")
-			if v == "" {
+			// as BaseListField: the value attribute when present, even
+			// empty (<default value="">Default</default> is the key ""),
+			// else the element name
+			v, ok := c.lookupAttr("value")
+			if !ok {
 				v = c.XMLName.Local
 			}
 			out = append(out, Option{Value: v, Label: strings.TrimSpace(c.Text), Group: group})
