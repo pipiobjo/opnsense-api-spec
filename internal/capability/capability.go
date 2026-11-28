@@ -843,8 +843,8 @@ func (d *Doc) addVerification(hash string, c *fragment.Composition, rep *verify.
 func verdicts(ps []verify.Probe) map[string]*Verdicts {
 	out := map[string]*Verdicts{}
 	for _, p := range ps {
-		if p.Outcome == verify.OutcomeOtherFields {
-			continue
+		if p.Outcome == verify.OutcomeOtherFields || p.Outcome == verify.OutcomeExplained {
+			continue // no verdict about the field's own values
 		}
 		v := out[p.Field]
 		if v == nil {

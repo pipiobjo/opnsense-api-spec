@@ -61,6 +61,19 @@
                 <FieldSeparator>;</FieldSeparator>
             </servers>
             <single type="HostnameField"/>
+            <ranged type="DemoRangeField">
+                <MinimumValue>5</MinimumValue>
+                <Mask>/^x$/</Mask>
+            </ranged>
+            <cased type="DemoRangeField">
+                <minimumvalue>7</minimumvalue>
+            </cased>
+            <adding type=".\AddingField">
+                <MinimumValue>5</MinimumValue>
+            </adding>
+            <replacing type=".\ReplacingField">
+                <MinimumValue>5</MinimumValue>
+            </replacing>
             <oldbool type="BooleanField">
                 <Default>N</Default>
             </oldbool>

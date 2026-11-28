@@ -18,6 +18,8 @@ import (
 
 func ptr(s string) *string { return &s }
 
+func i64(v int64) *int64 { return &v }
+
 func probeList(ps []Probe) []string {
 	var out []string
 	for _, p := range ps {
@@ -39,7 +41,8 @@ func TestProbesFromClaims(t *testing.T) {
 			&model.Node{Type: "BooleanField", BaseType: "BooleanField", Required: true},
 			nil, []string{`required "" false`, `boolean "0" true`, `boolean "1" true`, `boolean "2" false`}, nil},
 		{"integer with limits",
-			&model.Node{Type: "IntegerField", BaseType: "IntegerField", Props: map[string]string{"MinimumValue": "1", "MaximumValue": "65535", "ValidationMessage": "x"}},
+			&model.Node{Type: "IntegerField", BaseType: "IntegerField", Props: map[string]string{"MinimumValue": "1", "MaximumValue": "65535", "ValidationMessage": "x"},
+				Rules: &model.Limits{Minimum: i64(1), Maximum: i64(65535)}},
 			nil, []string{`optional "" true`, `integer "contract-test" false`, `minimum "1" true`, `minimum "0" false`, `maximum "65535" true`, `maximum "65536" false`},
 			nil}, // a text for the web UI is no claim
 		{"single option field, complete list",
@@ -56,14 +59,25 @@ func TestProbesFromClaims(t *testing.T) {
 			&model.Node{Type: ".\\OwnField", BaseType: "BaseListField", Shape: model.ShapeSelect, Options: opts},
 			nil, []string{`optional "" true`, `option "a" true`, `option "b" true`, `single "a,b" false`}, nil},
 		{"mask on a text field",
-			&model.Node{Type: "TextField", BaseType: "TextField", Props: map[string]string{"Mask": `/^[a-z0-9]{1,8}$/`}},
+			&model.Node{Type: "TextField", BaseType: "TextField", Props: map[string]string{"Mask": `/^[a-z0-9]{1,8}$/`},
+				Rules: &model.Limits{Pattern: `^[a-z0-9]{1,8}$`, Bytes: true}},
 			nil, []string{`optional "" true`, `mask "ct1" true`, `mask "!" false`}, nil},
+		{"a field's own pattern: a value too long is the miss",
+			&model.Node{Type: "DescriptionField", BaseType: "TextField", Rules: &model.Limits{Pattern: `^(.){1,255}\n?$`, Bytes: true}},
+			nil, []string{`optional "" true`, `mask "contracttest1" true`, `mask "` + strings.Repeat("x", 256) + `" false`}, nil},
 		{"mask Go cannot run stays unprobed",
 			&model.Node{Type: "TextField", BaseType: "TextField", Props: map[string]string{"Mask": `/^(?!any$)[a-z]+$/`}},
 			nil, []string{`optional "" true`}, []string{"Mask"}},
-		{"mask of a set field stays unprobed",
-			&model.Node{Type: "NetworkField", BaseType: "BaseSetField", Props: map[string]string{"Mask": `/^.*$/`}},
-			nil, []string{`optional "" true`}, []string{"Mask"}},
+		{"forbidden characters, the allowed group accepted",
+			&model.Node{Type: "TextField", BaseType: "TextField", Props: map[string]string{"AllowSpaces": "N", "AllowNewlines": "Y"},
+				Checked: []string{"AllowNewlines", "AllowSpaces"}, Rules: &model.Limits{Forbidden: " \t\x00\v\f"}},
+			nil, []string{`optional "" true`, `forbidden "ct x" false`, `forbidden "ct\nx" true`, `forbidden "ct\vx" false`}, nil},
+		{"network format: every rule, settings counted as probed",
+			&model.Node{Type: "NetworkField", BaseType: "BaseSetField", Props: map[string]string{"NetMaskAllowed": "N", "AddressFamily": "ipv4"},
+				Checked: []string{"AddressFamily", "NetMaskAllowed"},
+				Rules:   &model.Limits{Format: &model.Format{Kind: model.FormatNetwork, Family: "ipv4", Netmask: model.NetmaskForbidden}}},
+			nil, []string{`optional "" true`, `family "192.0.2.10" true`, `family "2001:db8::10" false`, `netmask "192.0.2.0/24" false`,
+				`wildcard "any" false`, `format "192.0.2.256" false`, `format "192.0.2.010" false`, `format "contract-test" false`}, nil},
 		{"empty value ignored",
 			&model.Node{Type: ".\\SecretField", BaseType: "TextField", Required: true, EmptyIgnored: true},
 			nil, []string{`empty-kept "" true`}, nil},
@@ -73,8 +87,7 @@ func TestProbesFromClaims(t *testing.T) {
 			if tc.n.Type == "TextField" && tc.n.Props["Mask"] == `/^[a-z0-9]{1,8}$/` {
 				// the match comes from the generated candidates: the first
 				// one without spaces the mask takes
-				re := phpRegex(tc.n.Props["Mask"])
-				yes, _ := maskValues(tc.n, re.MatchString)
+				yes, _ := maskValues(tc.n, tc.n.Rules)
 				tc.want[1] = fmt.Sprintf("mask %q true", yes)
 			}
 			got, unprobed := probes("f", tc.n, tc.offered)
@@ -172,7 +185,7 @@ func probeModel() *model.Node {
 		{Name: "general", Kind: model.KindContainer, Children: []*model.Node{
 			{Name: "enabled", Kind: model.KindField, Type: "BooleanField", BaseType: "BooleanField", Default: ptr("0")},
 			{Name: "port", Kind: model.KindField, Type: "IntegerField", BaseType: "IntegerField",
-				Props: map[string]string{"MinimumValue": "1", "MaximumValue": "65535"}},
+				Props: map[string]string{"MinimumValue": "1", "MaximumValue": "65535"}, Rules: &model.Limits{Minimum: i64(1), Maximum: i64(65535)}},
 			{Name: "mode", Kind: model.KindField, Type: "OptionField", BaseType: "BaseListField", Shape: model.ShapeSelect,
 				Options: []model.Option{{Value: "a"}, {Value: "b"}}},
 		}},
@@ -371,6 +384,104 @@ func TestProbeRunModelValidationAndOverlay(t *testing.T) {
 			}
 		}
 	})
+}
+
+// a field that a rule over several fields refuses in the object's current
+// state (a firewall rule's port with protocol "any") is probed again with
+// another value of a select that lets its own values decide
+func TestProbeRunContext(t *testing.T) {
+	o := honest()
+	o.validate["general.port"] = func(v string, all map[string]string) string {
+		if v != "" && v != "53" && all["general.mode"] != "b" { // the stored value is valid as it is
+			return "a port only with mode b"
+		}
+		return intRange(1, 65535)(v, all)
+	}
+	root := probeModel()
+	port := root.Children[0].Children[1]
+	port.Gaps = []gap.Gap{{Code: gap.ModelValidation, Detail: "performValidation of X"}}
+	// options decided at run time: mode's own probes do not set "b", the
+	// search takes the listed options
+	mode := root.Children[0].Children[2]
+	mode.Gaps = []gap.Gap{{Code: gap.OptionsDynamic}, {Code: gap.ModelValidation}}
+	r := run(t, o, root)
+	if r.Status != StatusOK || len(r.Findings) > 0 {
+		t.Fatalf("status %s, findings %q, notes %q", r.Status, r.Findings, r.Notes)
+	}
+	n := 0
+	for _, p := range r.Probes {
+		if p.Field != "general.port" {
+			continue
+		}
+		n++
+		if p.Context["general.mode"] != "b" || p.Outcome != OutcomeAgreed {
+			t.Errorf("%+v: want agreed in the context mode=b", p)
+		}
+	}
+	if n == 0 {
+		t.Fatal("port not probed")
+	}
+	if o.vals["general.port"] != "53" || o.vals["general.mode"] != "a" {
+		t.Errorf("not restored: %v", o.vals)
+	}
+	// no context helps: the verdicts are no verdicts about the field
+	o = honest()
+	o.validate["general.port"] = func(v string, _ map[string]string) string {
+		if v != "" {
+			return "never"
+		}
+		return ""
+	}
+	r = run(t, o, root)
+	if r.Status != StatusKnownGap || !slices.ContainsFunc(r.Notes, func(s string) bool { return strings.Contains(s, "no context") }) {
+		t.Errorf("status %s, notes %q", r.Status, r.Notes)
+	}
+	for _, p := range r.Probes {
+		if p.Field == "general.port" && p.Accept && p.Value != "" && p.Outcome != OutcomeExplained {
+			t.Errorf("%+v: want explained", p)
+		}
+	}
+}
+
+// a context that worked for one field, extended by a boolean, lets a
+// second field decide (a redirect port: protocol TCP and no "no rdr")
+func TestProbeRunContextOnTopOfAnother(t *testing.T) {
+	o := honest()
+	o.vals["general.other"] = ""
+	o.vals["general.enabled"] = "1" // its probes leave it at 1; the port needs 0
+	o.validate["general.other"] = func(v string, all map[string]string) string {
+		if v != "" && all["general.mode"] != "b" {
+			return "only with mode b"
+		}
+		return ""
+	}
+	o.validate["general.port"] = func(v string, all map[string]string) string {
+		if v != "" && v != "53" && (all["general.mode"] != "b" || all["general.enabled"] != "0") {
+			return "only with mode b and enabled"
+		}
+		return intRange(1, 65535)(v, all)
+	}
+	root := probeModel()
+	g := root.Children[0]
+	mv := gap.Gap{Code: gap.ModelValidation, Detail: "performValidation of X"}
+	g.Children[0].Gaps = []gap.Gap{mv}                             // enabled
+	g.Children[1].Gaps = []gap.Gap{mv}                             // port
+	g.Children[2].Gaps = []gap.Gap{{Code: gap.OptionsDynamic}, mv} // mode
+	g.Children = append([]*model.Node{{Name: "other", Kind: model.KindField, Type: "TextField", BaseType: "TextField", Gaps: []gap.Gap{mv},
+		Rules: &model.Limits{Pattern: `^[a-z0-9]+$`}}}, g.Children...)
+	r := run(t, o, root)
+	var port map[string]string
+	for _, p := range r.Probes {
+		if p.Field == "general.port" && p.Value == "1" {
+			port = p.Context
+			if p.Outcome != OutcomeAgreed {
+				t.Errorf("%+v", p)
+			}
+		}
+	}
+	if port["general.mode"] != "b" || port["general.enabled"] != "0" {
+		t.Errorf("context %v, notes %q", port, r.Notes)
+	}
 }
 
 // a get that is the controller's own code (netbird 25.7 masks the setup

@@ -46,6 +46,7 @@ const (
 	UnknownSetting      Code = "unknown-setting"       // untyped leaf element that is not a known setting
 	CustomWrite         Code = "custom-write"          // the field type converts or normalizes values on write (setValue)
 	CustomSave          Code = "custom-save"           // own code between request and stored data (toLegacy/fromLegacy, serializeToConfig)
+	ValidationUnknown   Code = "validation-unknown"    // a class of the field's type checks the value in a way the data does not describe
 	ModelValidation     Code = "model-validation"      // the model's performValidation or <Constraints> check the field together with other fields or entries
 )
 

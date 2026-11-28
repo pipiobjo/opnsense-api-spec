@@ -40,7 +40,7 @@ func TestCandidates(t *testing.T) {
 		{"integer within bounds", &model.Node{BaseType: "IntegerField", Props: map[string]string{"MinimumValue": "5", "MaximumValue": "50"}}, "", []string{"5", "10", "50"}},
 		{"network with mask required", &model.Node{Type: "NetworkField", BaseType: "BaseSetField", Props: map[string]string{"NetMaskRequired": "Y", "AddressFamily": "ipv4"}}, "", []string{"192.0.2.0/24"}},
 		{"address without mask, v6", &model.Node{Type: "NetworkField", BaseType: "BaseSetField", Props: map[string]string{"NetMaskAllowed": "N", "AddressFamily": "ipv6"}}, "", []string{"2001:db8::10"}},
-		{"text filtered by mask", &model.Node{Type: "TextField", BaseType: "TextField", Props: map[string]string{"Mask": `/^([\-\+\~\=]){1,2}$/`}}, "", []string{"=", "-"}},
+		{"text filtered by mask", &model.Node{Type: "TextField", BaseType: "TextField", Props: map[string]string{"Mask": `/^([\-\+\~\=]){1,2}$/`}, Rules: &model.Limits{Pattern: `^([\-\+\~\=]){1,2}$`}}, "", []string{"=", "-"}},
 		{"hostname without IP", &model.Node{Type: "HostnameField", BaseType: "BaseSetField", Props: map[string]string{"IpAllowed": "N"}}, "", []string{"ct1.example.com", "ct1"}},
 	}
 	for _, tc := range tests {
@@ -66,18 +66,13 @@ func TestCandidatesUseDocumentationAddressesOnly(t *testing.T) {
 	}
 }
 
-func TestPHPRegex(t *testing.T) {
-	if re := phpRegex(`/^.{1,255}$/u`); re == nil || !re.MatchString("x") {
-		t.Error("simple PCRE pattern must compile")
+func TestFilterRules(t *testing.T) {
+	if got := filterRules([]string{"a", "b"}, nil); len(got) != 2 {
+		t.Error("no rules must not filter anything out")
 	}
-	if re := phpRegex(`/^https?:\/\/.*$/i`); re == nil || !re.MatchString("HTTPS://example.com") {
-		t.Error("case-insensitive flag must be kept")
-	}
-	if re := phpRegex(`/^(?!any$)[a-z]{1,32}$/u`); re != nil {
-		t.Error("look-ahead cannot be expressed in Go and must yield no filter")
-	}
-	if got := filterMask([]string{"a", "b"}, `/^(?!any$)[a-z]+$/`); len(got) != 2 {
-		t.Error("an uncompilable mask must not filter anything out")
+	l := &model.Limits{Pattern: `(?i)^[a-z]$`, Bytes: true, Forbidden: "b"}
+	if got := filterRules([]string{"A", "b", "1"}, l); len(got) != 1 || got[0] != "A" {
+		t.Errorf("pattern (case-insensitive) and forbidden characters: %q", got)
 	}
 }
 

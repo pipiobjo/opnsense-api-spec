@@ -64,7 +64,11 @@ type Node struct {
 	EmptyIgnored bool              `json:"empty_ignored,omitempty"`
 	Default      *string           `json:"default,omitempty"`
 	Options      []Option          `json:"options,omitempty"`
-	Props        map[string]string `json:"props,omitempty"` // other scalar settings (Mask, MinimumValue, Separator, ...)
+	Props        map[string]string `json:"props,omitempty"` // other scalar settings (Mask, MinimumValue, Separator, ...) that reach the class
+	// Rules: what the field's classes check on a non-empty value
+	// (validation.go); Checked: the settings these rules account for
+	Rules   *Limits  `json:"limits,omitempty"`
+	Checked []string `json:"checked,omitempty"`
 	// Relations: the entry lists a ModelRelationField refers to (its keys
 	// are UUIDs of entries there).
 	Relations []Relation `json:"relations,omitempty"`
@@ -174,6 +178,12 @@ type TypeIndex struct {
 	setKind     map[string]string            // declares setValue: setDiscard, ...
 	splitSep    map[string]string            // getNodeData splits the value: separator
 	setsOptions map[string]bool              // assigns $this->internalOptionList (options decided at run time)
+	// code, for the checks (validation.go): class body and method bodies
+	// without comments; field classes, validators and the firewall Util
+	code        map[string]string
+	methodCode  map[string]map[string]string
+	validates   map[string]bool // declares getValidators or isValidInput
+	callsParent map[string]bool // its getValidators (if any) calls parent::getValidators
 }
 
 var (
@@ -228,10 +238,22 @@ func BuildTypeIndex(modelsDir string) (*TypeIndex, error) {
 		readOverride: map[string]string{}, asList: map[string]bool{},
 		writeOverride: map[string]map[string]bool{}, container: map[string]string{},
 		props: map[string]map[string]string{}, toString: map[string]bool{}, nodeData: map[string]bool{},
-		setKind: map[string]string{}, splitSep: map[string]string{}, setsOptions: map[string]bool{}}
+		setKind: map[string]string{}, splitSep: map[string]string{}, setsOptions: map[string]bool{},
+		code: map[string]string{}, methodCode: map[string]map[string]string{}, validates: map[string]bool{}, callsParent: map[string]bool{}}
+	// the firewall's Util, which some field classes check with
+	if err := idx.readCode(filepath.Join(filepath.Dir(modelsDir), "library", "OPNsense", "Firewall", "Util.php")); err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
 	err := filepath.WalkDir(modelsDir, func(p string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !strings.HasSuffix(p, ".php") || filepath.Base(filepath.Dir(p)) != "FieldTypes" {
+		if err != nil || d.IsDir() || !strings.HasSuffix(p, ".php") {
 			return err
+		}
+		switch filepath.Base(filepath.Dir(p)) {
+		case "Validators":
+			return idx.readCode(p)
+		case "FieldTypes":
+		default:
+			return nil
 		}
 		src, err := os.ReadFile(p)
 		if err != nil {
@@ -244,6 +266,7 @@ func BuildTypeIndex(modelsDir string) (*TypeIndex, error) {
 		for _, c := range php.Classes(code, h) {
 			key := strings.ToLower(c.Name)
 			idx.names[key] = c.Name
+			idx.addCode(key, c.Body)
 			for _, w := range writeFnRe.FindAllStringSubmatch(c.Body, -1) {
 				if idx.writeOverride[key] == nil {
 					idx.writeOverride[key] = map[string]bool{}
@@ -288,6 +311,32 @@ func BuildTypeIndex(modelsDir string) (*TypeIndex, error) {
 }
 
 const baseNS = `opnsense\base\fieldtypes\`
+
+// readCode records the classes of a PHP file outside FieldTypes.
+func (t *TypeIndex) readCode(path string) error {
+	src, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	code := php.StripComments(string(src))
+	h := php.ParseHeader(code)
+	for _, c := range php.Classes(code, h) {
+		t.addCode(strings.ToLower(c.Name), c.Body)
+	}
+	return nil
+}
+
+// addCode records a class's code for the checks.
+func (t *TypeIndex) addCode(key, body string) {
+	ms := methods(body)
+	t.code[key] = body
+	t.methodCode[key] = ms
+	gv, ok := ms["getvalidators"]
+	t.validates[key] = ok || ms["isvalidinput"] != ""
+	t.callsParent[key] = !ok || parentValidatorsRe.MatchString(gv)
+}
+
+var parentValidatorsRe = regexp.MustCompile(`(?i)parent::getValidators\s*\(`)
 
 // Resolve maps a type attribute (relative to the model's namespace) to the
 // chain of classes up to a core base class.
@@ -730,6 +779,7 @@ func convert(x *xnode, ns string, types *TypeIndex) *Node {
 		if c, ok := types.runtimeOptions(chain); ok && n.Options != nil {
 			n.Gaps = append(n.Gaps, gap.New(gap.OptionsDynamic, "%s sets the options at run time; the listed ones may not be offered", c))
 		}
+		types.validation(chain, n)
 	}
 	if base == "BaseListField" && n.Options == nil && n.Type == "OptionField" {
 		n.Gaps = append(n.Gaps, gap.New(gap.OptionsDynamic, "OptionField without static OptionValues"))

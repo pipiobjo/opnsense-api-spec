@@ -4,7 +4,6 @@
 package verify
 
 import (
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -74,7 +73,7 @@ func candidates(n *model.Node, tmpl any) []string {
 	default:
 		c = texts()
 	}
-	return filterMask(c, p["Mask"])
+	return filterRules(c, n.Limits())
 }
 
 func texts() []string {
@@ -161,24 +160,16 @@ func optionKeys(v any) []string {
 	return keys
 }
 
-// phpRegex compiles a model Mask (model.GoPattern); nil: Go cannot run
-// it, so no filtering, the instance's answer decides.
-func phpRegex(mask string) *regexp.Regexp {
-	p, ok := model.GoPattern(mask)
-	if !ok {
-		return nil
-	}
-	return regexp.MustCompile(p)
-}
-
-func filterMask(c []string, mask string) []string {
-	re := phpRegex(mask)
-	if re == nil {
+// filterRules keeps the candidates the field's pattern, length limits and
+// forbidden characters let pass (formats: the candidates are chosen per
+// class).
+func filterRules(c []string, l *model.Limits) []string {
+	if l == nil {
 		return c
 	}
 	var out []string
 	for _, v := range c {
-		if model.MaskAccepts(re, v) {
+		if l.TextAccepts(v) {
 			out = append(out, v)
 		}
 	}

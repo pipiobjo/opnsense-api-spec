@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -40,6 +39,22 @@ const (
 	ClaimMinimum    Claim = "minimum"    // MinimumValue accepted, one below rejected
 	ClaimMaximum    Claim = "maximum"    // MaximumValue accepted, one above rejected
 	ClaimMask       Claim = "mask"       // a matching value accepted, a non-matching one rejected
+	ClaimForbidden  Claim = "forbidden"  // a value with a character the field forbids is rejected, one with an allowed character accepted
+	// formats (model.Format)
+	ClaimFormat         Claim = "format"          // a well-formed value accepted, a malformed one rejected
+	ClaimFamily         Claim = "family"          // addresses of the field's families accepted, others rejected
+	ClaimNetmask        Claim = "netmask"         // a prefix length forbidden, allowed or required
+	ClaimStrict         Claim = "strict"          // address bits after the prefix length rejected when strict
+	ClaimWildcard       Claim = "wildcard"        // "any" accepted or rejected
+	ClaimIPAllowed      Claim = "ip-allowed"      // a host name field takes an IP address or not
+	ClaimDNSName        Claim = "dns-name"        // labels beyond host names accepted or not
+	ClaimHostWildcard   Claim = "host-wildcard"   // "*" accepted or not
+	ClaimDomainWildcard Claim = "domain-wildcard" // "*.name" accepted or not
+	ClaimZoneRoot       Claim = "zone-root"       // "@" accepted or not
+	ClaimPortOptional   Claim = "port-optional"   // an address without port accepted or not
+	ClaimHostname       Claim = "hostname"        // a host name instead of the address accepted or not
+	ClaimService        Claim = "service"         // a port field's service names accepted
+	ClaimRange          Claim = "range"           // port ranges accepted or not
 )
 
 // Outcome of one probe.
@@ -50,6 +65,10 @@ const (
 	OutcomeContradicted Outcome = "contradicted"  // the firewall judged otherwise
 	OutcomeOtherFields  Outcome = "other-fields"  // rejected, but the messages name only other fields
 	OutcomeNotReadBack  Outcome = "not-read-back" // accepted as predicted, but read back differently
+	// judged otherwise, and the field has a rule over several fields
+	// (model-validation) and no context of other values was found in
+	// which its own values decide: no verdict about the field
+	OutcomeExplained Outcome = "explained"
 )
 
 // Probe is one value written to one field.
@@ -60,6 +79,9 @@ type Probe struct {
 	Accept  bool    `json:"accept"`         // the data's prediction
 	Outcome Outcome `json:"outcome"`        // what the firewall did with it
 	Read    *string `json:"read,omitempty"` // the value read back, when it differed
+	// Context: values of other fields written with it, found because a
+	// rule over several fields refused the field's values alone
+	Context map[string]string `json:"context,omitempty"`
 }
 
 // Accepted is the firewall's verdict, derived from the prediction and the
@@ -150,34 +172,72 @@ func probes(path string, n *model.Node, offered []string) ([]Probe, []string) {
 			known("MaximumValue")
 		}
 		if l.Pattern != "" {
-			re := regexp.MustCompile(l.Pattern)
-			match, miss := maskValues(n, func(v string) bool { return model.MaskAccepts(re, v) })
+			match, miss := maskValues(n, l)
 			if match != "" && miss != "" {
 				add(ClaimMask, match, true)
 				add(ClaimMask, miss, false)
 				known("Mask")
 			}
 		}
+		if l.Format != nil {
+			for _, v := range formatVectors(l.Format, n.List) {
+				add(v.claim, v.value, v.accept)
+			}
+			known(n.Checked...)
+			known("AsList", "FieldSeparator")
+		}
+		if forbidden(n, l, add) {
+			known("AllowSpaces", "AllowNewlines", "AllowSpecial")
+		}
 	}
 	sort.Strings(unprobed)
 	return out, unprobed
 }
 
-// maskValues: a value the mask accepts (from the generated candidates)
-// and one it refuses, both free of spaces and control characters, so
-// that the TextField's own checks do not decide instead of the mask.
-func maskValues(n *model.Node, match func(string) bool) (string, string) {
+// forbidden: for each character group of TextField's Allow* settings, a
+// value with such a character; rejected when the field forbids it. Only
+// where the pattern lets the value pass, so that the pattern does not
+// decide instead.
+func forbidden(n *model.Node, l *model.Limits, add func(Claim, string, bool)) bool {
+	if !slices.ContainsFunc(n.Checked, func(s string) bool { return strings.HasPrefix(s, "Allow") }) && l.Forbidden == "" {
+		return false
+	}
+	text := *l
+	text.Forbidden = ""
+	for _, c := range []string{" ", "\n", "\v"} {
+		v := "ct" + c + "x"
+		if !text.TextAccepts(v) {
+			continue // the pattern decides
+		}
+		if c == "\v" && !strings.Contains(l.Forbidden, c) {
+			continue // taken, but the configuration (XML) cannot hold it
+		}
+		add(ClaimForbidden, v, !strings.Contains(l.Forbidden, c))
+	}
+	return true
+}
+
+// maskValues: a value the pattern accepts (from the generated
+// candidates) and one it refuses, both free of spaces and control
+// characters, so that the TextField's own checks do not decide instead of
+// the pattern; the refused one is the longest when only the length limits
+// it.
+func maskValues(n *model.Node, l *model.Limits) (string, string) {
 	var yes, no string
 	for _, v := range append(candidates(n, nil), texts()...) {
 		if v == "" || strings.ContainsAny(v, " \t\r\n") {
 			continue
 		}
-		if match(v) && yes == "" {
+		if l.TextAccepts(v) && yes == "" {
 			yes = v
 		}
 	}
-	for _, v := range []string{"!", "contract-test!", "x", "_", "0", "-", "ct1.example.com", "contract-test"} {
-		if !match(v) {
+	long := 256
+	if l.MaxLength != nil {
+		long = int(*l.MaxLength) + 1
+	}
+	for _, v := range []string{"!", "contract-test!", "x", "_", "0", "-", "ct1.example.com", "contract-test", strings.Repeat("x", long)} {
+		if !l.TextAccepts(v) {
 			no = v
 			break
 		}
@@ -404,6 +464,55 @@ func probeRun(t target, fields []probeField) (done []Probe, findings, explained,
 			done = append(done, res...)
 		}
 	}
+	// a field with a rule over several fields that refused a value
+	// predicted to be accepted: probe it again in a context of other
+	// values
+	ctxFields := map[string]bool{}
+	if stop == "" {
+		var tried []map[string]string
+		for _, p := range order {
+			if !gap.Has(nodes[p].Gaps, gap.ModelValidation) {
+				continue
+			}
+			refusedValue, ok := firstRefused(done, p)
+			if !ok {
+				continue
+			}
+			ctx, msg := t.findContext(p, refusedValue, fields, orig, &tried)
+			if msg != "" {
+				stop = msg
+				break
+			}
+			if ctx == nil {
+				notes = append(notes, fmt.Sprintf("%s: no context of other values found in which its values decide", p))
+				continue
+			}
+			for k := range ctx {
+				ctxFields[k] = true
+			}
+			done = slices.DeleteFunc(done, func(d Probe) bool { return d.Field == p })
+			for _, pr := range queue[p] {
+				res, msg := t.judgeIn(pr, ctx, nodes[p])
+				if msg != "" {
+					stop = msg
+					break
+				}
+				done = append(done, res)
+			}
+			// the field and its context back as they were, so that the
+			// next field's search starts from the same object (an ICMP
+			// type left set refuses a port with protocol TCP)
+			back := map[string]string{p: wireString(lookup(orig, p))}
+			for k := range ctx {
+				back[k] = wireString(lookup(orig, k))
+			}
+			if stop == "" && !nodes[p].WriteOnly() {
+				if a := t.write(back); !a.saved {
+					notes = append(notes, fmt.Sprintf("%s: original values not written back after probing in a context", p))
+				}
+			}
+		}
+	}
 	if stop != "" {
 		findings = append(findings, stop)
 	}
@@ -413,6 +522,9 @@ func probeRun(t target, fields []probeField) (done []Probe, findings, explained,
 		if !nodes[p].WriteOnly() {
 			back[p] = wireString(lookup(orig, p))
 		}
+	}
+	for p := range ctxFields {
+		back[p] = wireString(lookup(orig, p))
 	}
 	if len(back) > 0 && stop == "" {
 		if a := t.write(back); !a.saved {
@@ -424,7 +536,7 @@ func probeRun(t target, fields []probeField) (done []Probe, findings, explained,
 		}
 	}
 	reasons := map[string]bool{}
-	for _, p := range done {
+	for i, p := range done {
 		// a rule of the model over several fields decides, and the data
 		// says so (model-validation): the difference is explained
 		to := &findings
@@ -432,6 +544,7 @@ func probeRun(t target, fields []probeField) (done []Probe, findings, explained,
 			to = &explained
 			if p.Outcome == OutcomeContradicted || p.Outcome == OutcomeNotReadBack {
 				reasons["expected ("+string(g.Code)+"): "+g.Detail] = true
+				done[i].Outcome = OutcomeExplained
 			}
 		}
 		switch p.Outcome {
@@ -445,6 +558,128 @@ func probeRun(t target, fields []probeField) (done []Probe, findings, explained,
 	}
 	explained = append(explained, slices.Sorted(maps.Keys(reasons))...)
 	return done, findings, explained, notes, unprobed
+}
+
+// firstRefused: the first value of the field predicted to be accepted
+// that the firewall refused.
+func firstRefused(done []Probe, field string) (string, bool) {
+	for _, p := range done {
+		if p.Field == field && p.Accept && p.Outcome == OutcomeContradicted {
+			return p.Value, true
+		}
+	}
+	return "", false
+}
+
+// maxContextTries bounds the search for a context per field (a protocol
+// field offers some 140 options).
+const maxContextTries = 300
+
+// findContext looks for values of other fields of the object (single
+// selects with model-validation; the options the firewall offers, else the
+// data's) with which
+// value is saved: first the contexts that worked for other fields, then
+// one other field at a time, each of its options. The second result stops
+// the probing.
+func (t target) findContext(field, value string, fields []probeField, orig map[string]any, tried *[]map[string]string) (map[string]string, string) {
+	try := func(ctx map[string]string) (bool, string) {
+		vals := maps.Clone(ctx)
+		vals[field] = value
+		a := t.write(vals)
+		return a.saved, a.err
+	}
+	for _, ctx := range *tried {
+		if ok, msg := try(ctx); msg != "" || ok {
+			return ctx, msg
+		}
+	}
+	// one more field on top of nothing, or of a context that worked for
+	// another field (a redirect port needs protocol TCP and no "no rdr")
+	bases := append([]map[string]string{{}}, *tried...)
+	n := 0
+	for _, base := range bases {
+		for _, f := range fields {
+			o := f.node
+			if f.path == field || base[f.path] != "" || !contextField(o) {
+				continue
+			}
+			// the original value too: earlier probes may have left the
+			// field at another one
+			for _, opt := range contextValues(o, lookup(orig, f.path)) {
+				if opt == "" {
+					continue
+				}
+				if n++; n > maxContextTries {
+					return nil, ""
+				}
+				ctx := maps.Clone(base)
+				ctx[f.path] = opt
+				ok, msg := try(ctx)
+				if msg != "" {
+					return nil, msg
+				}
+				if ok {
+					*tried = append(*tried, ctx)
+					return ctx, ""
+				}
+			}
+		}
+	}
+	return nil, ""
+}
+
+// contextField: a field that can make a context: one the rule over
+// several fields names (it carries model-validation itself), a single
+// select or a boolean.
+func contextField(o *model.Node) bool {
+	return gap.Has(o.Gaps, gap.ModelValidation) && !o.Multiple &&
+		(o.Shape == model.ShapeSelect || o.BaseType == "BooleanField")
+}
+
+// contextValues: the values a context field can take: a boolean's, the
+// options the firewall offers, else the data's.
+func contextValues(o *model.Node, read any) []string {
+	if o.BaseType == "BooleanField" {
+		return []string{"0", "1"}
+	}
+	opts := optionKeys(read)
+	if len(opts) == 0 {
+		for _, op := range o.Options {
+			opts = append(opts, op.Value)
+		}
+	}
+	return opts
+}
+
+// refused: the outcome of a probe whose value the firewall refused for
+// its own field.
+func refused(p Probe) Outcome {
+	return map[bool]Outcome{true: OutcomeContradicted, false: OutcomeAgreed}[p.Accept]
+}
+
+// judgeIn writes one probe together with its context.
+func (t target) judgeIn(p Probe, ctx map[string]string, n *model.Node) (Probe, string) {
+	vals := maps.Clone(ctx)
+	vals[p.Field] = p.Value
+	p.Context = ctx
+	a := t.write(vals)
+	switch {
+	case a.err != "":
+		return p, a.err
+	case a.saved && p.Accept:
+		got, err := t.read()
+		if err != nil {
+			return p, "read-back: " + err.Error()
+		}
+		return t.readBack(p, n, got), ""
+	case a.saved:
+		p.Outcome = OutcomeContradicted
+	case a.own[p.Field]:
+		p.Outcome = refused(p)
+	default:
+		p.Outcome = OutcomeOtherFields
+	}
+	return p, ""
 }
 
 // judge writes one round of probes with the same prediction, and every
@@ -502,7 +737,7 @@ func (t target) judge(round []Probe, nodes map[string]*model.Node) ([]Probe, str
 		case b.saved:
 			p.Outcome = OutcomeContradicted
 		case b.own[p.Field]:
-			p.Outcome = map[bool]Outcome{true: OutcomeContradicted, false: OutcomeAgreed}[p.Accept]
+			p.Outcome = refused(p)
 		default:
 			p.Outcome = OutcomeOtherFields
 		}

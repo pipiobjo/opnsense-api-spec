@@ -67,6 +67,23 @@ Every fix goes to the branch `dev`. `promote.yml` tests it with the code
 gates and two dry runs of the pipeline and then moves `main`; the next
 scheduled run closes the issue.
 
+### A field class changed its checks
+
+When a new release changes the code of a class whose checks the data
+describes ([ADR 0018](adr/0018-field-checks.md)), the data stays correct
+and says less: the class's fields carry the gap `validation-unknown`
+("form ... not reviewed") until the new form is reviewed. Nothing fails and
+no issue opens. To review:
+
+```sh
+OPNSENSE_FORMS=$PWD/.cache/src go test ./internal/model -run TestForms -v | grep "NOT REVIEWED"
+```
+
+Compare the new form's code with the previous one; when the checks mean
+the same (or the description in `internal/model/validation.go` reads the
+difference from the code), add the hash with its releases to the class's
+table, bump the generator and run the contract test.
+
 ## Changes and dependency updates
 
 - `main` changes only through `promote.yml`; a live run refuses a commit

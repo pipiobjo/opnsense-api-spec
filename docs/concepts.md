@@ -227,6 +227,7 @@ typed, whatever their kind.
 | `custom-read-shape` | custom `getNodeData`/`getNodeOptions`; read shape untyped (field level) |
 | `options-dynamic` | option list depends on the running system: an OptionField without options, or a field class that sets its options at run time although the model lists some; listed options are then only a hint (field level) |
 | `model-validation` | the field has `<Constraints>` in the model XML (`SetIfConstraint`: required when another field has a value; `UniqueConstraint`: unique among the entries; ...), or the model class's own `performValidation` names the field: a rule over several fields (an ICMP type only with protocol ICMP, a range end only with a start), a check against other entries, or a value the model sets itself on save (monit derives a test's type from its condition). A value valid on its own may be refused or changed depending on other fields; the rule itself is not derived (field level) |
+| `validation-unknown` | a class of the field's type checks the value with code the data does not describe ([ADR 0018](adr/0018-field-checks.md)): a class without a description (relation fields, which check that the referenced entry exists; plugin classes with their own checks), a described class in a form of its code nobody reviewed yet (a new release changed it), or a setting the description cannot express (a mask Go cannot run). The rules in `limits` are then incomplete; only the firewall knows the rest (field level) |
 | `invalid-default` | default outside the allowed values of a boolean or an option field with fixed options; an upstream model error: the firewall puts it into a new entry and refuses to save it unchanged (field level) |
 
 Codes counted as "the instance may answer with another shape"
@@ -343,7 +344,9 @@ generator believes it understands something whose meaning changed".
 Measured over 25.7 to 26.7.8, the framework files change in 21 of 32
 release transitions, and regressions (typed -> untyped) occur in 6, each a
 real upstream change (firewall rule actions rewritten, a new OSPF field
-type). A gate on these signals would need a human in two of three
+type). Since the field classes and validators count as framework files
+(generator 0.12.0, ADR 0018), the framework changes in 29 of 30
+transitions up to 26.7.10. A gate on these signals would need a human in two of three
 releases. Therefore the contract test is the gate, and the other signals
 explain its result:
 

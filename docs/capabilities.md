@@ -93,7 +93,8 @@ recomputes the `data_id` from the content (the rule above).
 
 - **Fragment**: 16 hex digits, the hash of a package's derived API
   (concepts, section 5.2). Equal API, equal hash, regardless of release.
-- **Framework**: 16 hex digits, the hash of the core's MVC base classes.
+- **Framework**: 16 hex digits, the hash of the core's MVC base classes,
+  field classes and validators (what a field takes depends on them).
   Plugins are derived against it, so the same plugin version can have a
   different fragment on a different framework.
 - **Resource**: `<module>/<controller>` for a settings model (one object,
@@ -203,8 +204,8 @@ documents keep them.
 | `default` | the model default; absent means empty |
 | `options` | static options from the model; dynamic options (interfaces, certificates) only exist on the instance |
 | `relations` | entry lists a relation field points to: `source` is the model class as written in the model, with dots and in any case (`OPNsense.quagga.ospf` for `OPNsense\Quagga\OSPF`; PHP class names are case-insensitive), `items` the list path |
-| `limits` | what the field's class checks in a non-empty value, where it is derived: `minimum`/`maximum` of an integer field, and `pattern`, the `Mask` of a text field in Go (RE2) regexp syntax with its flags inline. The value passes when the pattern's first match is the whole value (OPNsense's Regex validator; an unanchored mask still constrains all of it). A mask Go cannot run (look-arounds) has no `pattern`; the firewall's check is then the only one. The contract test probes exactly these limits |
-| `constraints` | other model settings (`Mask`, `MinimumValue`, `AddressFamily`, ...), as strings; `"(structured)"` marks nested settings that are not represented |
+| `limits` | what the field's classes check in a non-empty value, where derived ([ADR 0018](adr/0018-field-checks.md)): `minimum`/`maximum` of an integer field; `pattern`, a mask or a class's own pattern in Go (RE2) regexp syntax with its flags inline, passing when its first match is the whole value (OPNsense's Regex validator; an unanchored mask still constrains all of it), matched against the value's bytes when `bytes` (a PHP pattern without the `u` modifier counts bytes) and against each list element when `per_element`; `min_length`/`max_length`, the length the same way counted (a pattern `^X{m,n}$` with a bound over 1000, which Go's regexp does not take, is published as `^X*$` with these); `forbidden`, characters the value may not contain (TextField's `AllowSpaces`, `AllowNewlines`, `AllowSpecial` from 26.1.10); `format`, see [Formats](#formats). The firewall checks the stored value: some classes trim it or change its case first, as the format says. A rule the data cannot express is the gap `validation-unknown`; the firewall's check is then the only one |
+| `constraints` | the other model settings that reach the field's class (`Mask`, `MinimumValue`, `AddressFamily`, ...), as strings; `"(structured)"` marks nested settings that are not represented. A setting the class has no setter for has no effect in OPNsense and is left out |
 | `gaps` | gap codes: where the derivation is uncertain (concepts, section 8) |
 
 An enum value's availability follows from the variants: an option exists
@@ -233,6 +234,27 @@ it was written twice. An element must not contain the separator.
 
 A set field without `AsList` (a `HostnameField` that takes one name) is a
 single value and has no `list`.
+
+### Formats
+
+`limits.format.kind` names the form of value a field class accepts. A
+check runs on each element of a `list` field (BaseSetField splits the value
+by its separator) unless said otherwise. Each definition follows the PHP
+code it is derived from, quirks included, so that a client that implements
+it agrees with the firewall; the contract test tries every rule on the
+firewall, and the Go client replays those verdicts
+(`opnsense/capability/formats.go` is a reference implementation).
+
+| Kind | Classes | The firewall accepts |
+|---|---|---|
+| `network` | NetworkField | the value trimmed and in lower case: `any` as the whole value when `any`; else each element an IP address (PHP `FILTER_VALIDATE_IP`: no zone index, no leading zeros in IPv4) of the `family` (`ipv4`, `ipv6`; absent: both), optionally `/` and a prefix length of digits only, at most 32 (no `:` in the address) or 128. `netmask`: `forbidden` (no `/`), `allowed`, `required` (an element without `/` is refused). `strict`: no address bits set after the prefix length |
+| `hostname` | HostnameField | the value trimmed; per element: with `domain_wildcard` a leading `*.`, with `zone_root` a leading `@.` is dropped first; then accepted are `@` (`zone_root`), `*` (`host_wildcard`), an IP address (`ip`), or a name passing PHP's `FILTER_VALIDATE_DOMAIN` (with `FILTER_FLAG_HOSTNAME` unless `dns_name`: labels of letters, digits and `-`, starting and ending with a letter or digit, at most 63 characters, 253 in all, a final dot ignored) that is not an IP address and has no white space, `/` or `*`. Upstream quirk: once an element passed, a later one is refused only by the last rule (a name with white space, `/` or `*`, or an address where none is allowed) |
+| `mac` | MacAddressField | the value trimmed; per element six pairs of hex digits joined by `:` or `-`, or three groups of four joined by `.` (PHP `FILTER_VALIDATE_MAC`; no other lengths) |
+| `ip-port` | IPPortField | the value trimmed; per element: for `family` `ipv4` or absent, `address:port` with an IPv4 address, or the address alone with `port_optional`; with `hostname`, `name:port` (or the name alone with `port_optional`) with a host name as in `hostname`; for `ipv6` or absent, `[address]:port`, or the address alone with `port_optional`. A port is a number 1 to 65535 (digits, no leading zero) or a name of the firewall's services database (`/etc/services`), which the data does not list |
+| `url` | UrlField | PHP `FILTER_VALIDATE_URL`: only URL characters (letters, digits and ``$-_.+!*'(),{}|\^~[]`<>#%";/?:@&=``), a scheme, a host unless the scheme is `mailto`, `news` or `file`, for `http` and `https` a host name (as `hostname`) or a bracketed IPv6 address, a port up to 65535 |
+| `port` | PortField | the value (each comma-separated element when `list`) one of: a number 1 to 65535 as PHP writes it (`0443` is refused); with `any` the word `any`; one of `services`; with `ranges` a range `a-b` of two numbers 1 to 65535 (PHP `FILTER_VALIDATE_INT`: optional `+`, no leading zero) with a < b, with spaces around the numbers only when `range_spaces`; with `aliases` the name of a port alias on the firewall, which the data cannot know. A single value is stored in lower case and trimmed when that makes it `any` or a service name, so `HTTPS` is taken |
+
+A kind a reader does not know must be left to the firewall, not refused.
 
 ### Operations and actions
 
@@ -349,16 +371,23 @@ os-frr on 26.7.9:
   cycle created) is set, alone, to the values the data predicts accepted
   or rejected: every option, a key that is not one, two options together,
   the empty value, `0`/`1`/`2` for booleans, the integer limits and one
-  beyond each, a value matching the mask and one not. `ok`: the firewall
-  judged every value as predicted and every accepted value read back as
-  sent. `known-gap`: the differences are on fields with `model-validation`
-  or under `custom-save`. `skipped`: not probed (the object's current
-  values are refused, or no entry could be created); not a pass.
-- `probes`: per field, the values the firewall `accepted` and `rejected`.
-  A consumer can run them through its own value check and must reach the
-  same verdict on every field without `model-validation` (the Go client
-  does so in its tests). A rejection whose messages named only other
-  fields is left out.
+  beyond each, a value matching the pattern and one not, the forbidden
+  characters, and for each rule of a [format](#formats) a value it
+  decides. When a rule over several fields (`model-validation`) refuses
+  every value of a field, the test looks for values of other fields (one
+  single select at a time, each of its options) with which the field's own
+  values decide, and probes it in that context (a port of a firewall rule
+  with protocol TCP). `ok`: the firewall judged every value as predicted
+  and every accepted value read back as sent. `known-gap`: the differences
+  are on fields with `model-validation` for which no such context was
+  found, or under `custom-save`. `skipped`: not probed (the object's
+  current values are refused, or no entry could be created); not a pass.
+- `probes`: per field, the values the firewall `accepted` and `rejected`,
+  each about the field's own value: a rejection whose messages named only
+  other fields, and a verdict a rule over several fields made without a
+  context, are left out. A consumer can run them all through its own value
+  check and must reach the same verdict (the Go client does so in its
+  tests).
 - `returned_by_search`: `write_only` fields whose stored value the
   `search` answer contained in this run (entry lists; see `write_only`).
 - `runtime_required`: fields the instance required although the model does
@@ -417,8 +446,10 @@ rather than guess:
   ignore unknown keys. Added so far: `version-order.json` (2026-11-18);
   `list`, `empty_ignored`, `same_definition_as`, `returned_by_search` and
   the steps `restore`, `read-back-restore`, `list-order` (generator
-  0.10.0); `probe`, `probes`, `limits` and the gap `model-validation` (generator
-  0.12.0). With 0.10.0 settings `write` changed from writing back the
+  0.10.0); `probe`, `probes`, `limits` (with `format`, `bytes`, `min_length`,
+  `max_length`, `per_element`, `forbidden`) and the gaps `model-validation`
+  and `validation-unknown` (generator 0.12.0); from 0.12.0 on,
+  `constraints` lists only settings that reach the field's class. With 0.10.0 settings `write` changed from writing back the
   current value to writing a different one; older results of settings
   have `steps` [set, read-back] only.
 - Fragment hashes are content addresses and do not change. A new generator

@@ -99,3 +99,30 @@ func TestInvariants(t *testing.T) {
 		t.Error("external refs are not checked here")
 	}
 }
+
+// A field class outside FrameworkFiles still changes the fingerprint: what
+// a plugin's field takes depends on it (ADR 0018).
+func TestFingerprintCoversFieldClasses(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, FrameworkDirs[0], "PortField.php")
+	_ = os.MkdirAll(filepath.Dir(f), 0o755)
+	hash := func(s string) (map[string]string, string) {
+		t.Helper()
+		if err := os.WriteFile(f, []byte(s), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		files, h, err := Fingerprint(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return files, h
+	}
+	files, a := hash("<?php\nclass PortField { function isValid() { return 1; } }\n")
+	_, b := hash("<?php\nclass PortField { function isValid() { return 2; } }\n")
+	if a == b {
+		t.Error("a changed field class must change the fingerprint")
+	}
+	if files[FrameworkDirs[0]+"/PortField.php"] == "" {
+		t.Errorf("field class not recorded: %v", files)
+	}
+}

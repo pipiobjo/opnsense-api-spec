@@ -230,8 +230,28 @@
         "constraints": {"type": "object", "additionalProperties": {"type": "string"}},
         "limits": {
           "type": "object",
-          "description": "limits of a non-empty value the field's class enforces: an integer range, and a Go regexp whose first match must be the whole value",
-          "properties": {"minimum": {"type": "integer"}, "maximum": {"type": "integer"}, "pattern": {"type": "string"}},
+          "description": "rules the field's classes enforce on a non-empty value: an integer range, a Go regexp whose first match must be the whole value (bytes: matched against the value's bytes; per_element: against each list element), its length (min_length, max_length, counted like the pattern), characters the value may not contain, and a format (docs/capabilities.md, Formats)",
+          "properties": {
+            "minimum": {"type": "integer"}, "maximum": {"type": "integer"}, "pattern": {"type": "string"},
+            "bytes": {"type": "boolean"}, "min_length": {"type": "integer", "minimum": 1}, "max_length": {"type": "integer", "minimum": 0},
+            "per_element": {"type": "boolean"}, "forbidden": {"type": "string", "minLength": 1},
+            "format": {
+              "type": "object",
+              "required": ["kind"],
+              "properties": {
+                "kind": {"enum": ["network", "hostname", "mac", "ip-port", "url", "port"]},
+                "family": {"enum": ["ipv4", "ipv6"]},
+                "netmask": {"enum": ["forbidden", "allowed", "required"]},
+                "any": {"type": "boolean"}, "strict": {"type": "boolean"},
+                "ip": {"type": "boolean"}, "host_wildcard": {"type": "boolean"}, "domain_wildcard": {"type": "boolean"},
+                "zone_root": {"type": "boolean"}, "dns_name": {"type": "boolean"},
+                "port_optional": {"type": "boolean"}, "hostname": {"type": "boolean"},
+                "services": {"type": "array", "items": {"type": "string"}}, "ranges": {"type": "boolean"},
+                "aliases": {"type": "boolean"}, "range_spaces": {"type": "boolean"}
+              },
+              "additionalProperties": false
+            }
+          },
           "additionalProperties": false
         },
         "gaps": {"$ref": "#/$defs/gaps"}

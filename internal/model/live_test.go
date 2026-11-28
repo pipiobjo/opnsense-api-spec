@@ -5,6 +5,8 @@ package model
 
 import (
 	"os"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -54,5 +56,47 @@ func TestLiveSummary(t *testing.T) {
 				t.Logf("%s kind=%s type=%s base=%s shape=%s req=%v opts=%d", p, n.Kind, n.Type, n.BaseType, n.Shape, n.Required, len(n.Options))
 			}
 		}
+	}
+}
+
+// TestLiveChecks: on a real release, every described class has a reviewed
+// form, and the checks of fields a firewall configuration depends on are
+// derived as the PHP code has them.
+func TestLiveChecks(t *testing.T) {
+	if _, err := os.Stat(liveApp); err != nil {
+		if os.Getenv("GOLDEN_REQUIRED") == "1" {
+			t.Fatalf("%s not extracted", liveApp)
+		}
+		t.Skip("no fetched release in .cache")
+	}
+	ms, types, err := LoadAll(liveApp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range types.Forms() {
+		if strings.HasSuffix(f, "NOT REVIEWED") {
+			t.Errorf("form not reviewed: %s", f)
+		}
+	}
+	find := func(class, path string) *Node {
+		for _, m := range ms {
+			if m.Class == class {
+				if n := m.Find(path); n != nil {
+					return n
+				}
+			}
+		}
+		t.Fatalf("%s %s not found", class, path)
+		return nil
+	}
+	port := find(`OPNsense\Firewall\Filter`, "rules.rule.destination_port").Limits()
+	if port == nil || port.Format == nil || port.Format.Kind != FormatPort || !port.Format.Ranges || !port.Format.Aliases ||
+		!port.Format.Any || !slices.Contains(port.Format.Services, "https") || !slices.Contains(port.Format.Services, "afs3-fileserver") {
+		// up to 26.7.5 ['any'] + array_keys(...) lost the first name
+		t.Errorf("firewall rule port: %+v", port)
+	}
+	dns := find(`OPNsense\IPsec\IPsec`, "charon.plugins.attr.dns").Limits()
+	if dns == nil || dns.Format == nil || dns.Format.Kind != FormatNetwork || dns.Format.Netmask != NetmaskForbidden {
+		t.Errorf("IPsec dns (NetmaskAllowed, lower-case m, reaches setNetMaskAllowed): %+v", dns)
 	}
 }

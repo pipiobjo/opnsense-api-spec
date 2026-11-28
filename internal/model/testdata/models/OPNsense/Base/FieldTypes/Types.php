@@ -40,7 +40,7 @@ class BaseSetField extends BaseField
 }
 class CSVListField extends BaseSetField { protected $internalAsList = true; }
 class BooleanField extends BaseField { protected $internalDefaultValue = "0"; }
-class IntegerField extends BaseField {}
+class IntegerField extends BaseField { public function setMinimumValue($v) {} public function setMaximumValue($v) {} }
 class ArrayField extends BaseField {}
 class OptionField extends BaseListField {}
 class ModelRelationField extends BaseListField {}
@@ -51,6 +51,16 @@ class NetworkField extends BaseSetField {}
 class TextField extends BaseField {}
 class UniqueIdField extends BaseField {}
 class ContainerField extends BaseField {}
+/* a core class with checks, for the tests of validation.go (registered there by the test) */
+class DemoRangeField extends BaseField
+{
+    public function setMinimumValue($value) {}
+    public function getValidators()
+    {
+        $validators = parent::getValidators();
+        return $validators;
+    }
+}
 class MacAddressField extends BaseField { public function setValue($value) { parent::setValue(strtolower($value)); } }
 /* as in 26.7.9 */
 class UpdateOnlyTextField extends TextField

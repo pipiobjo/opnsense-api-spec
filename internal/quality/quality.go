@@ -21,7 +21,7 @@ import (
 	"github.com/pipiobjo/opnsense-api-spec/internal/php"
 )
 
-// FrameworkFiles are the core files (relative to the MVC app dir) whose
+// FrameworkFiles are core files (relative to the MVC app dir) whose
 // semantics the derivation assumes: generic actions and helpers, field
 // base classes, routing. A change means the derivation rules may no longer
 // hold and needs a contract test before publishing.
@@ -36,6 +36,41 @@ var FrameworkFiles = []string{
 	"models/OPNsense/Base/FieldTypes/ContainerField.php",
 	"library/OPNsense/Mvc/Router.php",
 	"library/OPNsense/Mvc/Dispatcher.php",
+	"library/OPNsense/Firewall/Util.php",
+}
+
+// FrameworkDirs: every file in them counts as a framework file. The field
+// classes and validators define what a field takes (ADR 0018), and a
+// plugin's field inherits from them: two releases whose field classes
+// differ must not share a framework hash, or a plugin version would map
+// to two fragments on one framework.
+var FrameworkDirs = []string{
+	"models/OPNsense/Base/FieldTypes",
+	"models/OPNsense/Base/Validators",
+}
+
+// frameworkPaths: FrameworkFiles, then the files of FrameworkDirs in
+// name order.
+func frameworkPaths(appDir string) ([]string, error) {
+	out := append([]string(nil), FrameworkFiles...)
+	seen := map[string]bool{}
+	for _, f := range out {
+		seen[f] = true
+	}
+	for _, d := range FrameworkDirs {
+		ents, err := os.ReadDir(filepath.Join(appDir, d))
+		if err != nil && !os.IsNotExist(err) {
+			return nil, err
+		}
+		for _, e := range ents {
+			f := d + "/" + e.Name()
+			if !e.IsDir() && strings.HasSuffix(f, ".php") && !seen[f] {
+				seen[f] = true
+				out = append(out, f)
+			}
+		}
+	}
+	return out, nil
 }
 
 var spaceRe = regexp.MustCompile(`\s+`)
@@ -46,7 +81,11 @@ var spaceRe = regexp.MustCompile(`\s+`)
 func Fingerprint(appDir string) (map[string]string, string, error) {
 	files := map[string]string{}
 	all := sha256.New()
-	for _, f := range FrameworkFiles {
+	paths, err := frameworkPaths(appDir)
+	if err != nil {
+		return nil, "", err
+	}
+	for _, f := range paths {
 		src, err := os.ReadFile(filepath.Join(appDir, f))
 		switch {
 		case os.IsNotExist(err):
